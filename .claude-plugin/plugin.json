@@ -5,6 +5,5 @@
   "author": {
     "name": "Stefan Angelov"
   },
-  "homepage": "https://github.com/cefothe/ai-sdlc",
-  "hooks": "./hooks/hooks.json"
+  "homepage": "https://github.com/cefothe/ai-sdlc"
 }
