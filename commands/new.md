@@ -50,21 +50,21 @@ PRD. The unit of work is a well-shaped, ready task — not a thin stub.
    Acceptance criteria, Open questions); `prd-gate.js` enforces that structure.
    Set frontmatter `status: draft` and `featureId: <feature-slug>`.
    ```bash
-   ID=$(node -e "console.log(require('./decision-engine/backlog-task-new').nextTaskId(process.cwd()))")
+   ID=$(node -e "console.log(require(process.env.CLAUDE_PLUGIN_ROOT+'/decision-engine/backlog-task-new').nextTaskId(process.cwd()))")
    ```
    Write `docs/prd/<feature-slug>.md` (slug from the title). If the CPO recommends
    **defer/drop**, surface that to the operator and stop unless they choose to proceed.
 
    Then validate it (structure enforced, quality advisory) and report both:
    ```bash
-   node decision-engine/prd-gate.js "docs/prd/<feature-slug>.md" || true
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/prd-gate.js" "docs/prd/<feature-slug>.md" || true
    ```
    Fix any missing/empty sections.
 
 4b. **Clarify (before approval).** Surface ambiguity so the human approves a
    *resolved* PRD, not a vague one. Run the deterministic clarify gate:
    ```bash
-   node decision-engine/clarify-gate.js "docs/prd/<feature-slug>.md" || true
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/clarify-gate.js" "docs/prd/<feature-slug>.md" || true
    ```
    Then do the advisory pass: dispatch the `clarify` provider from
    `.ai-sdlc/capabilities.yaml` (`product-owner`) via the **Task tool** to read the
@@ -80,7 +80,7 @@ PRD. The unit of work is a well-shaped, ready task — not a thin stub.
    The `--prd` flag emits a `specRef` block, which DoR gate 3 resolves — so a task
    pointing at a missing PRD is refused admission (the link can't rot):
    ```bash
-   node decision-engine/backlog-task-new.js "<title>" --id "$ID" \
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/backlog-task-new.js" "<title>" --id "$ID" \
      --prd "docs/prd/<feature-slug>.md" --feature-id "<feature-slug>" \
      --labels <a,b> --refs <path1,path2,path3> \
      --ac "<criterion 1>" --ac "<criterion 2>" \
@@ -90,7 +90,7 @@ PRD. The unit of work is a well-shaped, ready task — not a thin stub.
 
 6. **Check readiness (DoR).** Report what still blocks dispatch:
    ```bash
-   node -e "const{loadTaskFile}=require('./decision-engine/backlog-task');const{loadDorConfig,evaluateDor}=require('./decision-engine/dor-gate');const t=loadTaskFile(process.argv[1]);console.log(JSON.stringify(evaluateDor(t,{projectRoot:process.cwd(),config:loadDorConfig('.ai-sdlc/dor-config.yaml')}),null,2))" "backlog/tasks/${ID} - <slug>.md"
+   node -e "const R=process.env.CLAUDE_PLUGIN_ROOT;const{loadTaskFile}=require(R+'/decision-engine/backlog-task');const{loadDorConfig,evaluateDor}=require(R+'/decision-engine/dor-gate');const t=loadTaskFile(process.argv[1]);console.log(JSON.stringify(evaluateDor(t,{projectRoot:process.cwd(),config:loadDorConfig('.ai-sdlc/dor-config.yaml')}),null,2))" "backlog/tasks/${ID} - <slug>.md"
    ```
    - `admitted: true` → tell the operator to run `/ai-sdlc:execute ${ID}`.
    - Otherwise → list the failing gates and the exact fields to fix. Never auto-dispatch.

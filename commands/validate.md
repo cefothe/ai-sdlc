@@ -18,7 +18,7 @@ pipeline (not the author), so they are enforced, unlike the advisory promise gat
 
 2. **Run the DoD gate** using `.ai-sdlc/dod-config.yaml`:
    ```bash
-   node decision-engine/dod-gate.js --config .ai-sdlc/dod-config.yaml \
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/dod-gate.js" --config .ai-sdlc/dod-config.yaml \
      $(git diff --name-only main...HEAD | sed 's/^/--file /')
    ```
    The gate runs the configured `build` and `test` commands (each must exit 0) and

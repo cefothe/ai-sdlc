@@ -21,7 +21,10 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
 ## Steps
 
 1. **Admit (DoR).** Run:
-   `node -e "const{loadTaskFile}=require('./decision-engine/backlog-task');const{loadDorConfig,evaluateDor}=require('./decision-engine/dor-gate');const t=loadTaskFile(process.argv[1]);console.log(JSON.stringify(evaluateDor(t,{projectRoot:process.cwd(),config:loadDorConfig('.ai-sdlc/dor-config.yaml')})))" "backlog/tasks/$1"*.md`
+   `node -e "const R=process.env.CLAUDE_PLUGIN_ROOT;const{loadTaskFile}=require(R+'/decision-engine/backlog-task');const{loadDorConfig,evaluateDor}=require(R+'/decision-engine/dor-gate');const t=loadTaskFile(process.argv[1]);console.log(JSON.stringify(evaluateDor(t,{projectRoot:process.cwd(),config:loadDorConfig('.ai-sdlc/dor-config.yaml')})))" "backlog/tasks/$1"*.md`
+   - The gate scripts live in the installed plugin (`${CLAUDE_PLUGIN_ROOT}`); the
+     task file, `.ai-sdlc/` config, and `backlog/` stay project-relative. This gate
+     is deterministic — run it, do not substitute a manual equivalent.
    - If `admitted:false`, print the reasons and **stop** — the task isn't ready;
      the operator must resolve the open questions first (that's the whole point).
    - For gates marked `needs-stage-b`, judge them yourself (scope-bounded?
@@ -35,16 +38,24 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    then `git worktree add -b ai-sdlc/$1-<slug> .worktrees/$1 main`. Write the
    `.active-task` sentinel.
 
-4. **Plan (optional).** If a `plan` provider is set, invoke it — e.g. run the
-   `/code-plan` skill — and carry its output into the implementer's context.
+4. **Plan (MANDATORY when a `plan` provider is set).** Read
+   `.ai-sdlc/capabilities.yaml`. If `spec.stages.plan.provider` is present, you
+   **must** invoke that provider now — e.g. run the `/code-plan` skill — and carry
+   its freshly produced artifact into the implementer's context in step 5.
+   - A pre-existing design/plan doc in the repo is **not** a substitute — you must
+     run the configured `plan` provider for *this* task, not reuse an old artifact.
+   - Do **not** fold planning into an inline "equivalent." If the provider cannot
+     be invoked, **stop** and report why rather than proceeding to implement.
+   - Only when `spec.stages.plan.provider` is absent/null may you skip this step.
 
 4b. **Analyze (before implement).** Cross-artifact consistency audit — catch a
    plan that contradicts or under-covers the PRD *before* any code is written.
    Write the plan text to a temp file and run the deterministic gate:
    ```bash
-   node decision-engine/analyze-gate.js "backlog/tasks/$1"*.md /tmp/$1-plan.md
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/analyze-gate.js" "backlog/tasks/$1"*.md /tmp/$1-plan.md
    ```
-   If it exits non-zero (`consistent: false`), **stop** and report the failing
+   This is a **hard checkpoint** — run the script, do not substitute a manual
+   equivalent. If it exits non-zero (`consistent: false`), **stop** and report the failing
    linkage/coverage checks — the artifacts disagree; fix the plan or the task/PRD
    before implementing. Then do the advisory pass: dispatch the `analyze` provider
    from `.ai-sdlc/capabilities.yaml` (`code-analyzer`) via the **Task tool** to
@@ -78,7 +89,7 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
 6b. **Validate (Definition-of-Done gate — HARD ENFORCED).** Before finalizing, run
    the DoD gate over the branch's changed files:
    ```bash
-   node decision-engine/dod-gate.js --config .ai-sdlc/dod-config.yaml \
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/dod-gate.js" --config .ai-sdlc/dod-config.yaml \
      $(git diff --name-only ${1:+main}...HEAD | sed 's/^/--file /')
    ```
    It runs the project's **build** and **full test suite** (each must pass) and scans

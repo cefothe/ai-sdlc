@@ -21,7 +21,7 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    agents that each pick "the next free DEC id" collide — this actually happened
    (two architects both wrote DEC-0024..0028). The orchestrator owns numbering:
    ```bash
-   node -e "const{listDecisions}=require('./decision-engine/decisions.js');const ds=listDecisions(process.cwd());const max=ds.reduce((m,d)=>Math.max(m,Number((d.metadata.id.match(/DEC-(\d+)/)||[])[1]||0)),0);console.log('next free:',max+1)"
+   node -e "const{listDecisions}=require(process.env.CLAUDE_PLUGIN_ROOT+'/decision-engine/decisions.js');const ds=listDecisions(process.cwd());const max=ds.reduce((m,d)=>Math.max(m,Number((d.metadata.id.match(/DEC-(\d+)/)||[])[1]||0)),0);console.log('next free:',max+1)"
    ```
    From `next free`, hand each architect a **disjoint reserved range** (e.g. 10
    ids each): architect A → `DEC-<n>..<n+9>`, B → `<n+10>..<n+19>`, and so on.
@@ -50,7 +50,7 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    flow, interfaces, risks, test strategy — and link every ADR in its Decisions
    section. Validate:
    ```bash
-   node decision-engine/design-gate.js "docs/design/$1.md" || true
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/design-gate.js" "docs/design/$1.md" || true
    ```
 
 5. **Record the ADRs — serially, from the panel's returned text.** The orchestrator
@@ -60,7 +60,7 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    see the gap in its block and can re-dispatch just that range). One atomic
    `Decision` per choice, with the canonical sections:
    ```bash
-   node decision-engine/decisions.js new --id DEC-<n> --summary "…" \
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/decisions.js" new --id DEC-<n> --summary "…" \
      --options "a:…,b:…" --context "…" --rationale "…" --consequences "…" --confidence high|medium|low
    ```
    (`scope: project` for foundational/platform decisions; feature scope for
@@ -70,7 +70,7 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
 
 6. **Check ADR coverage.** Run the scanner and resolve every gap:
    ```bash
-   node decision-engine/adr-coverage.js .
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/adr-coverage.js" .
    ```
    For each area it reports as missing (stack, datastore, build-vs-buy, resilience,
    scale, cost, security, observability, api, read-path, …) either record the ADR
