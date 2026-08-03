@@ -1,0 +1,836 @@
+name: "REPORTING_GUIDE"
+type: "guide"
+version: "1.0.0"
+description: "Complete guide to test reporting with Allure, XRay, and Teams integrations."
+last_updated: "2026-01-13"
+maintained_by: "Tradu QA Team"
+
+content: |
+  # Reporting Guide
+  
+  > Complete guide to test reporting with Allure, XRay, and Teams integrations.
+  
+  ## Table of Contents
+  
+  - [Overview](#overview)
+  - [Allure Integration](#allure-integration)
+  - [XRay Integration](#xray-integration)
+  - [Teams Notifications](#teams-notifications)
+  - [Custom Steps and Annotations](#custom-steps-and-annotations)
+  - [Screenshots and Videos](#screenshots-and-videos)
+  - [CI/CD Integration](#cicd-integration)
+  - [Best Practices](#best-practices)
+  
+  ## Overview
+  
+  The framework provides three reporting mechanisms:
+  
+  | Tool | Purpose | When to Use |
+  |------|---------|-------------|
+  | **Allure** | Rich HTML reports with history | Always enabled |
+  | **XRay** | Jira test management sync | When using Jira for test management |
+  | **Teams** | Real-time notifications | For team awareness and CI/CD |
+  
+  All three can be enabled simultaneously.
+  
+  ## Allure Integration
+  
+  ### Automatic Features
+  
+  Allure integration is **automatic** - no code changes needed:
+  
+  - ✅ Test results (pass/fail/skip)
+  - ✅ Execution time
+  - ✅ Screenshots on failure (web tests)
+  - ✅ Video recordings (web tests)
+  - ✅ HTTP request/response logs (API tests)
+  - ✅ Test hierarchy and suites
+  - ✅ Historical trends
+  
+  ### Manual Steps
+  
+  Use `Allure.step()` for custom reporting steps:
+  
+  ```java
+  @Test
+  void test_order_creation_completesSuccessfully() {
+      Allure.step("Create order via API");
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+  
+      Allure.step("Verify order created successfully");
+      assertThat(response.statusCode()).isEqualTo(201);
+  
+      Allure.step("Verify order appears in UI");
+      OrderPage page = new OrderPage();
+      page.navigateToOrder(order.id());
+      assertThat(page.isOrderDisplayed()).isTrue();
+  }
+  ```
+  
+  **Note**: Steps in page objects and service classes already include `Allure.step()` calls.
+  
+  ### Allure Annotations
+  
+  #### @Description
+  
+  Add test descriptions:
+  
+  ```java
+  @Test
+  @Description("Tests successful user login with valid credentials")
+  void test_login_validCredentials_showsDashboard() {
+      // Test implementation
+  }
+  ```
+  
+  #### @Severity
+  
+  Mark test importance:
+  
+  ```java
+  @Test
+  @Severity(SeverityLevel.CRITICAL)
+  void test_order_execution_succeeds() {
+      // Test implementation
+  }
+  ```
+  
+  Severity levels: `BLOCKER`, `CRITICAL`, `NORMAL`, `MINOR`, `TRIVIAL`
+  
+  #### @Epic, @Feature, @Story
+  
+  Organize tests hierarchically:
+  
+  ```java
+  @Epic("Trading Platform")
+  @Feature("Order Management")
+  @Story("Order Creation")
+  public class OrderCreationTest extends BaseWebTest {
+      @Test
+      void test_order_createLimitOrder_succeeds() {
+          // Test implementation
+      }
+  }
+  ```
+  
+  #### @Issue, @TmsLink
+  
+  Link to external systems:
+  
+  ```java
+  @Test
+  @Issue("JIRA-123")
+  @TmsLink("TEST-456")
+  void test_bugFix_scenario_succeeds() {
+      // Test implementation
+  }
+  ```
+  
+  ### Attachments
+  
+  #### Screenshots
+  
+  Automatic on web test failure. Manual attachment:
+  
+  ```java
+  Allure.addAttachment("Dashboard", "image/png",
+      Files.readAllBytes(screenshotPath), "png");
+  ```
+  
+  #### Text Content
+  
+  ```java
+  Allure.addAttachment("API Response", "application/json",
+      response.body(), "json");
+  ```
+  
+  #### Files
+  
+  ```java
+  Allure.addAttachment("Test Data", "text/csv",
+      Files.readAllBytes(csvPath), "csv");
+  ```
+  
+  ### Generating Reports
+  
+  #### Command Line
+  
+  ```bash
+  # Generate and open report
+  mvn allure:serve
+  
+  # Generate report to directory
+  mvn allure:report
+  
+  # Open existing report
+  mvn allure:open
+  ```
+  
+  #### Report Contents
+  
+  The Allure report includes:
+  
+  - **Overview** - Summary, trends, duration
+  - **Suites** - Test organization by class/package
+  - **Graphs** - Success rate, duration, severity
+  - **Timeline** - Execution timeline
+  - **Behaviors** - BDD-style organization (Epic/Feature/Story)
+  - **Packages** - Test organization by package
+  - **Categories** - Error classification
+  
+  ### Historical Trends
+  
+  Allure tracks history across runs:
+  
+  ```bash
+  # Copy results for history
+  cp -r target/allure-results/* /path/to/allure-history/
+  
+  # Generate with history
+  mvn allure:report -Dallure.results.directory=/path/to/allure-history/
+  ```
+  
+  ## XRay Integration
+  
+  ### Configuration
+  
+  See `CONFIGURATION_GUIDE.yaml` for complete setup:
+  
+  ```properties
+  xray.enabled=true
+  xray.clientId=${XRAY_CLIENT_ID}
+  xray.clientSecret=${XRAY_CLIENT_SECRET}
+  xray.project.key=PROJ
+  ```
+  
+  ### Linking Tests
+  
+  Use `@XRayTest` annotation:
+  
+  ```java
+  @Test
+  @XRayTest(testId = "PROJ-123")
+  void test_login_validCredentials_succeeds() {
+      LoginPage loginPage = new LoginPage();
+      DashboardPage dashboard = loginPage.login("user", "pass");
+      assertThat(dashboard.isWelcomeMessageDisplayed()).isTrue();
+  }
+  ```
+  
+  **Requirements**:
+  - Test case must exist in Jira (`PROJ-123`)
+  - Test case must be of type "Test"
+  - User must have XRay permissions
+  
+  ### Automatic Sync
+  
+  After test execution, results are automatically uploaded to XRay:
+  
+  ```bash
+  mvn test
+  # After completion, results sync to Jira XRay
+  ```
+  
+  **What gets synced**:
+  - Test execution status (PASS/FAIL/BLOCKED)
+  - Execution time
+  - Error messages and stack traces
+  - Screenshots and videos (if enabled)
+  - Test environment information
+  
+  ### Test Execution Creation
+  
+  XRay automatically creates Test Executions:
+  
+  ```properties
+  # Auto-create execution
+  xray.auto.create.execution=true
+  
+  # Execution summary format
+  xray.test.execution.summary=Test Run - ${BUILD_NUMBER} - ${TIMESTAMP}
+  
+  # Link to test plan
+  xray.test.plan.key=PROJ-TP-1
+  ```
+  
+  ### Manual Sync
+  
+  Trigger sync programmatically:
+  
+  ```java
+  XRayReporter reporter = new XRayReporter();
+  reporter.uploadResults(allureResults);
+  ```
+  
+  ### XRay Report Contents
+  
+  In Jira, you'll see:
+  
+  - **Test Execution** - Created automatically
+  - **Test Results** - PASS/FAIL status for each test
+  - **Attachments** - Screenshots, videos, logs
+  - **Environment** - Test environment details
+  - **Execution Details** - Duration, errors, stack traces
+  
+  ## Teams Notifications
+  
+  ### Configuration
+  
+  See `CONFIGURATION_GUIDE.yaml` for setup:
+  
+  ```properties
+  teams.enabled=true
+  teams.webhookUrl=${TEAMS_WEBHOOK_URL}
+  teams.notify.on.failure=true
+  teams.notify.on.success=false
+  ```
+  
+  ### Automatic Notifications
+  
+  Notifications are sent automatically after test execution:
+  
+  **On Success**:
+  ```
+  ✅ Test Execution Complete
+  Total: 150 tests
+  Passed: 150 (100%)
+  Failed: 0
+  Duration: 5m 32s
+  Environment: staging
+  Build: #456
+  ```
+  
+  **On Failure**:
+  ```
+  ❌ Test Execution Failed
+  Total: 150 tests
+  Passed: 145 (96.7%)
+  Failed: 5
+  Duration: 5m 32s
+  
+  Failed Tests:
+  • OrderCreationTest.testInvalidSymbol
+  • LoginTest.testInvalidCredentials
+  • DashboardTest.testLoadTimeout
+  • AccountTest.testInsufficientFunds
+  • PositionTest.testClosePosition
+  
+  Environment: staging
+  Build: #456
+  View Report: [Link to Allure]
+  ```
+  
+  ### Adaptive Cards
+  
+  Teams notifications use Adaptive Cards for rich formatting:
+  
+  - **Success** - Green banner with summary
+  - **Failure** - Red banner with failed test list
+  - **Screenshots** - Thumbnail attachments (configurable)
+  - **Actions** - Links to Allure report, CI build, Jira
+  
+  ### Manual Notifications
+  
+  Send custom notifications:
+  
+  ```java
+  TeamsNotifier notifier = new TeamsNotifier();
+  
+  // Simple message
+  notifier.sendMessage("Smoke tests completed successfully");
+  
+  // Custom card
+  AdaptiveCard card = AdaptiveCard.builder()
+      .title("Custom Notification")
+      .text("Test data created: 100 orders")
+      .addAction("View Orders", "https://app.example.com/orders")
+      .build();
+  notifier.sendCard(card);
+  ```
+  
+  ### Notification Configuration
+  
+  Control what gets included:
+  
+  ```properties
+  # Include test details
+  teams.include.test.details=true
+  
+  # Max failed tests to show
+  teams.max.failed.tests=10
+  
+  # Include stack traces
+  teams.include.stack.traces=false
+  
+  # Include screenshots
+  teams.include.screenshots=true
+  
+  # Max screenshots
+  teams.max.screenshots=3
+  ```
+  
+  ## Custom Steps and Annotations
+  
+  ### Custom Allure Steps
+  
+  Create reusable step methods:
+  
+  ```java
+  public class TestSteps {
+      @Step("Login as user {username}")
+      public static DashboardPage loginAs(String username, String password) {
+          LoginPage loginPage = new LoginPage();
+          return loginPage.login(username, password);
+      }
+  
+      @Step("Create order for {symbol}")
+      public static OrderResponse createOrder(String symbol, OrderSide side) {
+          CreateOrderRequest request = CreateOrderRequest.limitOrder(
+              symbol, side, 100000, 1.0850
+          );
+          ApiResponse response = OrderService.createOrder(traderToken, request);
+          return response.as(OrderResponse.class);
+      }
+  
+      @Step("Verify order {orderId} is filled")
+      public static void verifyOrderFilled(String orderId) {
+          ApiResponse response = OrderService.getOrder(traderToken, orderId);
+          OrderResponse order = response.as(OrderResponse.class);
+          assertThat(order.status()).isEqualTo("FILLED");
+      }
+  }
+  ```
+  
+  **Usage**:
+  ```java
+  @Test
+  void test_order_fullWorkflow_completesSuccessfully() {
+      DashboardPage dashboard = TestSteps.loginAs("trader", "password");
+      OrderResponse order = TestSteps.createOrder("EURUSD", OrderSide.BUY);
+      TestSteps.verifyOrderFilled(order.id());
+  }
+  ```
+  
+  ### Custom Annotations
+  
+  Create project-specific test annotations:
+  
+  ```java
+  @Target(ElementType.METHOD)
+  @Retention(RetentionPolicy.RUNTIME)
+  @Test
+  @Severity(SeverityLevel.CRITICAL)
+  @Epic("Trading Platform")
+  public @interface TradingTest {
+      String feature() default "";
+      String story() default "";
+  }
+  ```
+  
+  **Usage**:
+  ```java
+  @TradingTest(feature = "Order Management", story = "Order Creation")
+  void test_order_createLimitOrder_succeeds() {
+      // Test implementation
+  }
+  ```
+  
+  ## Screenshots and Videos
+  
+  ### Automatic Capture
+  
+  **Screenshots**:
+  - Captured automatically on web test failure
+  - Attached to Allure report
+  - Uploaded to XRay (if enabled)
+  - Included in Teams notifications (if enabled)
+  
+  **Videos**:
+  - Recorded for all web tests (if enabled)
+  - Attached to Allure report on failure
+  - Uploaded to XRay (if enabled)
+  
+  ### Configuration
+  
+  ```properties
+  # Screenshots
+  browser.screenshot.enabled=true
+  browser.screenshot.path=target/screenshots/
+  browser.screenshot.format=png
+  browser.screenshot.fullpage=true
+  
+  # Videos
+  browser.video.enabled=true
+  browser.video.path=target/videos/
+  browser.video.size=1280x720
+  browser.video.quality=80
+  ```
+  
+  ### Manual Capture
+  
+  Take screenshots programmatically:
+  
+  ```java
+  @Test
+  @WebTest
+  void test_dashboard_screenshotCapture_succeeds() {
+      DashboardPage dashboard = new DashboardPage();
+  
+      // Take screenshot at specific point
+      WebDriver driver = DriverManager.getDriver();
+      Path screenshot = Paths.get("target/screenshots/dashboard.png");
+      driver.takeScreenshot(screenshot);
+  
+      // Attach to Allure
+      Allure.addAttachment("Dashboard View", "image/png",
+          Files.readAllBytes(screenshot), "png");
+  }
+  ```
+  
+  ## CI/CD Integration
+  
+  ### GitHub Actions
+  
+  ```yaml
+  name: Test Suite
+  
+  on: [push, pull_request]
+  
+  jobs:
+    test:
+      runs-on: ubuntu-latest
+  
+      steps:
+        - uses: actions/checkout@v3
+  
+        - name: Set up JDK 21
+          uses: actions/setup-java@v3
+          with:
+            java-version: '21'
+            distribution: 'temurin'
+  
+        - name: Run tests
+          env:
+            API_USERNAME: ${{ secrets.API_USERNAME }}
+            API_PASSWORD: ${{ secrets.API_PASSWORD }}
+            XRAY_CLIENT_ID: ${{ secrets.XRAY_CLIENT_ID }}
+            XRAY_CLIENT_SECRET: ${{ secrets.XRAY_CLIENT_SECRET }}
+            TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          run: mvn test -Dtest.env=ci
+  
+        - name: Generate Allure Report
+          if: always()
+          run: mvn allure:report
+  
+        - name: Upload Allure Results
+          if: always()
+          uses: actions/upload-artifact@v3
+          with:
+            name: allure-results
+            path: target/allure-results/
+  
+        - name: Upload Allure Report
+          if: always()
+          uses: actions/upload-artifact@v3
+          with:
+            name: allure-report
+            path: target/site/allure-maven-plugin/
+  
+        - name: Upload Screenshots
+          if: failure()
+          uses: actions/upload-artifact@v3
+          with:
+            name: screenshots
+            path: target/screenshots/
+  
+        - name: Upload Videos
+          if: failure()
+          uses: actions/upload-artifact@v3
+          with:
+            name: videos
+            path: target/videos/
+  ```
+  
+  ### Jenkins
+  
+  ```groovy
+  pipeline {
+      agent any
+  
+      environment {
+          API_USERNAME = credentials('api-username')
+          API_PASSWORD = credentials('api-password')
+          XRAY_CLIENT_ID = credentials('xray-client-id')
+          XRAY_CLIENT_SECRET = credentials('xray-client-secret')
+          TEAMS_WEBHOOK_URL = credentials('teams-webhook-url')
+      }
+  
+      stages {
+          stage('Test') {
+              steps {
+                  sh 'mvn test -Dtest.env=ci'
+              }
+          }
+  
+          stage('Report') {
+              steps {
+                  allure([
+                      includeProperties: false,
+                      jdk: '',
+                      properties: [],
+                      reportBuildPolicy: 'ALWAYS',
+                      results: [[path: 'target/allure-results']]
+                  ])
+              }
+          }
+      }
+  
+      post {
+          always {
+              archiveArtifacts artifacts: 'target/screenshots/**/*.png', allowEmptyArchive: true
+              archiveArtifacts artifacts: 'target/videos/**/*.webm', allowEmptyArchive: true
+          }
+      }
+  }
+  ```
+  
+  ### GitLab CI
+  
+  ```yaml
+  test:
+    stage: test
+    image: maven:3.9-eclipse-temurin-21
+    variables:
+      API_USERNAME: $API_USERNAME
+      API_PASSWORD: $API_PASSWORD
+      XRAY_CLIENT_ID: $XRAY_CLIENT_ID
+      XRAY_CLIENT_SECRET: $XRAY_CLIENT_SECRET
+      TEAMS_WEBHOOK_URL: $TEAMS_WEBHOOK_URL
+    script:
+      - mvn test -Dtest.env=ci
+      - mvn allure:report
+    artifacts:
+      when: always
+      paths:
+        - target/allure-results/
+        - target/site/allure-maven-plugin/
+        - target/screenshots/
+        - target/videos/
+      reports:
+        junit: target/surefire-reports/TEST-*.xml
+  ```
+  
+  ## Best Practices
+  
+  ### Test Organization
+  
+  Use Allure annotations for clear hierarchy:
+  
+  ```java
+  @Epic("Trading Platform")
+  public class TradingTests {
+  
+      @Feature("Order Management")
+      public class OrderTests {
+  
+          @Story("Order Creation")
+          @Test
+          @WebTest
+          @Severity(SeverityLevel.CRITICAL)
+          void test_order_createLimitOrder_succeeds() {
+              // Test implementation
+          }
+  
+          @Story("Order Modification")
+          @Test
+          @WebTest
+          @Severity(SeverityLevel.NORMAL)
+          void test_order_modifyOrder_updatesSuccessfully() {
+              // Test implementation
+          }
+      }
+  
+      @Feature("Account Management")
+      public class AccountTests {
+  
+          @Story("Deposit")
+          @Test
+          void test_account_deposit_succeeds() {
+              // Test implementation
+          }
+      }
+  }
+  ```
+  
+  ### Step Granularity
+  
+  **Too fine-grained** (noisy):
+  ```java
+  Allure.step("Get username field");
+  Allure.step("Type username");
+  Allure.step("Get password field");
+  Allure.step("Type password");
+  Allure.step("Get login button");
+  Allure.step("Click login button");
+  ```
+  
+  **Too coarse-grained** (not useful):
+  ```java
+  Allure.step("Login");
+  // 50 lines of code
+  ```
+  
+  **Just right**:
+  ```java
+  Allure.step("Enter credentials");
+  usernameField.enterText(username);
+  passwordField.enterText(password);
+  
+  Allure.step("Submit login form");
+  loginButton.click();
+  ```
+  
+  ### Screenshot Strategy
+  
+  **Don't overdo it**:
+  ```java
+  // ❌ BAD - Too many screenshots
+  driver.takeScreenshot(Paths.get("step1.png"));
+  driver.takeScreenshot(Paths.get("step2.png"));
+  driver.takeScreenshot(Paths.get("step3.png"));
+  // ... 20 screenshots later
+  ```
+  
+  **Be strategic**:
+  ```java
+  // ✅ GOOD - Key verification points
+  Allure.step("Verify dashboard loaded");
+  driver.takeScreenshot(Paths.get("dashboard-loaded.png"));
+  
+  Allure.step("Verify order created");
+  driver.takeScreenshot(Paths.get("order-confirmation.png"));
+  ```
+  
+  **Note**: Automatic screenshot on failure handles most needs.
+  
+  ### Teams Notification Strategy
+  
+  ```properties
+  # Development - minimal noise
+  teams.notify.on.success=false
+  teams.notify.on.failure=true
+  teams.include.test.details=false
+  
+  # CI/CD - inform team
+  teams.notify.on.success=false
+  teams.notify.on.failure=true
+  teams.include.test.details=true
+  teams.include.stack.traces=true
+  
+  # Production - always notify
+  teams.notify.on.success=true
+  teams.notify.on.failure=true
+  teams.include.test.details=true
+  teams.include.screenshots=true
+  ```
+  
+  ### XRay Test Management
+  
+  **Link strategically**:
+  - Link automated tests to test cases in XRay
+  - Keep test cases high-level (business scenarios)
+  - Don't create test cases for every unit test
+  - Use test sets to group related tests
+  
+  ```java
+  // ✅ GOOD - Link business scenario
+  @Test
+  @XRayTest(testId = "PROJ-123")
+  @Description("User can create and execute a limit order")
+  void test_order_createAndExecute_completesSuccessfully() {
+      // Test implementation
+  }
+  
+  // ❌ BAD - Linking low-level test
+  @Test
+  @XRayTest(testId = "PROJ-999")
+  @Description("Price.multiply() returns correct value")
+  void test_price_multiply_returnsCorrectValue() {
+      // Unit test - don't link to XRay
+  }
+  ```
+  
+  ### Report History
+  
+  Maintain Allure history for trends:
+  
+  ```bash
+  # In CI/CD, preserve history
+  cp -r target/allure-results/* /path/to/history/
+  cp -r /path/to/history/* target/allure-results/
+  mvn allure:report
+  ```
+  
+  **Benefits**:
+  - See pass/fail trends over time
+  - Identify flaky tests
+  - Track duration changes
+  - Monitor test suite growth
+  
+  ## AllureTestWatcher (Auto-Registered JUnit 5 Extension)
+
+  `AllureTestWatcher` is automatically registered via JUnit ServiceLoader when `junit.jupiter.extensions.autodetection.enabled=true` in `junit-platform.properties`.
+
+  **Lifecycle hooks:**
+  - `beforeEach`: Starts log capture, adds test metadata (class, method, thread name)
+  - `afterEach`: Stops log capture
+  - `testSuccessful`: Discards pre-captured artifacts (not needed for passing tests)
+  - `testFailed`: Attaches to Allure report: logs, error details with stack trace, screenshot, page diagnostics, video, Playwright trace
+  - `testAborted`/`testDisabled`: Same as testFailed (capture artifacts before skip)
+
+  **Configuration** (system properties):
+  ```properties
+  allure.attach.logs=true          # Attach captured test logs (default: true)
+  allure.attach.screenshots=true   # Attach screenshots on failure (default: true)
+  allure.attach.videos=true        # Attach video recordings (default: true)
+  allure.attach.traces=true        # Attach Playwright traces (default: true)
+  ```
+
+  ## AllureDriverLifecycleListener (Pre-Destruction Artifact Capture)
+
+  Registered via `DriverLifecycleListener` SPI. Runs BEFORE `DriverManager.quitDriver()` destroys the browser.
+
+  **Capture order** (matters — video stop closes page):
+  1. Screenshot (PNG)
+  2. Page diagnostics (console logs, JS errors, network requests)
+  3. Video data (stops recording, closes page context)
+  4. Playwright trace (ZIP)
+
+  Artifacts stored in thread-local `AllureTestState`, retrieved by `AllureTestWatcher` in `testFailed()`.
+
+  ## XRayExtension (Auto-Registered JUnit 5 Extension)
+
+  Auto-registered via JUnit ServiceLoader. Processes `@XRayTest` annotations.
+
+  **Reporting modes:**
+  ```java
+  @Test @XRayTest(testId = "PROJ-123")
+  void test() {}  // Reports immediately on test completion
+
+  @Test @XRayTest(testId = "PROJ-124", createTestRun = true)
+  void batchedTest() {}  // Batched, reported in afterAll() as a test run
+  ```
+
+  **Test run ID:** Set via `-Dxray.testrun.id=TR-123` (default: "AUTOMATED-RUN")
+
+  **Status mapping:**
+  - Test passed → PASSED
+  - Test failed → FAILED (with first 500 chars of error message)
+  - Test aborted → SKIPPED
+  - Test disabled → SKIPPED
+
+  Thread-safe for parallel test execution (ConcurrentHashMap + CopyOnWriteArrayList).
+
+  ---
+
+  **Next**: Read `API_QUICK_REFERENCE.yaml` for a quick lookup of all framework APIs.

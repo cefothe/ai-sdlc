@@ -1,0 +1,1018 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-sdlc.io/schemas/v1alpha1/pipeline.schema.json",
+  "title": "AI-SDLC Pipeline",
+  "description": "Defines a complete SDLC workflow from trigger through delivery.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "$ref": "common.schema.json#/$defs/apiVersion"
+    },
+    "kind": {
+      "type": "string",
+      "const": "Pipeline"
+    },
+    "metadata": {
+      "$ref": "common.schema.json#/$defs/metadata"
+    },
+    "spec": {
+      "type": "object",
+      "required": ["triggers", "providers", "stages"],
+      "properties": {
+        "triggers": {
+          "type": "array",
+          "description": "Events that initiate the pipeline.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["event"],
+            "properties": {
+              "event": {
+                "type": "string",
+                "description": "The event type that triggers the pipeline (e.g., issue.assigned, pr.opened)."
+              },
+              "filter": {
+                "type": "object",
+                "description": "Conditions that must match for the trigger to fire.",
+                "properties": {
+                  "labels": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "branches": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "paths": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "providers": {
+          "type": "object",
+          "description": "Tool integrations used by the pipeline, keyed by interface category.",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "The adapter type (e.g., linear, github, jira)."
+              },
+              "config": {
+                "type": "object",
+                "description": "Adapter-specific configuration.",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "stages": {
+          "type": "array",
+          "description": "Ordered list of execution stages.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Unique name within the pipeline."
+              },
+              "agent": {
+                "type": "string",
+                "description": "Reference to an AgentRole resource name."
+              },
+              "qualityGates": {
+                "type": "array",
+                "description": "References to QualityGate resource names.",
+                "items": { "type": "string" }
+              },
+              "onFailure": {
+                "$ref": "#/$defs/FailurePolicy"
+              },
+              "timeout": {
+                "type": "string",
+                "description": "Maximum stage duration as an ISO 8601 duration (e.g., PT30M)."
+              },
+              "credentials": {
+                "$ref": "#/$defs/CredentialPolicy"
+              },
+              "approval": {
+                "$ref": "#/$defs/ApprovalPolicy"
+              },
+              "type": {
+                "type": "string",
+                "description": "Stage type (e.g., design-system, design-review, quality-gate, usability-test)."
+              },
+              "condition": {
+                "type": "string",
+                "description": "Expression that must evaluate to true for the stage to execute."
+              },
+              "context": {
+                "type": "object",
+                "description": "Context configuration for the stage.",
+                "additionalProperties": true
+              },
+              "constraints": {
+                "type": "object",
+                "description": "Stage-specific constraints for agent execution.",
+                "properties": {
+                  "requireStory": {
+                    "type": "boolean",
+                    "description": "Require Storybook story output."
+                  },
+                  "requireTokenUsage": {
+                    "type": "boolean",
+                    "description": "Require design token usage (no hardcoded values)."
+                  },
+                  "preferComposition": {
+                    "type": "boolean",
+                    "description": "Prefer composing existing components over creating new ones."
+                  }
+                },
+                "additionalProperties": true
+              },
+              "config": {
+                "type": "object",
+                "description": "Stage-specific configuration.",
+                "additionalProperties": true
+              },
+              "model": {
+                "type": "string",
+                "description": "Per-stage model alias (haiku, sonnet, opus, opus[1m]) or 'inherit' to defer to Pipeline.spec.defaultModel. RFC-0010 §6.3 / §11."
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["agent", "review-classifier", "review-fanout"],
+                "description": "Stage kind. Defaults to 'agent'. review-classifier and review-fanout drive RFC-0010 §12 conditional review behavior."
+              },
+              "maxBudgetUsd": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Per-stage cost ceiling. When exceeded the orchestrator emits BudgetExceeded and applies onFailure. RFC-0010 §6.3 / §11.5."
+              },
+              "harness": {
+                "type": "string",
+                "enum": ["claude-code", "codex", "gemini-cli", "opencode", "aider", "generic-api", "inherit"],
+                "description": "Per-stage harness selection. Defaults to 'inherit' (Pipeline.spec.defaultHarness, default 'claude-code'). RFC-0010 §6.3 / §13."
+              },
+              "harnessFallback": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["claude-code", "codex", "gemini-cli", "opencode", "aider", "generic-api"]
+                },
+                "description": "Ordered fallback chain on availability failures. RFC-0010 §13.5."
+              },
+              "requiresIndependentHarnessFrom": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Upstream stage names whose resolved harness MUST be excluded from this stage's effective chain (cross-harness review independence per RFC §13.10 / Q8)."
+              },
+              "schedule": {
+                "type": "string",
+                "enum": ["now", "off-peak", "quota-permitting", "defer-if-low-priority"],
+                "default": "now",
+                "description": "Subscription-aware dispatch hint per RFC §6.3 / §14.3."
+              },
+              "estimatedTokens": {
+                "type": "object",
+                "properties": {
+                  "input": { "type": "integer", "minimum": 0 },
+                  "output": { "type": "integer", "minimum": 0 },
+                  "frozen": { "type": "boolean" }
+                },
+                "required": ["input", "output"],
+                "additionalProperties": false,
+                "description": "Operator hint for SubscriptionLedger window-headroom math. When omitted, cold-start defaults apply (50000/10000) and EstimateBootstrapped fires after first run. Set frozen: true to opt out of rolling updates. RFC §6.3 / §14.6."
+              },
+              "databaseAccess": {
+                "type": "string",
+                "enum": ["none", "read", "write", "migrate"],
+                "default": "none",
+                "description": "Per-stage database-access declaration. Drives DatabaseBranchPool provisioning per RFC §6.3 / §15.7."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "routing": {
+          "type": "object",
+          "description": "Complexity-based task routing configuration.",
+          "properties": {
+            "complexityThresholds": {
+              "type": "object",
+              "description": "Named complexity tiers with score ranges and strategies.",
+              "additionalProperties": {
+                "type": "object",
+                "required": ["min", "max", "strategy"],
+                "properties": {
+                  "min": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "Minimum complexity score (inclusive)."
+                  },
+                  "max": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "Maximum complexity score (inclusive)."
+                  },
+                  "strategy": {
+                    "type": "string",
+                    "enum": ["fully-autonomous", "ai-with-review", "ai-assisted", "human-led"],
+                    "description": "The routing strategy for this complexity tier."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "branching": {
+          "$ref": "#/$defs/BranchingConfig"
+        },
+        "backlog": {
+          "$ref": "#/$defs/BacklogConfig"
+        },
+        "pullRequest": {
+          "$ref": "#/$defs/PullRequestConfig"
+        },
+        "notifications": {
+          "$ref": "#/$defs/NotificationsConfig"
+        },
+        "costPolicy": {
+          "$ref": "#/$defs/CostPolicy"
+        },
+        "priorityPolicy": {
+          "$ref": "#/$defs/PriorityPolicy"
+        },
+        "embedding": {
+          "$ref": "#/$defs/EmbeddingSpec",
+          "description": "Optional embedding-provider configuration per RFC-0019 §10.1. When absent, the embedding framework is disabled and consumers emit EmbeddingProviderNotConfigured. When present AND AI_SDLC_EMBEDDING_PROVIDER=on, pipeline-load resolves the named adapter from orchestrator/src/embedding/registry.ts and instantiates the named storage backend."
+        },
+        "parallelism": {
+          "$ref": "#/$defs/Parallelism",
+          "description": "Concurrency configuration. When omitted, the pipeline executes serially. See RFC-0010 §6.1 / §9.1."
+        },
+        "defaultModel": {
+          "type": "string",
+          "default": "sonnet",
+          "description": "Resolution target for any Stage with model: inherit (or absent). Defaults to sonnet. RFC-0010 §6.4."
+        },
+        "defaultHarness": {
+          "type": "string",
+          "enum": ["claude-code", "codex", "gemini-cli", "opencode", "aider", "generic-api"],
+          "default": "claude-code",
+          "description": "Resolution target for any Stage with harness: inherit. Defaults to claude-code. RFC-0010 §6.5."
+        },
+        "defaultHarnessFallback": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["claude-code", "codex", "gemini-cli", "opencode", "aider", "generic-api"]
+          },
+          "description": "Pipeline-wide default fallback chain applied to stages that omit harnessFallback. RFC-0010 §6.5."
+        },
+        "tenant": {
+          "type": "string",
+          "description": "Tenant identifier for SubscriptionLedger keying. When set, partitions a shared vendor account into virtual sub-windows per RFC-0010 §6.5 / §14.12."
+        },
+        "tenantQuotaShare": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of the shared account's window quota allocated to this tenant. Required when tenant is set and multiple tenants exist on the same account; sum across tenants MUST equal 1.0."
+        },
+        "accountId": {
+          "type": "string",
+          "description": "Override for HarnessAdapter.getAccountId() auto-derivation (LedgerKeyAmbiguous fallback). RFC-0010 §6.5."
+        },
+        "offPeakMaxWait": {
+          "type": "string",
+          "description": "Maximum time a schedule: off-peak stage may wait before dispatching on-peak. ISO 8601 duration; defaults to PT8H. RFC-0010 §6.5 / §14.3."
+        },
+        "artifactSchemaVersion": {
+          "type": "string",
+          "default": "v1",
+          "description": "Pinned artifact-schema version per RFC-0010 §6.5 / §16.4 schema evolution semantics."
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": ["Pending", "Running", "Succeeded", "Failed", "Suspended"],
+          "description": "Current pipeline phase."
+        },
+        "activeStage": {
+          "type": "string",
+          "description": "Name of the currently executing stage."
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/condition"
+          }
+        },
+        "stageAttempts": {
+          "type": "object",
+          "description": "Per-stage execution attempt counts.",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "pendingApproval": {
+          "$ref": "#/$defs/ApprovalStatus"
+        },
+        "cost": {
+          "$ref": "#/$defs/CostStatus"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "FailurePolicy": {
+      "type": "object",
+      "description": "Defines how a stage failure is handled.",
+      "required": ["strategy"],
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["abort", "retry", "pause", "continue"],
+          "description": "The failure handling strategy."
+        },
+        "maxRetries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximum retry attempts (required when strategy is retry)."
+        },
+        "retryDelay": {
+          "type": "string",
+          "description": "Delay between retries as an ISO 8601 duration (e.g., PT1M)."
+        },
+        "notification": {
+          "type": "string",
+          "description": "Name of a notification template to send on failure."
+        }
+      },
+      "if": {
+        "properties": { "strategy": { "const": "retry" } }
+      },
+      "then": {
+        "required": ["maxRetries"]
+      },
+      "additionalProperties": false
+    },
+    "CredentialPolicy": {
+      "type": "object",
+      "description": "JIT credential scope and lifetime for a stage.",
+      "required": ["scope"],
+      "properties": {
+        "scope": {
+          "type": "array",
+          "description": "Permission scopes required by the stage.",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "ttl": {
+          "type": "string",
+          "description": "Credential time-to-live as an ISO 8601 duration.",
+          "default": "PT10M"
+        },
+        "revokeOnComplete": {
+          "type": "boolean",
+          "description": "Whether to revoke credentials when the stage completes.",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ApprovalPolicy": {
+      "type": "object",
+      "description": "Approval requirements before a stage executes.",
+      "required": ["required"],
+      "properties": {
+        "required": {
+          "type": "boolean",
+          "description": "Whether approval is required for this stage."
+        },
+        "tierOverride": {
+          "type": "string",
+          "enum": ["auto", "peer-review", "team-lead", "security-review"],
+          "description": "Override the automatically determined approval tier."
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "Whether the stage blocks until approval is granted.",
+          "default": true
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Maximum time to wait for approval as an ISO 8601 duration."
+        },
+        "onTimeout": {
+          "type": "string",
+          "enum": ["abort", "escalate", "auto-approve"],
+          "description": "Action to take when the approval timeout expires."
+        }
+      },
+      "additionalProperties": false
+    },
+    "BranchingConfig": {
+      "type": "object",
+      "description": "Branch naming, target, and cleanup policy.",
+      "required": ["pattern"],
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "description": "Branch name pattern with placeholders (e.g., ai-sdlc/issue-{issueNumber})."
+        },
+        "targetBranch": {
+          "type": "string",
+          "description": "Target branch for pull requests.",
+          "default": "main"
+        },
+        "cleanup": {
+          "type": "string",
+          "enum": ["on-merge", "on-close", "manual"],
+          "description": "When to delete the feature branch."
+        }
+      },
+      "additionalProperties": false
+    },
+    "BacklogConfig": {
+      "type": "object",
+      "description": "Backlog-workflow specific configuration. Canonical location for settings previously in pipeline-backlog.yaml (AISDLC-245.5). Readers fall back to pipeline-backlog.yaml with a deprecation warning when this section is absent.",
+      "properties": {
+        "branching": {
+          "$ref": "#/$defs/BranchingConfig"
+        },
+        "pullRequest": {
+          "$ref": "#/$defs/PullRequestConfig"
+        },
+        "milestones": {
+          "type": "object",
+          "description": "Milestone-to-backlog-task mapping for cross-cutting release planning.",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PullRequestConfig": {
+      "type": "object",
+      "description": "Pull request creation conventions.",
+      "properties": {
+        "titleTemplate": {
+          "type": "string",
+          "description": "PR title template with placeholders (e.g., fix: {issueTitle} (#{issueNumber}))."
+        },
+        "descriptionSections": {
+          "type": "array",
+          "description": "Sections to include in the PR description.",
+          "items": { "type": "string" }
+        },
+        "includeProvenance": {
+          "type": "boolean",
+          "description": "Whether to include AI provenance metadata in the PR.",
+          "default": true
+        },
+        "closeKeyword": {
+          "type": "string",
+          "description": "Keyword used to auto-close the linked issue (e.g., Closes, Fixes)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "NotificationsConfig": {
+      "type": "object",
+      "description": "Named notification templates for pipeline events.",
+      "properties": {
+        "templates": {
+          "type": "object",
+          "description": "Map of template names to notification templates.",
+          "additionalProperties": {
+            "$ref": "#/$defs/NotificationTemplate"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "NotificationTemplate": {
+      "type": "object",
+      "description": "A templated notification message for pipeline events.",
+      "required": ["target", "title"],
+      "properties": {
+        "target": {
+          "type": "string",
+          "enum": ["issue", "pr", "both"],
+          "description": "Where to post the notification."
+        },
+        "title": {
+          "type": "string",
+          "description": "Notification title template."
+        },
+        "body": {
+          "type": "string",
+          "description": "Notification body template with placeholders."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ApprovalStatus": {
+      "type": "object",
+      "description": "Status of a pending approval request.",
+      "required": ["stage", "tier", "requestedAt"],
+      "properties": {
+        "stage": {
+          "type": "string",
+          "description": "The stage awaiting approval."
+        },
+        "tier": {
+          "type": "string",
+          "description": "The approval tier required."
+        },
+        "requestedAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp when approval was requested."
+        },
+        "timeoutAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp when the approval times out."
+        }
+      },
+      "additionalProperties": false
+    },
+    "CostThreshold": {
+      "type": "object",
+      "description": "A cost threshold with an associated action.",
+      "required": ["amount", "currency", "action"],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cost amount."
+        },
+        "currency": {
+          "type": "string",
+          "description": "Currency code (e.g., USD)."
+        },
+        "action": {
+          "type": "string",
+          "enum": ["notify", "require-approval", "abort"],
+          "description": "Action to take when the threshold is reached."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExecutionCostLimit": {
+      "type": "object",
+      "description": "Per-execution cost limits with soft and hard thresholds.",
+      "properties": {
+        "softLimit": {
+          "$ref": "#/$defs/CostThreshold"
+        },
+        "hardLimit": {
+          "$ref": "#/$defs/CostThreshold"
+        }
+      },
+      "additionalProperties": false
+    },
+    "StageCostLimit": {
+      "type": "object",
+      "description": "Cost limits for a pipeline stage.",
+      "properties": {
+        "tokenLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum tokens allowed for this stage."
+        },
+        "timeLimit": {
+          "type": "string",
+          "description": "Maximum duration as an ISO 8601 duration (e.g., PT30M)."
+        },
+        "costLimit": {
+          "$ref": "#/$defs/CostThreshold"
+        }
+      },
+      "additionalProperties": false
+    },
+    "StageCostPolicy": {
+      "type": "object",
+      "description": "Per-stage cost policy with defaults and per-stage overrides.",
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/StageCostLimit"
+        },
+        "overrides": {
+          "type": "object",
+          "description": "Per-stage cost limit overrides, keyed by stage name.",
+          "additionalProperties": {
+            "$ref": "#/$defs/StageCostLimit"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "BudgetAlert": {
+      "type": "object",
+      "description": "An alert triggered when budget consumption reaches a threshold.",
+      "required": ["threshold", "action"],
+      "properties": {
+        "threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Budget consumption ratio (0-1) that triggers this alert."
+        },
+        "action": {
+          "type": "string",
+          "enum": ["notify", "require-approval", "block"],
+          "description": "Action to take when the threshold is reached."
+        },
+        "targets": {
+          "type": "array",
+          "description": "Notification targets (e.g., channel names, email addresses).",
+          "items": { "type": "string" }
+        },
+        "approver": {
+          "type": "string",
+          "description": "Role or identity required to approve continued spending."
+        },
+        "message": {
+          "type": "string",
+          "description": "Custom alert message."
+        }
+      },
+      "additionalProperties": false
+    },
+    "BudgetPolicy": {
+      "type": "object",
+      "description": "Rolling budget constraints for cost governance.",
+      "required": ["period", "amount", "currency"],
+      "properties": {
+        "period": {
+          "type": "string",
+          "enum": ["day", "week", "month", "quarter"],
+          "description": "Budget period."
+        },
+        "amount": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Budget amount."
+        },
+        "currency": {
+          "type": "string",
+          "description": "Currency code (e.g., USD)."
+        },
+        "alerts": {
+          "type": "array",
+          "description": "Budget consumption alerts.",
+          "items": {
+            "$ref": "#/$defs/BudgetAlert"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "AttributionPolicy": {
+      "type": "object",
+      "description": "Cost attribution configuration for chargeback and analysis.",
+      "required": ["dimensions"],
+      "properties": {
+        "dimensions": {
+          "type": "array",
+          "description": "Dimensions to track for cost attribution (e.g., agent, model, stage, repository, team).",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "chargeback": {
+          "type": "string",
+          "enum": ["per-repository", "per-team", "per-agent", "proportional"],
+          "description": "Chargeback allocation strategy."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ModelPricing": {
+      "type": "object",
+      "description": "Pricing information for a specific model.",
+      "required": ["inputPerMTok", "outputPerMTok"],
+      "properties": {
+        "inputPerMTok": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cost per million input tokens."
+        },
+        "outputPerMTok": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cost per million output tokens."
+        },
+        "cacheReadPerMTok": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cost per million cache read tokens."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ModelPricingConfig": {
+      "type": "object",
+      "description": "Model pricing configuration.",
+      "required": ["source"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["config", "api"],
+          "description": "How model pricing is obtained."
+        },
+        "models": {
+          "type": "object",
+          "description": "Per-model pricing overrides, keyed by model identifier.",
+          "additionalProperties": {
+            "$ref": "#/$defs/ModelPricing"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "CostPolicy": {
+      "type": "object",
+      "description": "Cost governance policy declaring cost boundaries at per-execution, per-stage, and budget levels. See RFC-0004.",
+      "properties": {
+        "perExecution": {
+          "$ref": "#/$defs/ExecutionCostLimit"
+        },
+        "perStage": {
+          "$ref": "#/$defs/StageCostPolicy"
+        },
+        "budget": {
+          "$ref": "#/$defs/BudgetPolicy"
+        },
+        "attribution": {
+          "$ref": "#/$defs/AttributionPolicy"
+        },
+        "modelPricing": {
+          "$ref": "#/$defs/ModelPricingConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PriorityDimensionConfig": {
+      "type": "object",
+      "description": "Configuration for a single PPA dimension.",
+      "properties": {
+        "min": {
+          "type": "number",
+          "description": "Minimum bound for this dimension."
+        },
+        "max": {
+          "type": "number",
+          "description": "Maximum bound for this dimension."
+        }
+      },
+      "additionalProperties": false
+    },
+    "PriorityDimensionsConfig": {
+      "type": "object",
+      "description": "Per-dimension configuration for priority scoring.",
+      "properties": {
+        "marketForce": {
+          "$ref": "#/$defs/PriorityDimensionConfig"
+        },
+        "humanCurveWeights": {
+          "type": "object",
+          "description": "Weights for human curve sub-components.",
+          "properties": {
+            "explicit": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Weight for explicit priority signal."
+            },
+            "consensus": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Weight for team consensus signal."
+            },
+            "decision": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Weight for meeting decision signal."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "PriorityCalibrationConfig": {
+      "type": "object",
+      "description": "Calibration loop configuration for priority scoring.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether automatic calibration is enabled.",
+          "default": false
+        },
+        "lookbackPeriod": {
+          "type": "string",
+          "description": "ISO 8601 duration for calibration lookback window (e.g., P30D)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "PriorityAdaptersConfig": {
+      "type": "object",
+      "description": "Adapter references for priority signal ingestion.",
+      "properties": {
+        "supportChannel": {
+          "type": "string",
+          "description": "Name of the SupportChannel adapter binding."
+        },
+        "crm": {
+          "type": "string",
+          "description": "Name of the CrmProvider adapter binding."
+        },
+        "analytics": {
+          "type": "string",
+          "description": "Name of the AnalyticsProvider adapter binding."
+        }
+      },
+      "additionalProperties": false
+    },
+    "PriorityPolicy": {
+      "type": "object",
+      "description": "Priority scoring policy using the Product Priority Algorithm (PPA). See RFC-0005.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether priority scoring is enabled.",
+          "default": false
+        },
+        "minimumScore": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum composite score required to enqueue a work item."
+        },
+        "minimumConfidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum confidence threshold; items below this are flagged for review."
+        },
+        "soulPurpose": {
+          "type": "string",
+          "description": "Product soul purpose statement used for soul alignment scoring."
+        },
+        "dimensions": {
+          "$ref": "#/$defs/PriorityDimensionsConfig"
+        },
+        "calibration": {
+          "$ref": "#/$defs/PriorityCalibrationConfig"
+        },
+        "adapters": {
+          "$ref": "#/$defs/PriorityAdaptersConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "EmbeddingSpec": {
+      "type": "object",
+      "description": "Embedding provider configuration per RFC-0019 §10.1. Absent = framework disabled. Present + AI_SDLC_EMBEDDING_PROVIDER=on = framework loads. See docs/operations/embedding-providers.md.",
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "Canonical adapter alias resolved against orchestrator/src/embedding/registry.ts. Example: 'openai-text-embedding-3-small'. Unknown names fail pipeline-load with UnknownEmbeddingProvider."
+        },
+        "fallback": {
+          "type": "string",
+          "description": "Adapter alias to fall back to when the primary is unavailable. Same value as `provider` means no fallback. Subject to the same registry resolution."
+        },
+        "storageBackend": {
+          "type": "string",
+          "default": "jsonl",
+          "description": "Backend identifier resolved against orchestrator/src/embedding/storage/index.ts. v1 ships 'jsonl'; future backends ('sqlite', 'pgvector', 'qdrant') implement EmbeddingStorageBackend and self-register."
+        },
+        "storageBackendConfig": {
+          "type": "object",
+          "description": "Backend-specific configuration. Opaque to the framework; passed through to the backend constructor.",
+          "additionalProperties": true
+        },
+        "staleVectorPolicy": {
+          "type": "string",
+          "enum": ["lazy-re-embed", "fail-loud", "warn"],
+          "default": "lazy-re-embed",
+          "description": "Per-org default for stale-vector encounters per RFC-0019 OQ-2 re-walkthrough. Consumers MAY pin a stricter policy at the API site (e.g., RFC-0009 Eτ_tessellation_drift pins 'fail-loud' regardless of org default to preserve historical-trajectory fidelity)."
+        },
+        "autoEmbedOnWrite": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, write paths embed-and-store automatically. When false, callers must explicitly invoke embed() + store."
+        },
+        "maxBatchSize": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 2048,
+          "description": "Maximum texts per embedBatch() call. Adapter-specific cap; framework chunks larger requests."
+        },
+        "deprecationOverrides": {
+          "type": "object",
+          "description": "Per-org deprecation override per RFC-0019 OQ-4 re-walkthrough. Overrides the adapter-declared defaultGracePeriodDays (which itself overrides the 90d framework default). Catalog dedup milestones (89/60/30/7/1 days before deprecatedAt) are applied uniformly.",
+          "properties": {
+            "gracePeriodDays": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Days before deprecatedAt at which warnings begin. Three-layer precedence: framework default (90d) → adapter defaultGracePeriodDays → this per-org override."
+            },
+            "strictModeAtDeprecatedAt": {
+              "type": "boolean",
+              "default": false,
+              "description": "When true, pipeline-load FAILS at deprecatedAt (operator-strict). When false (default), warnings continue past deprecatedAt and only removedAt fails the load."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "Parallelism": {
+      "type": "object",
+      "description": "Concurrency configuration introduced by RFC-0010. When this object is omitted, the pipeline executes serially (current behavior).",
+      "properties": {
+        "maxConcurrent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum number of issues executing concurrently. When omitted, derived from the declared SubscriptionPlan per RFC-0010 §9.1 resolution table; falls back to 1 when no plan is declared."
+        },
+        "worktreePool": {
+          "type": "string",
+          "description": "Name of the WorktreePool resource backing this pipeline. Defaults to the pipeline's own name."
+        },
+        "mergeStrategy": {
+          "type": "string",
+          "enum": ["serialized-rebase", "parallel-merge"],
+          "default": "serialized-rebase",
+          "description": "Merge ordering strategy. parallel-merge is reserved and forbidden in v1; only serialized-rebase is supported."
+        }
+      },
+      "additionalProperties": false
+    },
+    "CostStatus": {
+      "type": "object",
+      "description": "Observed cost status for a pipeline.",
+      "properties": {
+        "currentSpend": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Current spend in the budget period."
+        },
+        "budgetRemaining": {
+          "type": "number",
+          "description": "Remaining budget in the current period."
+        },
+        "projectedMonthEnd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Projected spend at end of current period (linear extrapolation)."
+        },
+        "lastUpdated": {
+          "type": "string",
+          "description": "ISO 8601 timestamp of last cost status update."
+        },
+        "activeAlerts": {
+          "type": "array",
+          "description": "Currently active budget alert descriptions.",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

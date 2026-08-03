@@ -1,0 +1,34 @@
+apiVersion: ai-sdlc.io/v1alpha1
+kind: Decision
+metadata:
+  id: DEC-0001
+  source: rfc-open-question
+  scope: project
+  created: '2026-07-17T21:00:00Z'
+  updated: '2026-07-17T21:00:00Z'
+spec:
+  summary: Sign attestation envelopes with ed25519 rather than RSA
+  reversible: false
+  body: |
+    ## Context
+    Cross-harness attestation (attestation/attestation.js) needs a signature
+    over the Merkle root of reviewer transcripts. Keys are generated per
+    reviewer and verified any-of-N against .ai-sdlc/trusted-reviewers.yaml.
+
+    ## Decision
+    Use ed25519. Small keys, fast verify, native in node:crypto, no parameter
+    choices to get wrong.
+
+    ## Consequences
+    trusted-reviewers.yaml stores SPKI PEM public keys. RSA envelopes are not
+    accepted by verifyEnvelope.
+  options:
+    - id: ed25519
+      description: Fast, 32-byte keys, native crypto — chosen.
+    - id: rsa-2048
+      description: Rejected — larger keys, slower, parameter pitfalls.
+status:
+  lifecycle: answered
+  answeredOptionId: ed25519
+  answeredBy: 'sangelov@tradu.com'
+  answeredAt: '2026-07-17T21:00:00Z'

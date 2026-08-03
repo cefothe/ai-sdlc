@@ -1,0 +1,34 @@
+# Consumer acceptance promises (-b declarations)
+# Phase 1: Single tier — full verification on all runs
+#
+# NOTE: Spec Section 7.1 also defines a `code-safety` consumer promise using
+# `ast_analysis` verification. This is deferred because `ast_analysis` is not
+# implemented in Phase 1 (only grep, file_check, output_contains, output_structure,
+# token_metric, timing are available). Any promise referencing `ast_analysis` will
+# fall through to the default handler and return `partial`. Add `code-safety` when
+# `ast_analysis` is implemented in a future iteration.
+
+consumer_promises:
+  - id: completeness
+    declaration: "I will not accept output with TODO/FIXME placeholders"
+    verification: grep
+    verification_params:
+      pattern: "TODO|FIXME|HACK"
+    confidence: high
+    on_rejection: rebind
+
+  - id: test-presence
+    declaration: "I will not accept implementation without accompanying tests"
+    verification: file_check
+    verification_params:
+      check: "test file exists"
+    confidence: high
+    on_rejection: rebind
+
+  - id: no-placeholder
+    declaration: "I will not accept placeholder implementations"
+    verification: grep
+    verification_params:
+      pattern: "NotImplementedException|throw new Error\\('not implemented'\\)"
+    confidence: high
+    on_rejection: rebind

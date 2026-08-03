@@ -1,0 +1,17 @@
+{"ts":"2026-07-14T10:55:06.003Z","ev":"fingerprint","model":"unknown","claude_md_hash":"unknown","rules_loaded":[],"promises_active":19,"registry_version":"2.3","cxpak_available":false,"cxpak_version":null}
+{"ts":"2026-07-14T10:55:05.987Z","ev":"start"}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Bash","args_summary":"ls -la && echo \"---TOP DIRS---\" && find . -maxdepth 1 -type d | sort","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Bash","args_summary":"echo \"=== README ===\" && ls README* 2>/dev/null && echo \"=== package.json ===...","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Read","args_summary":"/Users/stefanangelov/.claude/README.md","file_path":"/Users/stefanangelov/.claude/README.md","tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Agent","args_summary":"description:\"Analyze promise theory pillar\"","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Agent","args_summary":"description:\"Analyze measurement framework\"","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Agent","args_summary":"description:\"Analyze hooks pillar\"","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Agent","args_summary":"description:\"Analyze agents skills commands\"","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Bash","args_summary":"ls node_modules/js-yaml 2>/dev/null && echo \"EXISTS\" || echo \"MISSING node_mo...","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Bash","args_summary":"npm install 2>&1 | tail -20","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Bash","args_summary":"node -e \"require('/Users/stefanangelov/.claude/promise/registry-loader.js'); ...","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Bash","args_summary":"cd /Users/stefanangelov/.claude\necho \"=== commands/qa tree ===\"; find command...","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Bash","args_summary":"cd /Users/stefanangelov/.claude\nfor s in code-plan qa-functional-tests qa-aut...","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Bash","args_summary":"cd /Users/stefanangelov/.claude\necho \"=== frontmatter name fields ===\"\nfor d ...","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"tool","name":"Bash","args_summary":"cd /Users/stefanangelov/.claude; ls skills | grep -iE 'impl|build|generat|aut...","file_path":null,"tokens":{"in":0,"out":0}}
+{"ts":"2026-07-14T10:55:05.988Z","ev":"end","total_tokens":{"in":0,"out":0}}

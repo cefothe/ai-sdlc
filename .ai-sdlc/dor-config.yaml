@@ -1,0 +1,39 @@
+# Definition-of-Ready (DoR) gate configuration — RFC-0011 §13.
+# Schema: spec/schemas/dor-config.v1.schema.json. Defaults below match the
+# schema so a freshly-bootstrapped repo behaves identically to one with no
+# config. In enforce mode the gate refuses `/ai-sdlc execute` admission for
+# tasks whose verdict is not `ready`. Flip to warn-only to admit-and-report.
+apiVersion: ai-sdlc.io/v1alpha1
+kind: DorConfig
+metadata:
+  name: ai-sdlc-dor
+spec:
+  rubricVersion: v1
+  evaluationMode: enforce
+
+  notifications:
+    # Post the clarification comment to where the issue was authored.
+    authorChannel: true
+    # Optional centralised triage fan-out. Uncomment to enable.
+    # dedicatedChannel:
+    #   slack: '#ai-sdlc-dor'
+    #   github_team: '@ai-sdlc/triage'
+
+  # Two-stage warn-then-close staleness for tasks stuck needing clarification.
+  # closeAfterDays MUST be > warnAfterDays.
+  staleness:
+    warnAfterDays: 14
+    closeAfterDays: 28
+    closedLabel: 'closed-as-stale-dor'
+
+  # Blast-radius threshold above which a dor-bypass admit fires an FYI note.
+  blastRadiusThreshold: 3
+
+  # Machine-authored tasks (from the promise/signal pipeline) auto-pass the
+  # content gates that don't apply to them while still being checked against
+  # the structural gates (2 markers, 3 references, 7 invisible-deps).
+  autoPassRules:
+    - kind: signal-pipeline-generated
+      sources: ['ai-sdlc/signal-pipeline']
+      gatesSkipped: [1, 4, 5, 6]
+      gatesRetained: [2, 3, 7]

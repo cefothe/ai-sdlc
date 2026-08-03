@@ -1,0 +1,634 @@
+name: "TEST_PATTERNS"
+type: "guide"
+version: "1.1.0"
+description: "Complete patterns for structuring tests: BaseTest, Page Objects, Service Classes, and Test Data Models."
+last_updated: "2026-05-22"
+maintained_by: "Tradu QA Team"
+changelog:
+  - version: "1.1.0"
+    date: "2026-05-22"
+    changes:
+      - "Added Service Class Best Practice #16: service returns raw ApiResponse, tests deserialize via response.as(...) — canonical source: API_TESTING_GUIDE.yaml → 'Error Response Models'"
+      - "Added Service Class Best Practice #17: parameterize repetitive tests with @ParameterizedTest, with carve-out for semantically distinct scenarios — canonical source: API_TESTING_GUIDE.yaml → 'Pattern 5: Parameterized Tests'"
+  - version: "1.0.0"
+    date: "2026-04-15"
+    changes:
+      - "Initial release"
+
+content: |
+  # Test Patterns Guide
+  
+  > Complete patterns for structuring tests: BaseTest, Page Objects, Service Classes, and Test Data Models.
+  
+  ## Table of Contents
+  
+  - [Project Structure](#project-structure)
+  - [BaseTest Pattern](#basetest-pattern)
+  - [Page Object Pattern](#page-object-pattern)
+  - [Service Class Pattern](#service-class-pattern)
+  - [Test Data Models](#test-data-models)
+  - [Assertions](#assertions)
+  - [Waits and Timeouts](#waits-and-timeouts)
+  
+  ## Project Structure
+  
+  **CRITICAL**: Tests are in a separate project from the application code.
+  
+  ```
+  my-test-project/
+  ├── src/main/java/              # Test infrastructure
+  │   └── com/example/
+  │       ├── pages/              # Page Objects
+  │       │   ├── LoginPage.java
+  │       │   ├── DashboardPage.java
+  │       │   └── OrderPage.java
+  │       ├── services/           # Service Classes
+  │       │   ├── OrderService.java
+  │       │   ├── AccountService.java
+  │       │   └── UserService.java
+  │       └── models/             # Test Data Models
+  │           ├── CreateOrderRequest.java
+  │           ├── OrderResponse.java
+  │           └── OrderSide.java
+  └── src/test/java/              # Actual tests
+      └── com/example/tests/
+          ├── api/
+          │   ├── OrderApiTest.java
+          │   └── AccountApiTest.java
+          ├── ui/
+          │   ├── LoginTest.java
+          │   └── DashboardTest.java
+          └── e2e/
+              └── TradingWorkflowTest.java
+  ```
+  
+  ### Why This Structure?
+  
+  - **Reusability**: Page Objects and Services used across multiple test classes
+  - **Maintainability**: Changes to pages/services in one place
+  - **Clarity**: Tests in `src/test`, infrastructure in `src/main`
+  
+  ## BaseTest and BaseService — Reference Implementations
+
+  > **Note**: BasePage is implemented in the framework. BaseWebTest, BaseApiTest, and BaseService are NOT in the framework — implement them in your consumer project following the patterns below. BaseWebTest manages driver lifecycle for UI tests; BaseApiTest is lightweight for API-only tests (no driver overhead); BaseService provides HTTP infrastructure for service classes.
+
+  ### BaseWebTest Reference Implementation
+
+  BaseWebTest manages browser driver lifecycle and navigates to the application base URL so test methods start on the app.
+
+  ```java
+  package com.example.tests;
+
+  import com.tradu.core.driver.DriverManager;
+  import com.tradu.utils.config.ConfigurationManager;
+  import org.junit.jupiter.api.AfterEach;
+  import org.junit.jupiter.api.BeforeEach;
+  import org.slf4j.Logger;
+  import org.slf4j.LoggerFactory;
+
+  /**
+   * Base class for UI/web test classes.
+   * Initializes WebDriver, navigates to the app base URL, and tears down after each test.
+   * API-only tests should extend BaseApiTest instead (no driver overhead).
+   */
+  public abstract class BaseWebTest {
+      protected final Logger logger = LoggerFactory.getLogger(getClass());
+
+      @BeforeEach
+      void setUpDriver() {
+          DriverManager.initializeDriver();
+          String baseUrl = ConfigurationManager.getProperty("app.base.url");
+          DriverManager.getDriver().navigateTo(baseUrl);
+      }
+
+      @AfterEach
+      void tearDownDriver() {
+          if (DriverManager.hasDriver()) {
+              DriverManager.quitDriver();
+          }
+      }
+  }
+  ```
+
+  Configuration (`application-{env}.properties`):
+  ```properties
+  app.base.url=https://app.example.com
+  ```
+
+  ### BaseApiTest Reference Implementation
+
+  BaseApiTest is a lightweight base for API-only tests. No driver initialization — just logging and common utilities.
+
+  ```java
+  package com.example.tests;
+
+  import org.slf4j.Logger;
+  import org.slf4j.LoggerFactory;
+
+  /**
+   * Base class for API-only test classes.
+   * No WebDriver lifecycle — use this for REST, WebSocket, and FIX protocol tests.
+   * UI tests should extend BaseWebTest instead.
+   */
+  public abstract class BaseApiTest {
+      protected final Logger logger = LoggerFactory.getLogger(getClass());
+  }
+  ```
+
+  ### BaseService Reference Implementation
+
+  The service class hierarchy has three levels:
+
+  ```
+  BaseService (HTTP infrastructure — no base URL)
+  ├── ApiGatewayService (base URL for the main API gateway)
+  │   ├── OrderService, PositionService, InstrumentService, ...
+  │   ├── FixOrderService (extends for logger/ObjectMapper only — uses FixRequestBuilder, NOT HTTP methods)
+  └── BackofficeGatewayService (base URL for the backoffice gateway)
+      └── AccountService, ...
+  ```
+
+  > **Note**: FIX protocol services extend ApiGatewayService for access to logger and ObjectMapper, but they do NOT use the inherited HTTP methods (`get`/`post`/`put`/`delete`/`patch`). FIX services build messages via `FixRequestBuilder`, send them via `FixClient.sendMessage()`, and collect responses via `FixClient.getMessageCollector()` which returns `FixMessageCollector`. See API_TESTING_GUIDE.yaml → "FIX Protocol Testing" for examples.
+
+  ### BaseService — HTTP Infrastructure
+
+  Provides shared HTTP client, ObjectMapper, and request building. Does NOT define a base URL — gateway bases do that.
+
+  ```java
+  package com.example.services;
+
+  import com.tradu.protocols.http.ApiRequest;
+  import com.tradu.protocols.http.HttpMethod;
+  import com.tradu.protocols.http.NativeHttpClientAdapter;
+  import com.tradu.protocols.http.RestClient;
+  import tools.jackson.databind.ObjectMapper;
+
+  public abstract class BaseService {
+      private static final RestClient HTTP_CLIENT = new NativeHttpClientAdapter();
+      private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+      protected BaseService() {}
+
+      protected static ApiRequest get(String baseUrl, String endpoint) {
+          return request(HttpMethod.GET, baseUrl, endpoint);
+      }
+      protected static ApiRequest post(String baseUrl, String endpoint) {
+          return request(HttpMethod.POST, baseUrl, endpoint);
+      }
+      protected static ApiRequest put(String baseUrl, String endpoint) {
+          return request(HttpMethod.PUT, baseUrl, endpoint);
+      }
+      protected static ApiRequest patch(String baseUrl, String endpoint) {
+          return request(HttpMethod.PATCH, baseUrl, endpoint);
+      }
+      protected static ApiRequest delete(String baseUrl, String endpoint) {
+          return request(HttpMethod.DELETE, baseUrl, endpoint);
+      }
+
+      private static ApiRequest request(HttpMethod method, String baseUrl, String endpoint) {
+          return new ApiRequest(baseUrl, endpoint, method, HTTP_CLIENT, OBJECT_MAPPER);
+      }
+  }
+  ```
+
+  ### Gateway Base Classes
+
+  Each gateway base defines its base URL and provides `get`/`post`/`put`/`delete`/`patch` that accept endpoint paths:
+
+  ```java
+  public abstract class ApiGatewayService extends BaseService {
+      private static final String BASE_URL = ConfigurationManager.getProperty("api.gateway.url");
+
+      protected static ApiRequest get(String endpoint) { return get(BASE_URL, endpoint); }
+      protected static ApiRequest post(String endpoint) { return post(BASE_URL, endpoint); }
+      protected static ApiRequest put(String endpoint) { return put(BASE_URL, endpoint); }
+      protected static ApiRequest delete(String endpoint) { return delete(BASE_URL, endpoint); }
+      protected static ApiRequest patch(String endpoint) { return patch(BASE_URL, endpoint); }
+  }
+
+  public abstract class BackofficeGatewayService extends BaseService {
+      private static final String BASE_URL = ConfigurationManager.getProperty("backoffice.gateway.url");
+
+      protected static ApiRequest get(String endpoint) { return get(BASE_URL, endpoint); }
+      protected static ApiRequest post(String endpoint) { return post(BASE_URL, endpoint); }
+      protected static ApiRequest put(String endpoint) { return put(BASE_URL, endpoint); }
+      protected static ApiRequest delete(String endpoint) { return delete(BASE_URL, endpoint); }
+      protected static ApiRequest patch(String endpoint) { return patch(BASE_URL, endpoint); }
+  }
+  ```
+
+  Configuration (`application-{env}.properties`):
+  ```properties
+  api.gateway.url=https://api.example.com
+  backoffice.gateway.url=https://backoffice.example.com
+  ```
+
+  ### Gateway-Specific Service Bases (Multiple APIs)
+
+  Configuration (`application-{env}.properties`):
+  ```properties
+  # Single API (simple projects)
+  api.base.url=https://api.example.com
+
+  # Multiple gateways
+  trading.gateway.url=https://trading-gw.example.com
+  backoffice.gateway.url=https://backoffice-gw.example.com
+  ```
+
+  ### ApiRequest Fluent Builder
+
+  Gateway HTTP methods (`get()`, `post()`, `put()`, `delete()`, `patch()`) return `ApiRequest`. `ApiRequest` uses a fluent builder pattern — `.body()`, `.contentType()`, `.header()`, `.timeout()`, etc. return `ApiRequest` for chaining. `.send()` executes the request and returns `ApiResponse`.
+
+  ```java
+  // Type chain: post() → ApiRequest → .body() → ApiRequest → .send() → ApiResponse
+  ApiResponse response = post("/endpoint").body(request).send();
+  ```
+
+  ### Using BaseWebTest (UI tests)
+
+  ```java
+  import org.junit.jupiter.api.Test;
+  import org.junit.jupiter.api.BeforeEach;
+  import com.tradu.core.annotations.WebTest;
+  import static org.assertj.core.api.Assertions.*;
+
+  public final class LoginTest extends BaseWebTest {
+      private LoginPage loginPage;
+
+      @BeforeEach
+      void setUpTest() {
+          loginPage = new LoginPage();
+      }
+
+      @Test
+      @WebTest
+      void test_login_validCredentials_showsDashboard() {
+          DashboardPage dashboard = loginPage.login("testuser", "password123");
+          assertThat(dashboard.isWelcomeMessageDisplayed()).isTrue();
+      }
+  }
+  ```
+
+  ### Using BaseApiTest (API tests)
+
+  ```java
+  import org.junit.jupiter.api.Test;
+  import org.junit.jupiter.api.BeforeEach;
+  import static org.assertj.core.api.Assertions.*;
+
+  public final class OrderApiTest extends BaseApiTest {
+      private String traderToken;
+
+      @BeforeEach
+      void setUp() {
+          ApiResponse auth = AuthService.login(
+              ConfigurationManager.getProperty("test.trader.username"),
+              ConfigurationManager.getProperty("test.trader.password")
+          );
+          traderToken = auth.as(LoginResponse.class).token();
+      }
+
+      @Test
+      void test_createOrder_validRequest_returns201() {
+          CreateOrderRequest request = CreateOrderRequest.limitOrder("EURUSD", 1.0850, 100000);
+
+          ApiResponse response = OrderService.createOrder(traderToken, request);
+
+          assertThat(response.statusCode()).isEqualTo(201);
+          OrderResponse order = response.as(OrderResponse.class);
+          assertThat(order.symbol()).isEqualTo("EURUSD");
+      }
+
+      @Test
+      void test_createOrder_invalidSymbol_returns400() {
+          CreateOrderRequest request = CreateOrderRequest.limitOrder("INVALID", 1.0850, 100000);
+
+          ApiResponse response = OrderService.createOrder(traderToken, request);
+
+          assertThat(response.statusCode()).isEqualTo(400);
+      }
+
+      @Test
+      void test_createOrder_noAuth_returns401() {
+          CreateOrderRequest request = CreateOrderRequest.limitOrder("EURUSD", 1.0850, 100000);
+
+          ApiResponse response = OrderService.createOrder(null, request);
+
+          assertThat(response.statusCode()).isEqualTo(401);
+      }
+  }
+  ```
+  
+  ## Page Object Pattern
+  
+  ```java
+  package com.example.pages;
+  
+  import com.tradu.core.page.BasePage;
+  import com.tradu.core.locator.Locator;
+  import static com.tradu.core.locator.Locators.*;
+
+  public final class LoginPage extends BasePage {
+      private static final Locator USERNAME_FIELD = id("username");
+      private static final Locator PASSWORD_FIELD = id("password");
+      private static final Locator LOGIN_BUTTON = css("button[type='submit']");
+      private static final Locator ERROR_MESSAGE = className("alert-danger");
+
+      public DashboardPage login(String username, String password) {
+          textBox(USERNAME_FIELD).enterText(username);
+          textBox(PASSWORD_FIELD).enterText(password);
+          button(LOGIN_BUTTON).click();
+          return new DashboardPage();
+      }
+  
+      public void loginExpectingError(String username, String password) {
+          textBox(USERNAME_FIELD).enterText(username);
+          textBox(PASSWORD_FIELD).enterText(password);
+          button(LOGIN_BUTTON).click();
+      }
+
+      public boolean isErrorDisplayed() {
+          return element(ERROR_MESSAGE).isDisplayed();
+      }
+
+      public String getErrorMessage() {
+          return element(ERROR_MESSAGE).getText();
+      }
+  }
+  ```
+
+  ### Page Object Best Practices
+
+  1. **Locators**: `private static final Locator` using `Locators` static imports
+  2. **Zero-arg constructor**: BasePage resolves driver via ServiceLoader
+  3. **No stored element fields**: Call `textBox()`, `button()` etc. inline (re-finds each time, no stale refs)
+  4. **Actions**: Return next page or void
+  5. **Queries**: Return data (strings, booleans)
+  6. **No Assertions**: Let tests assert
+  7. **Final class**: Prevent subclassing
+  8. **Custom elements**: Use `custom(MyElement.class, locator)` for domain-specific components
+  
+  ## Service Class Pattern
+
+  ### CRITICAL: Zero Defensive Programming
+
+  **ABSOLUTE RULE**: Service classes are "dumb pipes" - make request, return response, NOTHING ELSE.
+
+  **FORBIDDEN PATTERNS**:
+  - ❌ `try { ... } catch` blocks
+  - ❌ `if (response.statusCode() == ...)` conditionals
+  - ❌ `assertThat(...)` assertions
+  - ❌ Logging errors (log the call, not the result)
+  - ❌ Throwing exceptions based on status codes
+  - ❌ Null checks on response
+  - ❌ Parameter validation
+  - ❌ Retry logic
+  - ❌ Fallback values
+  - ❌ Response transformation
+
+  **REQUIRED PATTERN**:
+  ✅ Extend BaseService (provides `get`, `post`, `put`, `delete`, `patch` → ApiRequest)
+  ✅ Build request using inherited HTTP methods
+  ✅ Return raw ApiResponse via `.send()`
+  ✅ Nothing else — one-liners per method
+
+  **Why This Matters**: Defensive programming prevents testing negative scenarios (400, 404, 500 errors).
+  Service classes MUST allow ALL responses to pass through so tests can verify error handling.
+
+  ```java
+  package com.example.services;
+
+  import com.tradu.protocols.http.ApiResponse;
+
+  public final class OrderService extends ApiGatewayService {
+      private static final String ORDERS_ENDPOINT = "/api/v1/orders";
+      private OrderService() {}
+
+      public static ApiResponse createOrder(String authToken, CreateOrderRequest request) {
+          return post(ORDERS_ENDPOINT).bearerAuth(authToken).body(request).send();
+      }
+
+      public static ApiResponse getOrder(String authToken, String orderId) {
+          return get(ORDERS_ENDPOINT + "/" + orderId).bearerAuth(authToken).send();
+      }
+
+      public static ApiResponse getAllOrders(String authToken) {
+          return get(ORDERS_ENDPOINT).bearerAuth(authToken).send();
+      }
+
+      public static ApiResponse updateOrder(String authToken, String orderId, UpdateOrderRequest request) {
+          return put(ORDERS_ENDPOINT + "/" + orderId).bearerAuth(authToken).body(request).send();
+      }
+
+      public static ApiResponse deleteOrder(String authToken, String orderId) {
+          return delete(ORDERS_ENDPOINT + "/" + orderId).bearerAuth(authToken).send();
+      }
+  }
+  ```
+
+  **Why `authToken` as first parameter**: Every authenticated service method needs a token. Placing it first keeps the signature consistent across all methods and enables multi-account testing — tests can call the same service method with different user tokens.
+
+  ### Service Class Best Practices
+
+  1. **Private constructor** - Utility class, no instances
+  2. **Static methods** - Stateless operations
+  3. **`authToken` as first parameter** - Enables multi-account testing; pass `null` to test unauthorized access
+  4. **Simple**: Just make request and return ApiResponse (NOTHING ELSE)
+  5. **No try-catch** (FORBIDDEN - masks errors from tests)
+  6. **No conditionals** (FORBIDDEN - prevents negative testing)
+  7. **No assertions** (FORBIDDEN - tests do assertions, not services)
+  8. **No validation** (FORBIDDEN - API does validation, we test it)
+  9. **No null checks** (FORBIDDEN - let NPE propagate for debugging)
+  10. **No retry logic** (FORBIDDEN - tests control retry behavior)
+  11. **No error handling** (FORBIDDEN - tests verify error responses)
+  12. **Allure.step()**: For report steps (HTTP method + endpoint)
+  13. **logger.info()**: For call traceability (NOT for errors)
+  14. **Final class** - Prevent subclassing
+  15. **Use `.bearerAuth(token)` at the request-builder level** - NOT as a hand-written `.header("Authorization", "Bearer " + token)`. Keeps auth orthogonal from the service method signature and makes negative auth scenarios (null token, expired token) trivial by just passing a different value — the service class stays unchanged.
+  16. **Service returns raw `ApiResponse`; tests deserialize** (🔴 CRITICAL) - The service stays a dumb pipe (rule 4: "Just make request and return ApiResponse, NOTHING ELSE"). The **test** is responsible for deserializing via `response.as(SuccessDto.class)` / `response.asList(SuccessDto.class)` / `response.as(ErrorDto.class)` and asserting on typed fields. Services never call `.as(...)` themselves and never return DTOs — that would defeat negative-test scenarios where the same method must surface 200, 400, 401, 404, 500, etc. Forbidden in test assertion context: `response.body()`, `JsonNode`, `JsonPath`, `ObjectMapper.readTree`, `org.json.*` (e.g. `JSONObject`, `JSONArray`, `JSONTokener`), `WebSocketResponse.getField(...)` / `fields()` / `rawJson()`. See `API_TESTING_GUIDE.yaml` → "Error Response Models" for full rules, carve-outs (Allure / logging, non-JSON Content-Type, `raw().headers()`), and the per-project `ApiError` record pattern.
+  17. **Parameterize repetitive tests** - When 2+ test methods share the same arrange-act-assert structure and differ only in input/expected values, combine them into a single `@ParameterizedTest` (`@CsvSource` for ≤5 primitives, `@MethodSource` returning `Stream<Arguments>` for object inputs or computed values, `@ValueSource` for a single primitive dimension). Severity 🟡 MAJOR. Carve-out: keep tests separate when each name encodes a semantically distinct scenario (different error category, different domain rule) — the test name is the documentation. See `API_TESTING_GUIDE.yaml` → "Pattern 5: Parameterized Tests".
+
+  **Service Method Structure** (the ONLY acceptable pattern):
+  ```java
+  public static ApiResponse operationName(String authToken, RequestType request) {
+      logger.info("Operation description: {}", request);  // Optional
+
+      return post("/endpoint")      // Use inherited gateway method (post/get/put/delete/patch)
+          .bearerAuth(authToken)     // Auth token from test — null skips the header
+          .body(request)
+          .send();                   // Return whatever API returns - success OR error
+  }
+  ```
+
+  **Method Body MUST Be**:
+  - 1-3 lines maximum
+  - No branching (no if/else/switch)
+  - No exception handling (no try/catch/finally)
+  - No transformation (return raw ApiResponse)
+  - No validation (no null checks, no parameter checks)
+  
+  ## Test Data Models
+  
+  ```java
+  package com.example.models;
+  
+  import com.fasterxml.jackson.annotation.JsonProperty;
+  
+  public record CreateOrderRequest(
+      @JsonProperty("symbol") String symbol,
+      @JsonProperty("side") OrderSide side,
+      @JsonProperty("quantity") int quantity,
+      @JsonProperty("price") double price
+  ) {
+      public static CreateOrderRequest limitOrder(String symbol, OrderSide side, int qty, double price) {
+          return new CreateOrderRequest(symbol, side, qty, price);
+      }
+  }
+  
+  public record OrderResponse(
+      @JsonProperty("id") String id,
+      @JsonProperty("symbol") String symbol,
+      @JsonProperty("status") String status
+  ) {}
+  
+  public enum OrderSide {
+      BUY, SELL
+  }
+  ```
+  
+  ## Redis User Cache (Test User Pooling)
+
+  For tests that need reusable test accounts, the framework provides a Redis-backed user cache:
+
+  ```java
+  import com.tradu.utils.cache.UserCache;
+  import com.tradu.utils.model.User;
+
+  // Get or create a test user (cached in Redis for 24h)
+  User trader = UserCache.getOrCreateUser("trader");
+  // Returns cached user or creates: test_trader_{timestamp}
+
+  // Store a specific user for reuse across tests
+  User admin = new User("admin_user", "Admin@123", "admin@test.com", "admin");
+  UserCache.storeUser("admin", admin);
+
+  // Check existence / remove
+  boolean exists = UserCache.userExists("trader");
+  UserCache.removeUser("trader");
+  UserCache.clearCache();  // Clear all cached users
+  ```
+
+  **User record** (immutable, `@JsonProperty(access = WRITE_ONLY)` on password):
+  ```java
+  public record User(
+      String username,
+      @JsonProperty(access = JsonProperty.Access.WRITE_ONLY) String password,
+      String email,
+      String userType
+  ) implements Serializable
+  ```
+
+  Static factory: `User.createTestUser("viewer")` → auto-generates username, password, email.
+
+  **Redis configuration** (`application-{env}.properties`):
+  ```properties
+  redis.host=localhost
+  redis.port=6379
+  redis.password=
+  redis.ssl=false
+  ```
+
+  **Thread-safety**: Redis operations are atomic per-call. Under parallel execution, concurrent `getOrCreateUser` for the same type uses last-write-wins (acceptable since equivalent users are produced). Cache key pattern: `user:{userType}` (lowercased), TTL: 24 hours.
+
+  ## Assertions
+  
+  ```java
+  import static org.assertj.core.api.Assertions.*;
+  
+  // Basic
+  assertThat(response.statusCode()).isEqualTo(201);
+  assertThat(order.symbol()).isEqualTo("EURUSD");
+  
+  // Collections
+  assertThat(orders).isNotEmpty();
+  assertThat(orders).hasSize(5);
+  
+  // Strings
+  assertThat(message).contains("success");
+  assertThat(message).startsWith("Order");
+  
+  // Descriptive
+  assertThat(order.status())
+      .as("Order status after creation")
+      .isEqualTo("NEW");
+  ```
+  
+  ## Waits and Timeouts
+
+  ```java
+  // Element waits
+  Element button = driver.findElement(id("submit"));
+  button.waitUntilClickable(Duration.ofSeconds(10));
+
+  // Awaitility
+  await().atMost(10, SECONDS)
+         .until(() -> page.isErrorDisplayed());
+  ```
+
+  ### `click()` vs `forceClick()`
+
+  Default to `element.click()` — the framework waits for the element to be visible, enabled, stable, and receive pointer events before dispatching the click. This catches real bugs (disabled button, covering overlay, layout shift) as test failures instead of silent pass.
+
+  Use `element.forceClick()` **only** when you have verified the element is non-actionable *by design*:
+
+  - Live price tickers / counters that update faster than Playwright's actionability check window
+  - Animated elements with continuous transform updates (e.g. a spinning badge)
+  - Elements intentionally behind a transient, click-through overlay that you have already verified is safe (e.g. a loading shimmer styled with `pointer-events: none`)
+
+  `forceClick()` skips **all** actionability checks and dispatches the click directly — so reaching for it to "make a flaky test pass" is almost always hiding a real bug. If you're tempted to use it to bypass a stale overlay, a disabled state, or a timing issue, fix the wait or the selector instead.
+  
+  ## Complete Examples
+  
+  ### API Test
+  
+  ```java
+  @Test
+  void test_order_lifecycle_completesSuccessfully() {
+      Allure.step("Create order");
+      ApiResponse createResponse = OrderService.createOrder(traderToken, request);
+      assertThat(createResponse.statusCode()).isEqualTo(201);
+      OrderResponse order = createResponse.as(OrderResponse.class);
+
+      Allure.step("Get order");
+      ApiResponse getResponse = OrderService.getOrder(traderToken, order.id());
+      assertThat(getResponse.statusCode()).isEqualTo(200);
+
+      Allure.step("Delete order");
+      ApiResponse deleteResponse = OrderService.deleteOrder(traderToken, order.id());
+      assertThat(deleteResponse.statusCode()).isEqualTo(204);
+  }
+  ```
+  
+  ### UI Test
+  
+  ```java
+  @Test
+  @WebTest
+  void test_order_displayInUI_showsCorrectDetails() {
+      Allure.step("Create order via API");
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+      OrderResponse order = response.as(OrderResponse.class);
+
+      Allure.step("Navigate to order page");
+      OrderPage page = new OrderPage();
+      page.navigateToOrder(order.id());
+  
+      Allure.step("Verify order details");
+      assertThat(page.getDisplayedSymbol()).isEqualTo("EURUSD");
+      assertThat(page.getDisplayedStatus()).isEqualTo("NEW");
+  }
+  ```
+  
+  ---
+  
+  **Next**: Read `CONFIGURATION_GUIDE.yaml` for environment setup and property reference.

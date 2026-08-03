@@ -1,0 +1,26 @@
+# Trusted reviewer registry for cross-harness attestation (RFC-0042).
+# Each reviewer declares the HARNESS it runs on and its ed25519 public key.
+# verifyEnvelope enforces that no reviewer shares the implementer's harness
+# (if Claude implemented, only Codex-harness reviewers can attest) and that the
+# root signature verifies against one of these keys (any-of-N).
+#
+# Generate a keypair with: node -e "console.log(require('./attestation/attestation').generateKeypair().publicKeyPem)"
+reviewers:
+  - name: code-reviewer
+    harness: codex
+    publicKey: |
+      -----BEGIN PUBLIC KEY-----
+      REPLACE_WITH_REAL_ED25519_SPKI_PEM
+      -----END PUBLIC KEY-----
+  - name: test-reviewer
+    harness: codex
+    publicKey: |
+      -----BEGIN PUBLIC KEY-----
+      REPLACE_WITH_REAL_ED25519_SPKI_PEM
+      -----END PUBLIC KEY-----
+  - name: security-reviewer
+    harness: codex
+    publicKey: |
+      -----BEGIN PUBLIC KEY-----
+      REPLACE_WITH_REAL_ED25519_SPKI_PEM
+      -----END PUBLIC KEY-----

@@ -1,0 +1,520 @@
+name: "PROJECT_CONTEXT_TEMPLATE"
+type: "template"
+version: "1.0.0"
+description: "Instructions: Copy this file to your project's `.claude/` directory and fill in project-specific details."
+last_updated: "2026-01-13"
+maintained_by: "Tradu QA Team"
+
+content: |
+  # Project Test Context Template
+  
+  > **Instructions**: Copy this file to your project's `.claude/` directory and fill in project-specific details.
+  
+  ```bash
+  cp ~/.claude/contexts/test-automation/templates/PROJECT_CONTEXT_TEMPLATE.yaml \
+     your-project/.claude/PROJECT_TEST_CONTEXT.yaml
+  ```
+  
+  Then customize the file with your project's specific information.
+  
+  ---
+  
+  # {PROJECT_NAME} Test Context
+  
+  > Project-specific context for the {PROJECT_NAME} test automation using the Tradu Test Automation Framework.
+  
+  ## Table of Contents
+  
+  - [Project Overview](#project-overview)
+  - [Test Environments](#test-environments)
+  - [Test Users](#test-users)
+  - [Domain Knowledge](#domain-knowledge)
+  - [Page Objects](#page-objects)
+  - [Service Classes](#service-classes)
+  - [Test Data Patterns](#test-data-patterns)
+  - [Project-Specific Rules](#project-specific-rules)
+  - [Known Issues](#known-issues)
+  
+  ## Project Overview
+  
+  **Project Name**: {Your project name}
+  **Domain**: {e.g., Trading platform, E-commerce, SaaS application}
+  **Tech Stack**: {e.g., React, Spring Boot, PostgreSQL}
+  **Test Framework Version**: {e.g., 1.0.0}
+  
+  **Description**: {Brief description of what the application does}
+  
+  **Key Features to Test**:
+  - {Feature 1}
+  - {Feature 2}
+  - {Feature 3}
+
+  ### Frontend Component Paths
+
+  Used by UI test automation to locate components for adding `data-testid` attributes:
+
+  ```yaml
+  frontend_component_paths:
+    - apps/web/dashboard/src/components/    # {Description}
+    - apps/web/admin/src/components/        # {Description}
+    - libs/web/ui-components/src/components/ # Shared UI library
+  ```
+
+  ## Test Environments
+  
+  ### Development
+  
+  ```properties
+  # Base URLs
+  api.base.url=http://localhost:8080
+  web.base.url=http://localhost:3000
+  
+  # Database
+  db.url=jdbc:postgresql://localhost:5432/dev_db
+  db.username=dev_user
+  db.password=${DEV_DB_PASSWORD}
+  
+  # Special considerations
+  # - Local data is reset daily at midnight
+  # - Mock services available for third-party integrations
+  ```
+  
+  ### Staging
+  
+  ```properties
+  # Base URLs
+  api.base.url=https://staging-api.example.com
+  web.base.url=https://staging.example.com
+  
+  # Database (read-only for tests)
+  db.url=jdbc:postgresql://staging-db.example.com:5432/staging_db
+  db.username=${STAGING_DB_USER}
+  db.password=${STAGING_DB_PASSWORD}
+  
+  # Special considerations
+  # - Data refreshed from production weekly (Sundays 2 AM UTC)
+  # - Third-party integrations use sandbox environments
+  # - Rate limits: 100 requests/minute per API key
+  ```
+  
+  ### Production
+  
+  ```properties
+  # Base URLs
+  api.base.url=https://api.example.com
+  web.base.url=https://example.com
+  
+  # Database (read-only for tests)
+  db.url=jdbc:postgresql://prod-db.example.com:5432/prod_db
+  db.username=${PROD_DB_USER}
+  db.password=${PROD_DB_PASSWORD}
+  
+  # Special considerations
+  # - Tests run in isolated test tenant
+  # - Real money NOT used (test tenant has unlimited virtual balance)
+  # - Rate limits: 1000 requests/minute per API key
+  # - Tests run during off-peak hours only (2 AM - 6 AM UTC)
+  ```
+  
+  ## Test Users
+  
+  ### User Roles
+  
+  **Admin User**:
+  ```
+  Username: test_admin@example.com
+  Password: ${TEST_ADMIN_PASSWORD}
+  Permissions: Full system access
+  Used for: Admin panel tests, user management tests
+  ```
+  
+  **Trader User**:
+  ```
+  Username: test_trader@example.com
+  Password: ${TEST_TRADER_PASSWORD}
+  Permissions: Trading, view positions, view account
+  Account Balance: $100,000 (virtual)
+  Used for: Trading flow tests, order management tests
+  ```
+  
+  **Read-Only User**:
+  ```
+  Username: test_viewer@example.com
+  Password: ${TEST_VIEWER_PASSWORD}
+  Permissions: View-only access
+  Used for: Dashboard tests, reporting tests
+  ```
+  
+  ### User Management
+  
+  **User Caching** (via UserCache — Redis-backed, 24h TTL):
+  ```java
+  // Get or create cached test user
+  User trader = UserCache.getOrCreateUser("trader");
+
+  // Use in test
+  loginPage.login(trader.username(), trader.password());
+
+  // Store a specific user for reuse
+  UserCache.storeUser("admin", new User("admin_user", "Admin@123", "admin@test.com", "admin"));
+  ```
+  
+  **Creating Test Users**:
+  ```java
+  // Via API
+  ApiResponse response = UserService.createUser(new CreateUserRequest(
+      "test_user_" + System.currentTimeMillis() + "@example.com",
+      "Test@1234",
+      UserRole.TRADER
+  ));
+  ```
+  
+  ## Domain Knowledge
+  
+  ### Business Rules
+  
+  **Order Validation**:
+  - Minimum order size: 10,000 units for forex
+  - Maximum order size: 10,000,000 units for forex
+  - Symbol format: {BASE}{QUOTE} (e.g., EURUSD, GBPJPY)
+  - Price precision: 5 decimals for JPY pairs, 6 for others
+  
+  **Account Rules**:
+  - Minimum account balance: $1,000
+  - Maximum leverage: 1:100
+  - Margin requirement: 1% for major pairs, 2% for minors
+  
+  **Trading Hours**:
+  - Forex: Sunday 10:00 PM - Friday 10:00 PM UTC (24/5)
+  - Stocks: Exchange-specific (NYSE: 2:30 PM - 9:00 PM UTC)
+  - Market closed: No new orders, only amendments/cancellations
+  
+  ### Terminology
+  
+  | Term | Meaning | Example |
+  |------|---------|---------|
+  | **Pip** | Price point (0.0001 for most pairs) | EURUSD moves from 1.0850 to 1.0851 = 1 pip |
+  | **Lot** | Standard trading unit (100,000 units) | 1 lot EURUSD = 100,000 EUR |
+  | **Spread** | Difference between bid and ask | Bid: 1.0850, Ask: 1.0852 = 2 pip spread |
+  | **Margin** | Required collateral for position | $1,000 margin for 1 lot EURUSD at 1:100 leverage |
+  | **P&L** | Profit and Loss | Current position value vs entry value |
+  
+  ### Data Formats
+  
+  **Symbols**:
+  ```
+  Format: {BASE}{QUOTE}
+  Examples: EURUSD, GBPJPY, AAPL, BTC/USD
+  Validation: /^[A-Z]{6}$/  (for forex)
+  ```
+  
+  **Prices**:
+  ```
+  Format: Decimal with precision based on instrument
+  EURUSD: 1.085000 (6 decimals)
+  USDJPY: 110.500 (3 decimals)
+  AAPL: 150.25 (2 decimals)
+  ```
+  
+  **Quantities**:
+  ```
+  Format: Integer (in base units)
+  1 lot forex = 100,000 units
+  1 share = 1 unit
+  Min: 10,000 (forex), 1 (stocks)
+  ```
+  
+  ## Page Objects
+  
+  ### Implemented Page Objects
+  
+  **Location**: `src/main/java/com/example/pages/`
+  
+  **LoginPage** (`LoginPage.java`):
+  ```java
+  public DashboardPage login(String username, String password);
+  public void loginExpectingError(String username, String password);
+  public boolean isErrorDisplayed();
+  public String body();
+  ```
+  
+  **DashboardPage** (`DashboardPage.java`):
+  ```java
+  public boolean isWelcomeMessageDisplayed();
+  public String getUsername();
+  public double getAccountBalance();
+  public int getOpenPositionCount();
+  public void navigateToOrders();
+  public void navigateToPositions();
+  ```
+  
+  **OrderPage** (`OrderPage.java`):
+  ```java
+  public void navigateToOrder(String orderId);
+  public String getDisplayedSymbol();
+  public String getDisplayedStatus();
+  public double getDisplayedPrice();
+  public int getDisplayedQuantity();
+  public void cancelOrder();
+  ```
+  
+  **TradePage** (`TradePage.java`):
+  ```java
+  public void selectSymbol(String symbol);
+  public void selectSide(OrderSide side);
+  public void enterQuantity(int quantity);
+  public void enterPrice(double price);
+  public void submitOrder();
+  public boolean isOrderConfirmationDisplayed();
+  public String getOrderId();
+  ```
+  
+  ### Page Object Patterns
+  
+  **Page Object Pattern** (zero-arg constructor, inline element calls):
+  ```java
+  public final class MyPage extends BasePage {
+      private static final Locator MY_BUTTON = id("element-id");
+
+      public void clickMyButton() {
+          button(MY_BUTTON).click();
+      }
+  }
+  ```
+  
+  **Navigation Methods**:
+  ```java
+  public DashboardPage navigateToDashboard() {
+      logger.info("Navigating to dashboard");
+      getDriver().navigateTo("https://example.com/dashboard");
+      return new DashboardPage();
+  }
+  ```
+  
+  ## Service Classes
+  
+  ### Implemented Service Classes
+  
+  **Location**: `src/main/java/com/example/services/`
+  
+  **OrderService** (`OrderService.java`):
+  ```java
+  public static ApiResponse createOrder(String authToken, CreateOrderRequest request);
+  public static ApiResponse getOrder(String authToken, String orderId);
+  public static ApiResponse getAllOrders(String authToken);
+  public static ApiResponse updateOrder(String authToken, String orderId, UpdateOrderRequest request);
+  public static ApiResponse cancelOrder(String authToken, String orderId);
+  public static ApiResponse deleteOrder(String authToken, String orderId);
+  ```
+
+  **AccountService** (`AccountService.java`):
+  ```java
+  public static ApiResponse getAccount(String authToken, long accountId);
+  public static ApiResponse getAccountBalance(String authToken, long accountId);
+  public static ApiResponse deposit(String authToken, long accountId, DepositRequest request);
+  public static ApiResponse withdraw(String authToken, long accountId, WithdrawRequest request);
+  ```
+
+  **PositionService** (`PositionService.java`):
+  ```java
+  public static ApiResponse getPosition(String authToken, String positionId);
+  public static ApiResponse getAllPositions(String authToken, long accountId);
+  public static ApiResponse closePosition(String authToken, String positionId);
+  ```
+
+  **UserService** (`UserService.java`):
+  ```java
+  public static ApiResponse createUser(String authToken, CreateUserRequest request);
+  public static ApiResponse getUser(String authToken, String userId);
+  public static ApiResponse updateUser(String authToken, String userId, UpdateUserRequest request);
+  public static ApiResponse deleteUser(String authToken, String userId);
+  ```
+  
+  ### Service Class Patterns
+  
+  **Basic Service**:
+  ```java
+  public final class MyService extends ApiGatewayService {
+      private MyService() {}
+  
+      public static ApiResponse myOperation(String authToken, MyRequest request) {
+          Allure.step("POST /api/my-operation - Description");
+          logger.info("Performing operation: {}", request);
+
+          return post("/api/my-operation")
+              .bearerAuth(authToken)
+              .contentType("application/json")
+              .body(request)
+              .timeout(Duration.ofSeconds(30))
+              .send();
+      }
+  }
+  ```
+  
+  ## Test Data Patterns
+  
+  ### Test Data Models
+  
+  **Location**: `src/main/java/com/example/models/`
+  
+  **CreateOrderRequest**:
+  ```java
+  public record CreateOrderRequest(
+      String symbol,
+      OrderSide side,
+      int quantity,
+      double price,
+      OrderType orderType,
+      TimeInForce timeInForce
+  ) {
+      public static CreateOrderRequest marketOrder(String symbol, OrderSide side, int quantity) {
+          return new CreateOrderRequest(symbol, side, quantity, 0.0, OrderType.MARKET, TimeInForce.IOC);
+      }
+  
+      public static CreateOrderRequest limitOrder(String symbol, OrderSide side, int quantity, double price) {
+          return new CreateOrderRequest(symbol, side, quantity, price, OrderType.LIMIT, TimeInForce.DAY);
+      }
+  }
+  ```
+  
+  **OrderResponse**:
+  ```java
+  public record OrderResponse(
+      String id,
+      String symbol,
+      OrderSide side,
+      int quantity,
+      double price,
+      String status,
+      long timestamp
+  ) {}
+  ```
+  
+  ### Test Data Builders
+  
+  **Order Builder**:
+  ```java
+  public class OrderTestData {
+      public static CreateOrderRequest defaultLimitOrder() {
+          return CreateOrderRequest.limitOrder("EURUSD", OrderSide.BUY, 100000, 1.0850);
+      }
+  
+      public static CreateOrderRequest largeOrder() {
+          return CreateOrderRequest.limitOrder("EURUSD", OrderSide.BUY, 10000000, 1.0850);
+      }
+  
+      public static CreateOrderRequest invalidSymbol() {
+          return CreateOrderRequest.limitOrder("INVALID", OrderSide.BUY, 100000, 1.0850);
+      }
+  }
+  ```
+  
+  ## Project-Specific Rules
+  
+  ### Test Isolation
+  
+  - **Each test creates its own data** - Never depend on data from other tests
+  - **Clean up after tests** - Delete created orders, users, accounts
+  - **Use unique identifiers** - Timestamp-based or UUID for test data
+  - **Avoid shared state** - No global test data or shared resources
+  
+  ### Parallel Execution
+  
+  - **Thread-safe tests** - Use ThreadLocal drivers, unique test data
+  - **Independent tests** - No dependencies between tests
+  - **Resource limits** - Max 4 parallel threads (API rate limits)
+  
+  ### Test Organization
+  
+  ```
+  src/test/java/com/example/tests/
+  ├── api/
+  │   ├── OrderApiTest.java
+  │   ├── AccountApiTest.java
+  │   └── UserApiTest.java
+  ├── ui/
+  │   ├── LoginTest.java
+  │   ├── DashboardTest.java
+  │   └── TradingTest.java
+  └── e2e/
+      └── TradingWorkflowTest.java
+  ```
+  
+  ### Naming Conventions
+  
+  **Test Classes**: `{Feature}Test.java` (e.g., `OrderCreationTest.java`)
+  **Test Methods**: `test{Scenario}` (e.g., `testCreateLimitOrder`)
+  **Page Objects**: `{Page}Page.java` (e.g., `LoginPage.java`)
+  **Services**: `{Entity}Service.java` (e.g., `OrderService.java`)
+  
+  ## Known Issues
+  
+  ### Flaky Tests
+  
+  **Dashboard Load Timeout** (`DashboardTest.testLoadDashboard`):
+  - **Issue**: Intermittent timeout when loading dashboard after login
+  - **Workaround**: Add explicit wait for dashboard header element
+  - **Ticket**: PROJ-456
+  
+  **Market Data Delay** (`TradingTest.testPriceUpdate`):
+  - **Issue**: Market data can lag by 1-2 seconds in staging
+  - **Workaround**: Use polling with 5-second timeout instead of 2 seconds
+  - **Ticket**: PROJ-789
+  
+  ### Environment-Specific Issues
+  
+  **Staging Database Lag**:
+  - **Issue**: Replica database in staging has 5-10 second lag
+  - **Impact**: Tests that verify data immediately after creation may fail
+  - **Workaround**: Add 10-second wait after data modification operations
+  
+  **Production Rate Limits**:
+  - **Issue**: API rate limited to 1000 req/min
+  - **Impact**: Large test suites may hit rate limits
+  - **Workaround**: Run tests in smaller batches, use delays between batches
+  
+  ### Browser-Specific Issues
+  
+  **Firefox Video Recording**:
+  - **Issue**: Video recording sometimes fails on Firefox
+  - **Workaround**: Use Chromium for CI/CD pipelines
+  - **Ticket**: FRAMEWORK-123
+  
+  ## Reference Agent Configuration
+  
+  Example agent configuration for this project:
+  
+  ```yaml
+  # your-project/.claude/agents/project-qa-engineer.yaml
+  name: project-qa-engineer
+  context:
+    # Framework contexts (global)
+    - ~/.claude/contexts/test-automation/FRAMEWORK_CONTEXT.yaml
+    - ~/.claude/contexts/test-automation/guides/WEB_AUTOMATION_GUIDE.yaml
+    - ~/.claude/contexts/test-automation/guides/TEST_PATTERNS.yaml
+
+    # Project context (local)
+    - .claude/PROJECT_TEST_CONTEXT.yaml
+  
+  instructions: |
+    You are a QA automation engineer for {PROJECT_NAME}.
+  
+    Your responsibilities:
+    - Write complete, production-ready test cases
+    - Follow project-specific patterns and conventions
+    - Use the test automation framework documented in context files
+    - Handle known issues and workarounds appropriately
+    - Ensure tests are isolated and can run in parallel
+  
+    Before writing tests:
+    1. Read project test context for domain knowledge
+    2. Check existing page objects and services
+    3. Follow naming conventions
+    4. Use appropriate test data patterns
+  ```
+  
+  ---
+  
+  **Version**: 1.0.0
+  **Last Updated**: {DATE}
+  **Maintained By**: {TEAM_NAME}

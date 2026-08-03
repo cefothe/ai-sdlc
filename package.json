@@ -1,0 +1,51 @@
+{
+  "name": "ai-sdlc",
+  "version": "1.0.0",
+  "description": "AI SDLC framework: promise theory verification, token-budgeted context, deterministic hooks",
+  "scripts": {
+    "test": "jest",
+    "test:ci": "jest --config jest.ci.config.js",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:integration": "jest --testMatch='**/tests/integration/**/*.test.js'",
+    "validate-schemas": "node spec/validate-schemas.js",
+    "init": "node init/init.js",
+    "task": "node decision-engine/backlog-task-new.js",
+    "order": "node decision-engine/task-order.js",
+    "next": "node decision-engine/task-order.js --next",
+    "validate-prd": "node decision-engine/prd-gate.js",
+    "dod": "node decision-engine/dod-gate.js",
+    "validate-design": "node decision-engine/design-gate.js",
+    "clarify": "node decision-engine/clarify-gate.js",
+    "analyze": "node decision-engine/analyze-gate.js",
+    "convergence-gate": "node measurement/convergence-gate.js",
+    "outcomes": "node measurement/outcome-metrics.js",
+    "decisions": "node decision-engine/decisions.js",
+    "adr-coverage": "node decision-engine/adr-coverage.js",
+    "demo": "node examples/demo.js"
+  },
+  "keywords": [
+    "claude",
+    "ai",
+    "sdlc",
+    "promise-theory",
+    "measurement"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.45.0",
+    "jest": "^29.6.1",
+    "node-pty": "^1.1.0",
+    "prettier": "^3.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cefothe/ai-sdlc.git"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "js-yaml": "^4.1.1"
+  }
+}

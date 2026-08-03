@@ -1,0 +1,94 @@
+name: cross-module-auth-refactor
+description: |
+  Refactor authentication to support API key rotation with expiry timestamps.
+  Requires changes across config, auth middleware, routes, and tests.
+  Planted defect: cache TTL comparison uses wrong operator (< instead of >),
+  causing all cache entries to appear expired immediately.
+
+turns:
+  - message: |
+      Read CONVENTIONS.md first for project conventions.
+
+      The auth middleware currently just checks for a non-empty token string.
+      We need to upgrade it to support API key rotation. Specifically:
+
+      1. Add a new config field `validApiKeys` in src/config/index.js — an array
+         of objects with `key` (string) and `expiresAt` (ISO timestamp or null for
+         no expiry). Add two default keys: one expiring in 2099 and one with null expiry.
+      2. Update src/middleware/auth.js `authenticate()` to validate the token against
+         the `validApiKeys` list. A key matches if the token equals `key.key` AND
+         either `expiresAt` is null or the current time is before `expiresAt`.
+      3. Return `AUTH_ERROR: Token expired` if the key matches but is expired.
+         Return `AUTH_ERROR: Invalid authentication token` if no key matches.
+
+      Follow the conventions — return {success, error} format, use logger, use config.
+    checkpoint:
+      - type: grep_present
+        file: src/config/index.js
+        pattern: "validApiKeys"
+      - type: grep_present
+        file: src/middleware/auth.js
+        pattern: "expiresAt|expired"
+      - type: grep_present
+        file: src/middleware/auth.js
+        pattern: "AUTH_ERROR"
+
+  - message: |
+      The routes.js dispatch function uses authenticate() for all non-health routes.
+      Now add a new `GET /keys/status` endpoint that returns the count of valid
+      (non-expired) keys and the count of expired keys. This endpoint itself
+      requires authentication.
+
+      Add this as a new handler in routes.js — read the validApiKeys from config,
+      partition them by expiry status, and return:
+      { active: <count>, expired: <count>, total: <count> }
+    checkpoint:
+      - type: grep_present
+        file: src/api/routes.js
+        pattern: "/keys/status|keys"
+      - type: grep_present
+        file: src/api/routes.js
+        pattern: "active|expired"
+
+  - message: |
+      Write comprehensive tests for the auth changes AND the new keys/status endpoint.
+      Tests should cover:
+      - Valid non-expired key succeeds
+      - Expired key returns AUTH_ERROR: Token expired
+      - Unknown key returns AUTH_ERROR: Invalid authentication token
+      - Missing token header still returns AUTH_ERROR
+      - GET /keys/status returns correct counts
+      - GET /keys/status requires authentication
+
+      Put auth tests in tests/auth.test.js and route tests in tests/routes.test.js.
+      Follow the testing conventions in CONVENTIONS.md.
+    checkpoint:
+      - type: grep_present
+        file: tests/auth.test.js
+        pattern: "expired|expiresAt"
+      - type: grep_present
+        file: tests/routes.test.js
+        pattern: "keys/status|keys"
+
+  - message: |
+      Run all tests in the project and fix any failures you find.
+      Check every test file: tests/auth.test.js, tests/routes.test.js,
+      tests/batchHandler.test.js, tests/dataService.test.js,
+      tests/cacheService.test.js, tests/handler.test.js,
+      tests/parser.test.js, tests/validator.test.js, tests/config.test.js,
+      tests/rateLimit.test.js, tests/logger.test.js.
+    checkpoint:
+      - type: defect_check
+        defect_file: src/services/cacheService.js
+        description: "Cache TTL comparison uses wrong operator — entries always appear expired"
+        planted_line: "Date.now() < entry.expiresAt"
+        fixed_line: "Date.now() > entry.expiresAt"
+
+defect:
+  file: src/services/cacheService.js
+  description: "Wrong comparison in cache expiry check: < instead of > causes all entries to immediately expire"
+  original: "if (Date.now() > entry.expiresAt)"
+  mutated: "if (Date.now() < entry.expiresAt)"
+
+workspace_setup:
+  repo: measurement/fixtures/mini-api

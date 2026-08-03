@@ -1,0 +1,1196 @@
+name: "TEST_CASE_BEST_PRACTICES"
+type: "guide"
+version: "1.0.0"
+description: "Comprehensive best practices for writing test cases for ultra-high-frequency trading systems"
+last_updated: "2026-01-13"
+maintained_by: "QA Team"
+
+content: |
+  # Test Case Best Practices for HFT Systems
+
+  > Comprehensive guide for writing test cases that ensure ultra-high-frequency trading systems meet the highest standards of correctness, performance, and reliability.
+
+  ## Table of Contents
+
+  - [Test Design Techniques](#test-design-techniques)
+  - [Test Pyramid and Levels](#test-pyramid-and-levels)
+  - [HFT-Specific Considerations](#hft-specific-considerations)
+  - [Risk-Based Prioritization](#risk-based-prioritization)
+  - [Test Organization](#test-organization)
+  - [Naming Conventions](#naming-conventions)
+  - [Test Case Template](#test-case-template)
+  - [Test Type Distinctions](#test-type-distinctions)
+  - [Scenario Coverage](#scenario-coverage)
+  - [HFT Edge Cases Checklist](#hft-edge-cases-checklist)
+  - [Quality Standards](#quality-standards)
+  - [Integration Test Best Practices](#integration-test-best-practices)
+  - [Performance Test Patterns](#performance-test-patterns)
+  - [Anti-Patterns](#anti-patterns)
+  - [Example Test Cases](#example-test-cases)
+
+  ---
+
+  ## Test Design Techniques
+
+  ### Equivalence Partitioning
+
+  Divide input domains into classes where all values should behave similarly.
+
+  **HFT Examples**:
+
+  | Input | Valid Partitions | Invalid Partitions |
+  |-------|------------------|-------------------|
+  | Order Type | MARKET, LIMIT, STOP, STOP_LIMIT | NULL, empty, "INVALID" |
+  | Price | 0.00001-999999.99999 | Negative, zero (for some order types), > max |
+  | Quantity | Min lot size to max position | Zero, negative, fractional (if not allowed) |
+  | Timestamp | Valid UTC, within business hours | Future dates, invalid format, null |
+
+  **Best Practice**: Select one representative value from each partition for test cases. Add boundary values for comprehensive coverage.
+
+  ### Boundary Value Analysis
+
+  Test at the edges of equivalence partitions where defects commonly occur.
+
+  **Critical Boundaries in HFT**:
+
+  - **Price Boundaries**:
+    - Minimum price increment (tick size): 0.00001
+    - Maximum price: Asset-specific limits
+    - Zero price (usually invalid for most order types)
+  - **Quantity Boundaries**:
+    - Minimum lot size: 0.01 for crypto, 1000 for forex mini lot
+    - Maximum position size: Risk limit boundaries
+  - **Latency Thresholds**:
+    - p50 < 50μs, p99 < 1ms, p99.9 < 5ms
+    - Test at: 49μs, 50μs, 51μs (boundary straddling)
+  - **Rate Limits**:
+    - Max orders per second: 100
+    - Test at: 99, 100, 101 orders/second
+
+  ### Decision Tables
+
+  Map complex business rules with multiple conditions to expected outcomes.
+
+  **Example: Order Acceptance Logic**
+
+  | Margin Sufficient | Position Limit OK | Price Valid | Market Open | Result |
+  |-------------------|-------------------|-------------|-------------|--------|
+  | Yes | Yes | Yes | Yes | **ACCEPT** |
+  | No  | Yes | Yes | Yes | **REJECT: Insufficient Margin** |
+  | Yes | No  | Yes | Yes | **REJECT: Position Limit** |
+  | Yes | Yes | No  | Yes | **REJECT: Invalid Price** |
+  | Yes | Yes | Yes | No  | **REJECT: Market Closed** |
+
+  **Best Practice**: Create one test case per row. Ensure all condition combinations are covered.
+
+  ### State Transition Tables
+
+  Define valid state changes and test transitions exhaustively.
+
+  **Example: Order Lifecycle States**
+
+  ```
+  NEW → PARTIALLY_FILLED → FILLED (happy path)
+  NEW → CANCELLED (user cancellation)
+  NEW → REJECTED (risk check failure)
+  NEW → EXPIRED (time-in-force expiry)
+  PARTIALLY_FILLED → FILLED (completion)
+  PARTIALLY_FILLED → CANCELLED (partial cancel)
+  ```
+
+  **Test Coverage**:
+  - Valid transitions (all paths above)
+  - Invalid transitions (e.g., FILLED → NEW, CANCELLED → FILLED)
+  - State-specific actions (can only cancel if NEW or PARTIALLY_FILLED)
+
+  ---
+
+  ## Test Pyramid and Levels
+
+  ### Distribution Strategy
+
+  | Test Level | Coverage | Execution Speed | Purpose |
+  |------------|----------|-----------------|---------|
+  | Unit | 70% | <100ms | Business logic correctness |
+  | Integration | 20% | <5s | Module interaction |
+  | E2E API | 7% | <30s | Complete workflows via API |
+  | E2E UI | 2% | <2min | Critical user journeys |
+  | E2E Performance | 1% | <5min | User workflow performance |
+  | Microbenchmarks | As needed | <1s | Component performance |
+
+  ### Unit Tests
+
+  **What to Cover**:
+  - Pure business logic (calculations, validations, transformations)
+  - Value objects (Price, Quantity, Money)
+  - Utility functions (date/time, formatting, parsing)
+  - Single-method validation
+  - State transitions within single object
+  - Edge cases and boundary values
+
+  **Characteristics**:
+  - Fast (milliseconds)
+  - No external dependencies
+  - High coverage (>95%)
+  - Deterministic
+
+  **Example Scenarios**:
+  - Price conversion: decimal to fixed-point with boundary values (0.00001, 999999.99999)
+  - Quantity validation: reject negative, zero, fractional (if not allowed)
+  - Money calculations: addition, subtraction with overflow handling
+  - Date parsing: valid formats, invalid formats, edge cases (leap years, time zones)
+
+  ### Integration Tests
+
+  **What to Cover**:
+  - Service-to-service communication
+  - Database operations (queries, transactions, constraints)
+  - Message queue interactions
+  - Protocol handlers
+  - State persistence and recovery
+  - Cross-module workflows
+
+  **Characteristics**:
+  - Use containerized dependencies (databases, message brokers)
+  - Minimal mocking (only external third-party services)
+  - Real configuration
+  - Moderate execution time (seconds)
+  - Realistic data flow
+
+  **Example Scenarios**:
+  - Order submission: REST API → OMS → Database persistence → Event stream publication
+  - Position calculation: Multiple order executions → Position service aggregation
+  - Snapshot recovery: Load snapshot → Replay events → Verify state consistency
+
+  ### E2E API Tests
+
+  **What to Cover**:
+  - Complete business workflows through API
+  - Multi-step processes across services
+  - Data consistency across full stack
+  - Error handling and recovery
+  - Authentication and authorization
+  - Rate limiting and throttling
+  - Idempotency and retry logic
+
+  **Characteristics**:
+  - Hit actual API endpoints
+  - Production-like environment
+  - External client perspective
+  - No UI involvement
+
+  **Example Scenarios**:
+  - Order lifecycle: Submit order (REST) → Monitor execution (WebSocket) → Verify position (REST)
+  - Multi-protocol workflow: Submit via REST → Cancel via FIX → Verify via WebSocket
+  - Error recovery: Submit with insufficient margin → Receive rejection → Verify no state change
+
+  ### E2E UI Tests
+
+  **What to Cover**:
+  - Critical user journeys
+  - Multi-page workflows
+  - Visual feedback and real-time updates
+  - Error messages and notifications
+  - Cross-browser compatibility (if applicable)
+  - Accessibility
+
+  **Characteristics**:
+  - Slowest tests
+  - End-user perspective
+  - Focus on happy paths and critical flows
+  - Minimal coverage vs other levels
+
+  **Example Scenarios**:
+  - Trading journey: Login → Navigate to trading screen → Place order → Verify confirmation → Close position
+  - Account management: Login → View positions → Check P&L → Logout
+  - Error handling: Attempt invalid order → See error message → Correct and resubmit
+
+  ### E2E Performance Tests
+
+  **CRITICAL**: Test user workflows WITH performance assertions.
+
+  **What to Cover**:
+  - Same scenarios as E2E functional tests
+  - User workflows: login, trading, reporting, account management
+  - Real-world usage patterns under load
+  - System behavior under sustained load
+  - Performance degradation detection
+
+  **Characteristics**:
+  - Execute SAME workflows as E2E functional tests
+  - Add performance assertions (latency percentiles, throughput)
+  - Simulate realistic user load
+  - Measure end-to-end response from user perspective
+
+  **Example Scenarios**:
+  - Trading workflow: Login → Place market order → Verify confirmation (measure p99 < 500ms)
+  - Position monitoring: Login → View positions with 100 open positions (measure load time < 1s)
+  - Concurrent trading: 1000 users simultaneously placing orders (measure system stability)
+
+  ### Microbenchmark Tests
+
+  **CRITICAL**: Test individual components, NOT user workflows.
+
+  **What to Cover**:
+  - Individual service components (risk check, matching engine)
+  - Method-level performance (calculations, validations)
+  - Algorithm efficiency (sorting, searching)
+  - Memory allocation patterns
+  - CPU-bound operations
+
+  **Characteristics**:
+  - Use microbenchmarking frameworks
+  - Isolated component testing
+  - Warm-up iterations
+  - Statistical analysis
+  - Sub-microsecond measurements
+
+  **Example Scenarios**:
+  - Risk check: Margin validation logic (target < 10μs)
+  - Matching engine: Order book update (target < 5μs)
+  - Price calculation: Bid/ask spread calculation (target < 1μs)
+  - Serialization: Order message serialization (target < 2μs)
+
+  ---
+
+  ## HFT-Specific Considerations
+
+  ### Latency Requirements
+
+  **User Workflow Latency** (E2E Performance Tests):
+  - p50 < 200ms (median response from user perspective)
+  - p99 < 500ms
+  - p99.9 < 1 second
+
+  **Component Latency** (Microbenchmarks):
+  - Risk check: p99 < 10μs
+  - Matching engine: p99 < 5μs
+  - Order validation: p99 < 2μs
+
+  ### Throughput Requirements
+
+  **System Capacity**:
+  - Current: 300,000-500,000 orders/second
+  - Target: 1,000,000 orders/second
+  - Concurrent users: Up to 100,000 active connections
+
+  ### Concurrency
+
+  **Test Patterns**:
+  - Simultaneous order modifications (same order ID)
+  - Concurrent position updates (same account)
+  - Atomic order book updates (lock-free verification)
+  - Memory visibility (happens-before relationships)
+
+  ### Data Integrity
+
+  **Critical Validations**:
+  - Order book consistency after every operation
+  - Position calculations match sum of executions
+  - Sequence number continuity (no gaps)
+  - Audit trail completeness (100% event capture)
+
+  ### Determinism
+
+  **Requirements**:
+  - Same input → same output (always)
+  - Event replay produces identical state
+  - Snapshot recovery reproduces exact state
+  - No time-dependent behavior in business logic
+
+  ### Clock Synchronization
+
+  **Test Cases**:
+  - Timestamp accuracy (±100μs per MiFID II)
+  - NTP/PTP sync verification
+  - Clock skew detection and handling
+  - Leap second handling
+
+  ---
+
+  ## Risk-Based Prioritization
+
+  ### Priority Matrix
+
+  | Priority | Financial Impact | Regulatory Impact | Likelihood | Examples |
+  |----------|-----------------|-------------------|------------|----------|
+  | **P0 (Critical)** | High | High | Medium-High | Order execution errors, position miscalculation, audit trail gaps |
+  | **P1 (High)** | High | Medium | Medium | Risk check bypasses, price validation failures |
+  | **P2 (Medium)** | Medium | Low | Low-Medium | UI display issues, reporting delays |
+  | **P3 (Low)** | Low | None | Low | Minor UI inconsistencies, cosmetic issues |
+
+  ### Financial Impact
+
+  - **High**: Direct monetary loss (incorrect execution, risk breach, position errors)
+  - **Medium**: Indirect loss (operational delays, manual intervention required)
+  - **Low**: No financial impact (cosmetic, convenience features)
+
+  ### Regulatory Impact
+
+  - **High**: MiFID II violations (timestamp errors, audit trail gaps, best execution failures)
+  - **Medium**: Reporting delays, incomplete audit trails
+  - **Low**: No regulatory impact
+
+  ### Likelihood Assessment
+
+  - **High**: Complex logic, frequent changes, historical defects
+  - **Medium**: Moderate complexity, stable code
+  - **Low**: Simple logic, well-tested, rare changes
+
+  ### Detection Difficulty
+
+  - **Hard to catch**: Race conditions, timing issues, rare edge cases → Increase priority
+  - **Easy to catch**: Obvious errors, deterministic failures → Priority by impact
+
+  ---
+
+  ## Test Organization
+
+  ### Feature-Based Directory Structure
+
+  ```
+  tests/
+  ├── unit/
+  │   ├── domain/
+  │   │   ├── value-objects/    # Price, Quantity, Money
+  │   │   └── calculations/     # Business logic
+  │   ├── utils/                # Utilities
+  │   └── validators/           # Validation logic
+  ├── integration/
+  │   ├── order-management/     # OMS integration
+  │   ├── matching-engine/      # Matching tests
+  │   ├── risk-service/         # Risk checks
+  │   ├── database/             # DB operations
+  │   └── messaging/            # Message queues
+  ├── e2e-api/
+  │   ├── rest/                 # REST workflows
+  │   ├── fix/                  # FIX workflows
+  │   └── websocket/            # WebSocket workflows
+  ├── e2e-ui/
+  │   ├── trading-workflows/    # Trading UI
+  │   ├── account-management/   # Account UI
+  │   └── reporting/            # Reports UI
+  ├── performance/
+  │   ├── e2e-scenarios/        # User workflow performance
+  │   │   ├── trading-latency/  # Trading perf
+  │   │   ├── login-load/       # Login perf
+  │   │   └── reporting-stress/ # Reporting perf
+  │   └── microbenchmarks/      # Component benchmarks
+  │       ├── risk-checks/
+  │       ├── matching-engine/
+  │       └── calculations/
+  └── security/
+      ├── authentication/
+      ├── authorization/
+      └── penetration/
+  ```
+
+  ---
+
+  ## Naming Conventions
+
+  ### Pattern
+  `test_<Feature>_<Scenario>_<ExpectedBehavior>`
+
+  ### Examples by Level
+
+  **Unit Tests**:
+  - `test_PriceConversion_NegativeValue_ThrowsException`
+  - `test_QuantityValidation_BelowMinimum_ReturnsFalse`
+  - `test_MoneyAddition_OverflowCondition_ThrowsException`
+
+  **Integration Tests**:
+  - `test_OrderSubmission_DatabasePersistence_SavesAllFields`
+  - `test_EventPublishing_OrderCreated_PublishesToStream`
+  - `test_SnapshotRecovery_LoadAndReplay_RestoresState`
+
+  **E2E API Tests**:
+  - `test_OrderWorkflow_SubmitAndCancel_CompleteLifecycle`
+  - `test_PositionUpdate_MultipleOrders_AccurateCalculation`
+  - `test_RateLimiting_ExceedLimit_ReturnsThrottleError`
+
+  **E2E UI Tests**:
+  - `test_TradingUI_PlaceMarketOrder_DisplaysConfirmation`
+  - `test_AccountUI_ViewPositions_ShowsAllOpenPositions`
+  - `test_LoginFlow_InvalidCredentials_ShowsErrorMessage`
+
+  **E2E Performance Tests**:
+  - `test_TradingWorkflow_PlaceOrder_MeetsLatencySLA`
+  - `test_LoginWorkflow_ConcurrentUsers_HandlesLoad`
+  - `test_ReportingWorkflow_LargeDataset_MeetsResponseTime`
+
+  **Microbenchmark Tests**:
+  - `benchmark_RiskCheck_MarginValidation_SubMicrosecond`
+  - `benchmark_MatchingEngine_OrderBookUpdate_SubMicrosecond`
+  - `benchmark_PriceCalculation_SpreadComputation_Nanosecond`
+
+  ---
+
+  ## Test Case Template
+
+  ```markdown
+  ## Test Case: TC-{LEVEL}-{FEATURE}-{NUMBER}
+
+  ### Name
+  [Descriptive name encoding scenario and expected outcome]
+
+  ### Test Level
+  [Unit/Integration/E2E-API/E2E-UI/E2E-Performance/Microbenchmark]
+
+  ### Priority
+  [P0/P1/P2/P3 with justification]
+
+  ### Test Type
+  [Functional/Performance/Security/Compliance]
+
+  ### Interface
+  [Unit/Integration/BE-rest/BE-fix/BE-websocket/UI-web/UI-mobile]
+
+  ### Preconditions
+  - System state requirements
+  - Data setup requirements
+  - Configuration requirements
+  - Service dependencies
+  - Load configuration (performance tests)
+
+  ### Test Data
+  - Specific input values
+  - Boundary values
+  - Edge case values
+  - Load parameters (performance tests)
+
+  ### Test Steps
+  1. Action with precise parameters
+  2. Expected intermediate state
+  3. Verification points
+  4. Performance measurement points (performance tests)
+
+  ### Expected Results
+  - Functional correctness
+  - Data integrity checks
+  - Error handling behavior
+  - Performance requirements (performance tests only)
+
+  ### Postconditions
+  - System state after test
+  - Cleanup requirements
+  - Audit trail verification
+
+  ### Mocking Strategy (Integration Tests)
+  - What is mocked and why
+  - Real dependencies used
+  ```
+
+  ---
+
+  ## Test Type Distinctions
+
+  ### Performance Assertion Rules
+
+  | Test Level | Performance Assertions? | Focus |
+  |------------|------------------------|-------|
+  | Unit | ❌ NO | Correctness only |
+  | Integration | ❌ NO | Correctness only |
+  | E2E API | ❌ NO | Correctness only |
+  | E2E UI | ❌ NO | Correctness only |
+  | E2E Performance | ✅ YES | User workflow latency |
+  | Microbenchmark | ✅ YES | Component latency |
+  | Security | ❌ NO | Security only |
+  | Compliance | ❌ NO | Compliance only |
+
+  ### Functional Tests
+
+  **Focus**: Correctness of business logic
+
+  **Assertions**:
+  - Data accuracy (order details correct)
+  - State transitions (NEW → FILLED)
+  - Business rule validation (risk checks pass/fail correctly)
+
+  **Example**: Verify order is accepted with status NEW and correct confirmation ID
+
+  ### E2E Performance Tests
+
+  **Focus**: User workflow performance
+
+  **Scenarios**: SAME as E2E functional tests
+
+  **Assertions**:
+  - Response times from user perspective (p50, p99, p99.9)
+  - Throughput under load (concurrent users)
+  - System stability (no errors under load)
+
+  **Example**: Execute "login → place order → verify confirmation" workflow and verify p99 response time < 500ms from user perspective
+
+  ### Microbenchmark Tests
+
+  **Focus**: Component/method performance
+
+  **Scenarios**: Isolated component operations
+
+  **Assertions**:
+  - Sub-microsecond latencies
+  - CPU cycles
+  - Memory allocations (should be zero)
+
+  **Example**: Benchmark risk check validation to ensure p99 < 10 microseconds with zero allocations
+
+  ### Security Tests
+
+  **Focus**: Authentication, authorization, input validation
+
+  **Assertions**:
+  - Access control (unauthorized users blocked)
+  - Encryption (sensitive data encrypted)
+  - Injection prevention (SQL injection, XSS blocked)
+
+  **NO performance assertions**
+
+  ### Compliance Tests
+
+  **Focus**: Regulatory requirements
+
+  **Assertions**:
+  - Audit trail completeness (100% of events logged)
+  - Timestamp accuracy (±100μs)
+  - Regulatory format compliance (MiFID II fields present)
+
+  **NO performance assertions**
+
+  ---
+
+  ## Scenario Coverage
+
+  ### Positive Scenarios (Happy Path)
+
+  - Valid inputs within normal ranges
+  - Standard workflows
+  - Expected system behavior
+
+  **Examples**:
+  - Submit valid market order → Order accepted with status NEW
+  - Cancel existing order → Order status updated to CANCELLED
+  - Sufficient margin → Order passes risk check
+
+  ### Negative Scenarios (Error Paths)
+
+  - Invalid inputs (malformed, out of range, wrong type)
+  - Missing required fields
+  - Unauthorized access
+  - Resource exhaustion
+  - Network failures
+  - Concurrent conflicts
+
+  **Examples**:
+  - Submit order with negative price → Reject with "Invalid Price"
+  - Cancel non-existent order → Return "Order Not Found"
+  - Insufficient margin → Reject with "Insufficient Margin"
+  - Invalid authentication token → Return "Unauthorized"
+
+  ### Edge Cases
+
+  - Boundary values (min/max price, quantity, timestamps)
+  - State transition boundaries
+  - Numerical precision limits
+  - Clock skew scenarios
+
+  **Examples**:
+  - Price = 0.00001 (minimum tick size) → Accept
+  - Price = 0.000009 (below tick size) → Reject
+  - Quantity = max position limit → Accept
+  - Quantity = max + 1 → Reject with "Position Limit Exceeded"
+
+  ---
+
+  ## HFT Edge Cases Checklist
+
+  ### Functional Edge Cases
+
+  - [ ] **Order Book Crossing**: Buy price > current ask or sell price < current bid
+  - [ ] **Price Improvement**: Execution at better price than requested
+  - [ ] **Partial Fills**: Order partially executed, remainder still active
+  - [ ] **Self-Trade Prevention**: Same account on both sides of trade
+  - [ ] **Tick Size Violations**: Price not multiple of minimum increment
+  - [ ] **Sequence Number Gaps**: Missing message sequence numbers
+  - [ ] **Duplicate Messages**: Same message received twice
+  - [ ] **Out-of-Order Messages**: Messages arrive out of sequence
+  - [ ] **Checksum Validation**: Message integrity verification
+
+  ### Performance Edge Cases (Performance Tests Only)
+
+  - [ ] **GC Spikes**: Latency during garbage collection
+  - [ ] **CPU Pinning**: Core affinity validation
+  - [ ] **Memory Pre-allocation**: No allocations in hot path
+  - [ ] **Buffer Overflow/Underflow**: Network buffer edge cases
+  - [ ] **Timestamp Precision**: Nanosecond accuracy validation
+
+  ### Concurrency Edge Cases
+
+  - [ ] **Simultaneous Modifications**: Two threads modify same order
+  - [ ] **Atomic Updates**: Order book updates must be atomic
+  - [ ] **Lock-Free Correctness**: Lock-free data structures work correctly
+  - [ ] **Memory Visibility**: Changes visible across threads (happens-before)
+
+  ### Compliance Edge Cases
+
+  - [ ] **Audit Trail Completeness**: 100% of events captured
+  - [ ] **Timestamp Sources**: Exchange vs gateway vs OMS timestamps
+  - [ ] **Best Execution**: Price improvement tracking
+  - [ ] **Circuit Breakers**: Trading halt triggers and behavior
+
+  ---
+
+  ## Quality Standards
+
+  ### Coverage Requirements
+
+  - Code coverage: ≥90% for critical paths
+  - Branch coverage: ≥85%
+  - Boundary value coverage: 100% for critical fields
+  - Error path coverage: 100%
+
+  ### Test Case Quality Metrics
+
+  | Metric | Minimum Score | Evaluation |
+  |--------|--------------|------------|
+  | Clarity | 8/10 | Can new QA engineer understand and execute? |
+  | Completeness | 8/10 | Are all edge cases covered? |
+  | Maintainability | 7/10 | Resilient to minor system changes? |
+
+  ### Execution Speed Targets
+
+  | Test Level | Target Time |
+  |------------|-------------|
+  | Unit | <100ms per test |
+  | Integration | <5 seconds per test |
+  | E2E API | <30 seconds per test |
+  | E2E UI | <2 minutes per test |
+  | E2E Performance | <5 minutes per test |
+  | Microbenchmark | <1 second per benchmark |
+
+  ---
+
+  ## Integration Test Best Practices
+
+  ### When to Use Containerized Dependencies
+
+  - Database tests
+  - Message broker tests
+  - Cache layer tests
+  - External service simulations
+
+  ### What to Mock vs Use Real
+
+  **Use Real (Containerized)**:
+  - Databases (order persistence)
+  - Message queues (event sourcing)
+  - Cache layers (session management)
+  - Internal services (OMS, Matching Engine, Risk Service)
+
+  **Mock (Minimal)**:
+  - External liquidity providers (unpredictable latency)
+  - Third-party APIs (payment gateways, KYC)
+  - External market data feeds (simulate realistic data)
+
+  ### General Principles
+
+  1. Prefer real dependencies over mocks
+  2. Use containerized services mirroring production
+  3. Mock only external and unpredictable services
+  4. Ensure test isolation (proper setup/teardown)
+  5. Validate data consistency across components
+
+  ---
+
+  ## Performance Test Patterns
+
+  ### E2E Performance Test Template
+
+  ```markdown
+  ## Test Case: TC-PERF-E2E-TRADING-001
+
+  ### Name
+  test_TradingWorkflow_PlaceMarketOrder_MeetsLatencySLA
+
+  ### Test Level
+  E2E Performance
+
+  ### Scenario
+  Complete user workflow: Login → Place market order → Verify confirmation → View position
+
+  ### Priority
+  P0 - Critical user path with strict SLA
+
+  ### Preconditions
+  - System in production-like state
+  - 1000 test users provisioned
+  - Market data feeds active
+  - Load generators configured
+
+  ### Test Steps
+  1. User logs in with valid credentials
+  2. User navigates to trading screen
+  3. User places market order for EURUSD, quantity 0.1
+  4. System displays order confirmation
+  5. User views updated position
+  6. Repeat workflow with 500 concurrent users for 60 seconds
+  7. Measure response time for each step from user perspective
+  8. Calculate latency percentiles for complete workflow
+
+  ### Expected Results
+  - p50 workflow latency < 200ms (user perspective)
+  - p99 workflow latency < 500ms (user perspective)
+  - p99.9 workflow latency < 1 second (user perspective)
+  - 100% of workflows complete successfully
+  - Zero errors or timeouts
+  - System remains stable under load
+  - CPU utilization < 80% across all services
+  - Memory stable (no leaks)
+
+  ### Postconditions
+  - All test orders cancelled
+  - Test user accounts reset
+  - System metrics logged for analysis
+  ```
+
+  ### Microbenchmark Test Template
+
+  ```markdown
+  ## Test Case: TC-BENCH-RISK-001
+
+  ### Name
+  benchmark_RiskCheck_MarginValidation_SubMicrosecond
+
+  ### Test Level
+  Microbenchmark
+
+  ### Component
+  Risk Service - Margin Sufficiency Check
+
+  ### Priority
+  P1 - Critical path component with strict latency requirement
+
+  ### Scenario
+  Measure isolated performance of margin validation logic
+
+  ### Preconditions
+  - Microbenchmarking framework configured
+  - JVM warmed up with 10,000 warmup iterations
+  - GC completed before measurement
+  - Test data prepared (account balance, positions, order)
+
+  ### Test Steps
+  1. Prepare test data: Account balance = $10,000, Open position value = $5,000, New order value = $1,000
+  2. Invoke margin check method
+  3. Measure execution time
+  4. Repeat 1,000,000 times
+  5. Calculate statistics: mean, p50, p99, p99.9, p99.99
+  6. Verify zero allocations (no garbage generated)
+
+  ### Expected Results
+  - Mean execution time < 5 microseconds
+  - p99 execution time < 10 microseconds
+  - p99.99 execution time < 20 microseconds
+  - Zero allocations (no objects created)
+  - Deterministic performance (coefficient of variation < 10%)
+  - Correct result on every invocation (validation consistency)
+
+  ### Postconditions
+  - Benchmark results logged
+  - Performance regression check (compare to baseline)
+  ```
+
+  ---
+
+  ## Anti-Patterns
+
+  ### What NOT to Do ❌
+
+  1. **Vague test names**: "test_order_submission" → No indication of scenario or expectation
+  2. **Skip negative scenarios**: Only testing happy paths leaves error handling untested
+  3. **Performance assertions in functional tests**: Mixes concerns, makes tests brittle
+  4. **Test components in E2E performance tests**: Use microbenchmarks instead
+  5. **Test user workflows in microbenchmarks**: Use E2E performance tests instead
+  6. **Use production data**: Security risk, data privacy violations
+  7. **Hard-code test data**: Becomes stale, hard to maintain
+  8. **Test order dependency**: Test B fails if Test A doesn't run first
+  9. **Multiple features in one test**: Hard to debug failures
+  10. **Over-mock in integration tests**: Defeats purpose of integration testing
+  11. **Skip cleanup**: Leaves system in dirty state for next test
+  12. **Mix test levels**: Unit test that hits database is actually integration test
+
+  ### What TO Do ✅
+
+  1. **Encode meaning in names**: `test_OrderSubmission_InsufficientMargin_RejectsWithError`
+  2. **Test one scenario per test**: Clear focus, easy to debug
+  3. **Separate functional and performance**: Different test suites, different concerns
+  4. **E2E performance = user workflows**: Login, trade, report with performance assertions
+  5. **Microbenchmarks = components**: Risk check, matching engine with sub-μs assertions
+  6. **Use data factories**: Generate fresh, valid test data for each test
+  7. **Write isolated tests**: Each test can run independently in any order
+  8. **Use containerized dependencies**: Real databases, message queues in integration tests
+  9. **Mock only external services**: LPs, third-party APIs, external feeds
+  10. **Clean up resources**: Always restore system to clean state
+  11. **Keep test levels focused**: Unit = no I/O, Integration = real dependencies, E2E = full stack
+
+  ---
+
+  ## Example Test Cases
+
+  ### Example 1: Unit Test
+
+  ```markdown
+  ## Test Case: TC-UNIT-PRICE-001
+
+  ### Name
+  test_PriceConversion_MaximumValue_ConvertsCorrectly
+
+  ### Test Level
+  Unit
+
+  ### Priority
+  P1 - Critical value object used throughout system
+
+  ### Test Type
+  Functional
+
+  ### Preconditions
+  - Price value object class available
+
+  ### Test Data
+  - Input: "999999.99999" (maximum allowed price)
+  - Expected internal representation: 99999999999 (fixed-point)
+
+  ### Test Steps
+  1. Create Price from decimal string "999999.99999"
+  2. Verify internal fixed-point representation equals 99999999999
+  3. Convert back to decimal string
+  4. Verify result equals "999999.99999"
+
+  ### Expected Results
+  - Conversion succeeds without exception
+  - Internal representation correct
+  - Round-trip conversion maintains precision
+  - No loss of significant digits
+
+  ### Postconditions
+  - None (pure function, no side effects)
+  ```
+
+  ### Example 2: Integration Test
+
+  ```markdown
+  ## Test Case: TC-INT-ORDER-001
+
+  ### Name
+  test_OrderSubmission_DatabasePersistence_SavesAllFields
+
+  ### Test Level
+  Integration
+
+  ### Priority
+  P0 - Critical data persistence for audit trail
+
+  ### Test Type
+  Functional
+
+  ### Interface
+  Integration (REST API → OMS → Database)
+
+  ### Preconditions
+  - Containerized database running
+  - OMS service configured to use test database
+  - Test user authenticated
+
+  ### Test Data
+  - Symbol: EURUSD
+  - Side: BUY
+  - Quantity: 0.1
+  - Order Type: MARKET
+  - Expected fields: orderId, accountId, symbol, side, quantity, orderType, status, timestamp
+
+  ### Test Steps
+  1. Submit market order via REST API
+  2. Verify API returns 201 Created with order ID
+  3. Query database directly for order by ID
+  4. Verify all fields persisted correctly
+
+  ### Expected Results
+  - Order record exists in database
+  - All fields match submitted values
+  - Status = NEW
+  - Timestamp within 1 second of submission time
+  - AccountId matches authenticated user
+
+  ### Postconditions
+  - Delete test order from database
+  - Close database connection
+
+  ### Mocking Strategy
+  - Database: Real (containerized)
+  - Message queue: Real (containerized)
+  - External LPs: Mocked (not needed for this test)
+  ```
+
+  ### Example 3: E2E API Test
+
+  ```markdown
+  ## Test Case: TC-E2E-API-WORKFLOW-001
+
+  ### Name
+  test_OrderWorkflow_SubmitAndCancel_CompleteLifecycle
+
+  ### Test Level
+  E2E API
+
+  ### Priority
+  P0 - Critical trading workflow
+
+  ### Test Type
+  Functional
+
+  ### Interface
+  BE-rest, BE-websocket
+
+  ### Preconditions
+  - System fully operational (all services running)
+  - Test user authenticated
+  - Market open for EURUSD
+
+  ### Test Data
+  - Symbol: EURUSD
+  - Side: BUY
+  - Quantity: 0.1
+  - Order Type: LIMIT
+  - Price: Current market price - 10 pips (ensures no immediate fill)
+
+  ### Test Steps
+  1. Submit limit order via REST API
+  2. Verify REST response: 201 Created with order ID and status NEW
+  3. Subscribe to WebSocket order updates for this order
+  4. Verify WebSocket push notification: order created with status NEW
+  5. Cancel order via REST API DELETE endpoint
+  6. Verify REST response: 200 OK
+  7. Verify WebSocket push notification: order cancelled with status CANCELLED
+  8. Query order via REST API GET endpoint
+  9. Verify order status is CANCELLED
+
+  ### Expected Results
+  - Order created successfully with unique ID
+  - Initial status = NEW
+  - WebSocket notifications received for create and cancel
+  - Order cancellation succeeds
+  - Final status = CANCELLED
+  - Position unchanged (order never filled)
+  - Audit trail contains both create and cancel events
+
+  ### Postconditions
+  - Order in CANCELLED state
+  - No cleanup needed (order lifecycle complete)
+  ```
+
+  ### Example 4: E2E UI Test
+
+  ```markdown
+  ## Test Case: TC-E2E-UI-TRADING-001
+
+  ### Name
+  test_TradingUI_PlaceMarketOrder_DisplaysConfirmation
+
+  ### Test Level
+  E2E UI
+
+  ### Priority
+  P0 - Critical user journey
+
+  ### Test Type
+  Functional
+
+  ### Interface
+  UI-web
+
+  ### Preconditions
+  - Trading web application deployed
+  - Test user account provisioned
+  - Browser launched and ready
+
+  ### Test Data
+  - Username: test_trader_001
+  - Password: [from test data vault]
+  - Symbol: EURUSD
+  - Quantity: 0.1
+
+  ### Test Steps
+  1. Navigate to login page
+  2. Enter username and password
+  3. Click "Login" button
+  4. Verify redirect to dashboard
+  5. Click "Trade" in navigation menu
+  6. Verify trading screen displayed
+  7. Select symbol: EURUSD from dropdown
+  8. Enter quantity: 0.1
+  9. Select order type: MARKET
+  10. Click "Buy" button
+  11. Verify confirmation dialog appears
+  12. Verify confirmation shows: symbol, quantity, order type, estimated price
+  13. Click "Confirm" in dialog
+  14. Verify success message: "Order placed successfully"
+  15. Verify order appears in "Open Orders" list with status NEW
+  16. Verify order details match submitted values
+
+  ### Expected Results
+  - Login succeeds
+  - Trading screen loads
+  - Order submission form functional
+  - Confirmation dialog displays correct details
+  - Order placed successfully
+  - Success message displayed
+  - Order visible in open orders list
+  - Real-time update when order status changes
+
+  ### Postconditions
+  - Cancel test order (cleanup)
+  - Logout
+  - Close browser
+  ```
+
+  ### Example 5: E2E Performance Test
+
+  ```markdown
+  ## Test Case: TC-PERF-E2E-TRADING-001
+
+  ### Name
+  test_TradingWorkflow_PlaceMarketOrder_MeetsLatencySLA
+
+  ### Test Level
+  E2E Performance
+
+  ### Priority
+  P0 - Critical user path with strict SLA
+
+  ### Test Type
+  Performance
+
+  ### Interface
+  BE-rest, BE-websocket
+
+  ### Scenario
+  User workflow: Login → Place market order → Receive confirmation → View updated position
+
+  ### Preconditions
+  - System in production-like state (all services running)
+  - 500 test users provisioned
+  - Load generation tools configured
+  - Market data feeds active
+  - Baseline system metrics collected
+
+  ### Test Steps
+  1. Simulate 500 concurrent users
+  2. Each user executes workflow:
+     a. Login via REST API
+     b. Place market order for EURUSD via REST API
+     c. Wait for confirmation via WebSocket
+     d. Query position via REST API
+  3. Repeat workflow continuously for 300 seconds
+  4. Measure end-to-end latency from step 2a to 2d completion
+  5. Collect latency for each workflow iteration
+  6. Calculate percentiles: p50, p90, p95, p99, p99.9
+  7. Monitor system metrics: CPU, memory, network
+
+  ### Expected Results (WITH PERFORMANCE ASSERTIONS)
+  - **p50 latency < 200ms** (median user experience)
+  - **p99 latency < 500ms** (99% of users)
+  - **p99.9 latency < 1 second** (worst case)
+  - 100% workflow completion rate (no failures)
+  - Zero errors or timeouts
+  - System remains stable (no crashes)
+  - CPU utilization < 80% across all services
+  - Memory usage stable (no leaks)
+  - Network bandwidth < 70% capacity
+
+  ### Postconditions
+  - All test orders cancelled
+  - Test users logged out
+  - Performance metrics exported for analysis
+  - System metrics logged
+  ```
+
+  ### Example 6: Microbenchmark Test
+
+  ```markdown
+  ## Test Case: TC-BENCH-RISK-001
+
+  ### Name
+  benchmark_RiskCheck_MarginValidation_SubMicrosecond
+
+  ### Test Level
+  Microbenchmark
+
+  ### Priority
+  P1 - Critical component with strict latency requirement
+
+  ### Test Type
+  Performance
+
+  ### Component
+  Risk Service - Margin Sufficiency Validation Method
+
+  ### Scenario
+  Measure isolated performance of margin calculation and validation logic
+
+  ### Preconditions
+  - Microbenchmarking framework initialized
+  - JVM configured with -XX:+UseG1GC -Xms2g -Xmx2g
+  - Warm-up phase: 10,000 iterations
+  - GC forced before measurement phase
+  - CPU cores pinned (isolation)
+
+  ### Test Data
+  - Account balance: $10,000
+  - Open position margin used: $5,000
+  - Open position unrealized P&L: -$500
+  - New order margin required: $1,000
+  - Margin requirement ratio: 0.01 (1%)
+
+  ### Test Steps
+  1. Prepare test data (account state, positions, new order)
+  2. Execute warm-up iterations (10,000 times)
+  3. Force garbage collection
+  4. Start measurement
+  5. Invoke marginValidation(account, positions, newOrder)
+  6. Measure execution time in nanoseconds
+  7. Repeat 1,000,000 times
+  8. Calculate statistics:
+     - Mean, median (p50)
+     - p99, p99.9, p99.99
+     - Standard deviation, coefficient of variation
+  9. Count memory allocations (should be zero)
+
+  ### Expected Results (WITH PERFORMANCE ASSERTIONS)
+  - **Mean execution time < 5 microseconds**
+  - **p99 execution time < 10 microseconds**
+  - **p99.9 execution time < 15 microseconds**
+  - **p99.99 execution time < 20 microseconds**
+  - **Zero allocations** (no objects created in hot path)
+  - **Coefficient of variation < 10%** (deterministic)
+  - Correct validation result on every iteration (functional correctness)
+  - Result: PASS (sufficient margin for this test case)
+
+  ### Postconditions
+  - Benchmark results exported to metrics system
+  - Regression check against baseline (alert if >10% slower)
+  - Performance report generated
+  ```
+
+  ---
+
+  ## Cross-References
+
+  - **Domain Knowledge**: See `qa-principal-trading.yaml` for HFT system architecture, protocols, and business rules
+  - **Test Patterns**: See `TEST_PATTERNS.yaml` for code organization and implementation patterns
+  - **API Testing**: See `API_TESTING_GUIDE.yaml` for REST/FIX/WebSocket testing specifics
+  - **Configuration**: See `CONFIGURATION_GUIDE.yaml` for environment and test data setup
+
+  ---
+
+  **Remember**: Test quality is as important as code quality. Well-designed test cases are the foundation of reliable, high-performance trading systems.

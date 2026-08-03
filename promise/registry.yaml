@@ -1,0 +1,181 @@
+version: "2.3"
+
+promises:
+  complete-output:
+    type: standing
+    method: grep
+    confidence: high
+    requires: null
+    pattern: "TODO|FIXME|HACK"
+    threshold: 0
+    description: "Zero TODO/FIXME/HACK markers"
+
+  no-placeholders:
+    type: standing
+    method: grep
+    confidence: high
+    requires: null
+    pattern: "placeholder|not yet implemented|stub|dummy implementation"
+    threshold: 0
+    description: "No placeholder implementations"
+
+  error-handling:
+    type: standing
+    method: grep_absent
+    confidence: high
+    requires: null
+    pattern: "try\\s*\\{|catch\\s*\\(|\\.catch\\(|\\.finally\\("
+    description: "Error handling for failure paths"
+
+  tests-with-code:
+    type: standing
+    method: file_check
+    confidence: medium
+    requires: null
+    check: "test|spec|_test"
+    description: "Tests included with implementation"
+
+  no-dead-code:
+    type: standing
+    method: consecutive_comments
+    confidence: high
+    requires: null
+    min_lines: 3
+    threshold: 0
+    description: "No commented-out code blocks"
+
+  resource-cleanup:
+    type: standing
+    method: grep_absent
+    confidence: medium
+    requires: null
+    pattern: "\\.close\\(|\\.destroy\\(|\\.end\\(|finally\\s*\\{"
+    description: "Resources closed/cleaned up"
+
+  implementation-depth:
+    type: standing
+    method: grep_absent
+    confidence: high
+    requires: null
+    pattern: "function |class |const |let |def |fn |pub |impl "
+    description: "Actual code, not just prose"
+
+  output-completeness:
+    type: standing
+    method: output_length
+    confidence: medium
+    requires: null
+    min_chars: 500
+    description: "Substantial output (>500 chars)"
+    thresholds:
+      high: 500
+      medium: 500
+      low: 750
+      critical: 1000
+
+  # PR #32 integration. Java test files (Maven/JUnit) must deserialize REST
+  # and WebSocket response payloads via response.as(Dto.class) /
+  # asList(Dto.class) / message.as(Dto.class) before asserting. Raw body
+  # access (response.body() outside diagnostics, JsonNode, JsonPath,
+  # ObjectMapper.readTree, org.json.*, WebSocketResponse.fields/getField/
+  # rawJson) in assertion context is forbidden. Carve-outs (Allure /
+  # logger attachments, response.raw().headers() for header checks,
+  # statusCode-only assertions on 204/304/empty body responses) live in
+  # the qa-code-reviewer LLM layer, not in this regex — this verifier is
+  # deliberately broad and the reviewer is the arbiter.
+  test-assertion-deserialize:
+    type: standing
+    method: test_assertion_patterns
+    confidence: medium
+    requires: null
+    # Includes src/sit/ paths and *SIT.java suffixes per georgi-ivanov
+    # 2026-06-08 feedback on PR #25. Same regex as standing-promises.js
+    # and findings-interpreter.js JAVA_TEST_FILE_REGEX — keep in sync.
+    test_file_pattern: "(?:^|/)(?:src/test/|src/sit/|tests?/).*\\.java$|(?:Test|IT|Tests|SIT)\\.java$"
+    forbidden_patterns:
+      - "\\.body\\(\\)\\.asString\\(\\)"
+      - "\\.body\\(\\)\\.print\\(\\)"
+      - "\\bJsonNode\\b"
+      - "\\bJsonPath\\b"
+      - "ObjectMapper\\(\\)\\.readTree"
+      - "\\bJSONObject\\b"
+      - "\\bJSONArray\\b"
+      - "\\bJSONTokener\\b"
+      - "\\.fields\\(\\)"
+      - "\\.getField\\("
+      - "\\.rawJson\\("
+    description: "Java test files deserialize via response.as(Dto.class) — no raw body or untyped JSON access in assertion context"
+
+  import-validity:
+    type: structural
+    method: cxpak:call_graph
+    confidence: high
+    requires: cxpak
+    description: "All imports resolve to real files (cxpak_call_graph.unresolved == 0)"
+
+  function-length:
+    type: structural
+    method: cxpak:health
+    confidence: medium
+    requires: cxpak
+    description: "Convention adherence proxy (cxpak_health.conventions >= 7)"
+
+  duplication:
+    type: structural
+    method: cxpak:dead_code
+    confidence: high
+    requires: cxpak
+    description: "No dead symbols in modified files (cxpak_dead_code with health fallback)"
+
+  architectural-boundary:
+    type: structural
+    method: cxpak:architecture
+    confidence: medium
+    requires: cxpak
+    description: "No boundary violations or circular dependencies"
+
+  convention-compliance:
+    type: structural
+    method: cxpak:verify
+    confidence: medium
+    requires: cxpak
+    description: "Code changes follow observed codebase conventions (cxpak_verify)"
+
+  change-impact:
+    type: structural
+    method: cxpak:predict
+    confidence: medium
+    requires: cxpak
+    description: "Change impact analysis shows manageable risk (cxpak_predict)"
+
+  security-surface:
+    type: structural
+    method: cxpak:security_surface
+    confidence: high
+    requires: cxpak
+    description: "No secrets, SQL injection, or unprotected endpoints in modified files"
+
+  context-acquisition:
+    type: behavioral
+    method: tool_call_check
+    confidence: low
+    requires: cxpak
+    tool_pattern: "cxpak_auto_context|cxpak_overview"
+    description: "Agent called cxpak_auto_context (or fallback cxpak_overview) before implementing"
+
+  read-before-write:
+    type: behavioral
+    method: trace
+    confidence: high
+    requires:
+      - trace
+    description: "Agent read files before modifying them"
+
+  exploration-breadth:
+    type: behavioral
+    method: trace+cxpak
+    confidence: low
+    requires:
+      - trace
+      - cxpak
+    description: "Agent read architecturally-related files (cxpak_blast_radius)"

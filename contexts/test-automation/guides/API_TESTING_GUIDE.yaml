@@ -1,0 +1,1300 @@
+name: "API_TESTING_GUIDE"
+type: "guide"
+version: "1.1.0"
+description: "Complete guide to API testing with the Tradu Test Automation Framework covering HTTP/REST, WebSocket, and FIX protocols."
+last_updated: "2026-05-22"
+maintained_by: "Tradu QA Team"
+changelog:
+  - version: "1.1.0"
+    date: "2026-05-22"
+    changes:
+      - "Added 'Error Response Models' section establishing deserialize-for-assertions as canonical rule"
+      - "Added Pattern 5 carve-out boundary heuristic for parameterized tests"
+      - "Added 'Best Practice 8 — Deserialize for Assertions' with WebSocket parity"
+      - "Replaced raw response.body().contains(...) assertions in 8 negative-test examples with response.as(ApiError.class) deserialization"
+      - "Added deprecation-path note to 'Error Response Models' canonical section (retire when response.body() / WebSocketResponse.getField/fields/rawJson leave the public API)"
+  - version: "1.0.0"
+    date: "2026-04-15"
+    changes:
+      - "Initial release"
+
+content: |
+  # API Testing Guide
+  
+  > Complete guide to API testing with the Tradu Test Automation Framework covering HTTP/REST, WebSocket, and FIX protocols.
+  
+  ## Table of Contents
+  
+  - [Overview](#overview)
+  - [Service Class Pattern](#service-class-pattern)
+  - [ApiResponse](#apiresponse)
+  - [HTTP/REST Testing](#httprest-testing)
+  - [WebSocket Testing](#websocket-testing)
+  - [FIX Protocol Testing](#fix-protocol-testing)
+  - [Testing Patterns](#testing-patterns)
+  - [Best Practices](#best-practices)
+  
+
+  ## Service Classes — Zero Defensive Programming
+
+  > **Full rules and anti-pattern examples**: See TEST_PATTERNS.yaml → "Service Class Pattern" and "Service Class Best Practices" sections.
+
+  Service classes are "dumb pipes" — static methods that make a request and return raw `ApiResponse`. No try-catch, no conditionals, no assertions, no parameter validation, no retry logic. This enables testing ALL response codes (200, 400, 401, 404, 500, etc.).
+
+  ```java
+  // THE ONLY ACCEPTABLE PATTERN — authToken as first parameter
+  public static ApiResponse createOrder(String authToken, CreateOrderRequest request) {
+      logger.info("Creating order: {}", request);
+      return post("/api/orders")
+          .bearerAuth(authToken)
+          .contentType("application/json")
+          .body(request)
+          .timeout(Duration.ofSeconds(30))
+          .send();  // Returns raw response — success OR error
+  }
+  ```
+
+  ## Overview
+
+  **CRITICAL**: Tests NEVER call HTTP methods (`post`/`get`/etc.), `WebSocketClient`, or `FixRequestBuilder` directly. Always use service classes.
+
+  ### Why Service Classes?
+
+  1. **Encapsulation**: HTTP/protocol details hidden from tests
+  2. **Reusability**: Same service method used across tests
+  3. **Maintainability**: Change endpoint/headers in one place
+  4. **Testability**: Easy to test both success and error scenarios
+
+  ## ApiResponse
+  
+  ### Methods
+  
+  ```java
+  public final class ApiResponse {
+      public int statusCode();                 // HTTP status code
+      public <T> T as(Class<T> type);          // Deserialize to single object
+      public <T> List<T> asList(Class<T> type); // Deserialize to list
+      public String body();                    // Raw response body as string
+      public boolean isSuccessful();           // True if 2xx status
+      public HttpResponse<String> raw();       // Underlying HTTP response (for headers etc.)
+  }
+  ```
+
+  > **Note**: There is no `.headers()` convenience method on `ApiResponse`. To access response headers, use `response.raw().headers()` — e.g., `response.raw().headers().firstValue("Content-Type")`.
+
+  ### Paginated Responses
+
+  For Spring `Page<T>` and similar wrapped responses, create a concrete page class and use `as()`:
+
+  ```java
+  public class OrderPageResponse {
+      private List<OrderResponse> content;
+      private int totalPages;
+      private long totalElements;
+      private int size;
+      private int number;
+      // getters and setters
+  }
+
+  // In tests — use as() NOT asList()
+  OrderPageResponse page = OrderService.getOrders(token, "EURUSD", 100)
+      .as(OrderPageResponse.class);
+  assertThat(page.getContent()).isNotEmpty();
+  assertThat(page.getTotalElements()).isGreaterThan(0);
+  ```
+
+  **Rule**: Use `asList()` only for plain JSON arrays (`[...]`). Use `as()` with a wrapper class for paginated/envelope responses.
+
+  ### ApiRequest Methods
+
+  ```java
+  // Built by service gateway methods — not instantiated directly
+  ApiRequest request = post("/api/v1/orders");  // From gateway base
+
+  // Fluent builder methods
+  request.bearerAuth(String token)       // Sets Authorization: Bearer {token}
+  request.header(String name, String value) // Custom header
+  request.headers(Map<String, String> headers) // Multiple headers
+  request.body(Object body)              // Auto-serialized to JSON
+  request.queryParam(String key, Object value) // URL query param (any type; null values are accepted for negative tests — e.g. asserting how the API handles `?foo=` or absent values)
+  request.queryParams(Map<String, ?> params) // Multiple query params (map values may be null to cover the same negative-test scenarios)
+  request.timeout(Duration timeout)      // Request timeout (default: 30s)
+  request.contentType(String type)       // Content-Type header
+  request.accept(String type)            // Accept header
+
+  // Execution
+  ApiResponse response = request.send();                   // Synchronous
+  CompletableFuture<ApiResponse> future = request.sendAsync(); // Asynchronous
+  ```
+
+  ### Usage Examples
+  
+  ```java
+  // Single object
+  ApiResponse response = OrderService.createOrder(traderToken, request);
+  OrderResponse order = response.as(OrderResponse.class);
+  
+  // List of objects
+  ApiResponse response = OrderService.getAllOrders(traderToken);
+  List<OrderResponse> orders = response.asList(OrderResponse.class);
+  
+  // Status code
+  int status = response.statusCode();
+
+  // Raw body — for logging / Allure attachments / diagnostics ONLY.
+  // NEVER assert on this. For assertions, deserialize to a typed DTO:
+  //     ApiError error = response.as(ApiError.class);
+  //     assertThat(error.message()).isEqualTo("Invalid symbol");
+  // See "Error Response Models" below.
+  String rawBodyForLogging = response.body();
+  Allure.addAttachment("response body", "application/json", rawBodyForLogging);
+  ```
+  
+  ## HTTP/REST Testing
+  
+  ### ApiRequest Builder (Gateway Methods)
+
+  **Used inside service classes only** (never in tests). Gateway methods (`get()`, `post()`, etc.) return `ApiRequest` — a fluent builder ending with `.send()` → `ApiResponse`:
+  
+  ```java
+  // GET request
+  get("/api/orders")
+      .timeout(Duration.ofSeconds(10))
+      .send();
+  
+  // POST request with body
+  post("/api/orders")
+      .contentType("application/json")
+      .body(orderRequest)
+      .timeout(Duration.ofSeconds(30))
+      .send();
+  
+  // PUT request
+  put("/api/orders/{id}")
+      .contentType("application/json")
+      .body(updateRequest)
+      .send();
+  
+  // DELETE request
+  delete("/api/orders/{id}")
+      .send();
+  
+  // PATCH request
+  patch("/api/orders/{id}")
+      .contentType("application/json")
+      .body(patchRequest)
+      .send();
+  ```
+  
+  ### Headers
+  
+  ```java
+  // Content-Type
+  .contentType("application/json")
+  
+  // Accept
+  .accept("application/json")
+  
+  // Custom header
+  .header("X-API-Key", apiKey)
+  
+  // Bearer token
+  .bearerAuth(token)
+  
+  // Basic authentication
+  .basicAuth(username, password)
+  ```
+
+  ### Authentication Management
+
+  Service methods accept `String authToken` as their first parameter. Tests obtain tokens via `AuthService.login()` and pass them to every service call. This enables multi-account testing — the same service method works for different users.
+
+  **AuthService** (the only service that doesn't need an auth token):
+  ```java
+  public final class AuthService extends ApiGatewayService {
+      private AuthService() {}
+
+      public static ApiResponse login(String username, String password) {
+          logger.info("Authenticating user: {}", username);
+          return post("/api/auth/login")
+              .contentType("application/json")
+              .body(new LoginRequest(username, password))
+              .timeout(Duration.ofSeconds(10))
+              .send();
+      }
+  }
+  ```
+
+  **API test setup** — obtain token per user role:
+  ```java
+  public final class OrderApiTest extends BaseApiTest {
+      private String traderToken;
+      private String adminToken;
+
+      @BeforeEach
+      void setUp() {
+          traderToken = AuthService.login(
+              ConfigurationManager.getProperty("test.trader.username"),
+              ConfigurationManager.getProperty("test.trader.password")
+          ).as(LoginResponse.class).token();
+
+          adminToken = AuthService.login(
+              ConfigurationManager.getProperty("test.admin.username"),
+              ConfigurationManager.getProperty("test.admin.password")
+          ).as(LoginResponse.class).token();
+      }
+
+      @Test
+      void test_order_createAsTrader_returns201() {
+          ApiResponse response = OrderService.createOrder(traderToken, request);
+          assertThat(response.statusCode()).isEqualTo(201);
+      }
+
+      @Test
+      void test_order_deleteAsAdmin_returns204() {
+          ApiResponse created = OrderService.createOrder(traderToken, request);
+          String orderId = created.as(OrderResponse.class).id();
+
+          ApiResponse response = OrderService.deleteOrder(adminToken, orderId);
+          assertThat(response.statusCode()).isEqualTo(204);
+      }
+
+      @Test
+      void test_order_createWithoutAuth_returns401() {
+          ApiResponse response = OrderService.createOrder(null, request);
+          assertThat(response.statusCode()).isEqualTo(401);
+      }
+  }
+  ```
+
+  **Reusable test users via UserCache** (Redis-backed, 24h TTL):
+  ```java
+  // Get or create a cached test user
+  User trader = UserCache.getOrCreateUser("trader");
+  String token = AuthService.login(trader.username(), trader.password())
+      .as(LoginResponse.class).token();
+  ```
+
+  **UI test auth injection** (inject token before navigating):
+  ```java
+  @BeforeEach
+  void setUp() {
+      // Get token via API
+      String token = AuthService.login(username, password).as(LoginResponse.class).token();
+
+      // Inject into browser (framework handles cookie/localStorage injection)
+      WebDriver driver = DriverManager.getDriver();
+      driver.navigateTo(ConfigurationManager.getProperty("app.base.url"));
+      driver.executeScript("localStorage.setItem('auth_token', '" + token + "')");
+  }
+  ```
+
+  **Configuration** (`application-{env}.properties`):
+  ```properties
+  test.trader.username=qa-trader@tradu.com
+  test.trader.password=${QA_TRADER_PASSWORD}
+  test.admin.username=qa-admin@tradu.com
+  test.admin.password=${QA_ADMIN_PASSWORD}
+  ```
+
+  **Key rules**:
+  - Service methods accept `authToken` as first parameter — pass `null` for unauthorized tests
+  - Never hardcode credentials in test code — use ConfigurationManager
+  - Cache tokens with RedisClient when available to reduce login overhead
+  - For UI tests, inject auth tokens via API before navigating
+  - Multi-account tests: obtain separate tokens per role in `@BeforeEach`
+
+  ### Test Examples
+  
+  ```java
+  // Success scenario (201 Created)
+  @Test
+  void test_order_createLimitOrder_returns201() {
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, 100000, 1.0850
+      );
+  
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+  
+      assertThat(response.statusCode()).isEqualTo(201);
+      OrderResponse order = response.as(OrderResponse.class);
+      assertThat(order.symbol()).isEqualTo("EURUSD");
+      assertThat(order.side()).isEqualTo(OrderSide.BUY);
+      assertThat(order.quantity()).isEqualTo(100000);
+  }
+  
+  // Success scenario (200 OK)
+  @Test
+  void test_order_getById_returns200() {
+      // Setup
+      ApiResponse createResponse = OrderService.createOrder(traderToken, request);
+      OrderResponse createdOrder = createResponse.as(OrderResponse.class);
+  
+      // Test
+      ApiResponse response = OrderService.getOrder(traderToken, createdOrder.id());
+  
+      assertThat(response.statusCode()).isEqualTo(200);
+      OrderResponse order = response.as(OrderResponse.class);
+      assertThat(order.id()).isEqualTo(createdOrder.id());
+  }
+  
+  // List response
+  @Test
+  void test_order_getAll_returnsNonEmptyList() {
+      ApiResponse response = OrderService.getAllOrders(traderToken);
+  
+      assertThat(response.statusCode()).isEqualTo(200);
+      List<OrderResponse> orders = response.asList(OrderResponse.class);
+      assertThat(orders).isNotEmpty();
+  }
+  
+  // Error scenario (400 Bad Request)
+  @Test
+  void test_order_createWithInvalidData_returns400() {
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "INVALID", OrderSide.BUY, -1000, 0.0  // Invalid data
+      );
+
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+
+      assertThat(response.statusCode()).isEqualTo(400);
+      ApiError error = response.as(ApiError.class);
+      assertThat(error.errorCode()).isEqualTo("INVALID_SYMBOL");
+  }
+  
+  // Error scenario (404 Not Found)
+  @Test
+  void test_order_getNonExistent_returns404() {
+      ApiResponse response = OrderService.getOrder(traderToken, "non-existent-id");
+  
+      assertThat(response.statusCode()).isEqualTo(404);
+  }
+  
+  // Error scenario (401 Unauthorized)
+  @Test
+  void test_order_createWithoutAuth_returns401() {
+      // Pass null authToken — no Authorization header sent
+      ApiResponse response = OrderService.createOrder(null, request);
+
+      assertThat(response.statusCode()).isEqualTo(401);
+  }
+  
+  // Success with no content (204 No Content)
+  @Test
+  void test_order_delete_returns204() {
+      // Setup
+      ApiResponse createResponse = OrderService.createOrder(traderToken, request);
+      OrderResponse order = createResponse.as(OrderResponse.class);
+  
+      // Test
+      ApiResponse response = OrderService.deleteOrder(traderToken, order.id());
+  
+      assertThat(response.statusCode()).isEqualTo(204);
+  }
+  ```
+
+  ### Error Response Models
+
+  > **CANONICAL SOURCE OF TRUTH — Deserialize for assertions.**
+  > This section is the single source of truth for the deserialize-for-assertions rule. When updating the rule (new carve-out, expanded forbidden list, changed DTO shape), **update this section first**, then propagate to the sync targets listed in the "Rule sync checklist" comment immediately below. Other files MUST link back here ("See `API_TESTING_GUIDE.yaml` → 'Error Response Models'") rather than restating the rule's authoritative definition.
+  >
+  > **Rule sync checklist** — when this rule changes, update these files in lockstep:
+  > 1. `agents/qa-automation-architect.md` — "Critical Rules" + "Mandatory Quality Standards" + "Test Review Checklist"
+  > 2. `agents/qa-code-reviewer.md` — Stage 1 #9 + Severity Classification + Quality Gates
+  > 3. `commands/qa/automate-functional-tests.md` — "Framework Standards (cross-cutting)" block
+  > 4. `commands/qa/automate-functional-tests/references/automation-prompt.md` — Key constraints + "Error responses (negative tests)"
+  > 5. `commands/qa/automate-functional-tests/references/review-prompt.md` — Stage 1 assertion deserialization + CRITICAL classification
+  > 6. `commands/qa/automate-functional-tests/references/fix-prompt.md` — Fix item for raw-body / JsonNode / getField (with rewrite examples)
+  > 7. `contexts/test-automation/FRAMEWORK_CONTEXT.yaml` — Key Rules #6 + Service Class Pattern example
+  > 8. `contexts/test-automation/guides/TEST_PATTERNS.yaml` — Service Class Best Practices #16
+  > 9. `contexts/test-automation/reference/API_QUICK_REFERENCE.yaml` — ApiResponse Methods comment above `body()`
+  >
+  > Assertions on REST and WebSocket responses MUST be made against deserialized types. Raw body strings and field-by-field JSON access are forbidden in assertion context.
+  >
+  > - REST 2xx: `response.as(SuccessDto.class)` or `response.asList(SuccessDto.class)`
+  > - REST non-2xx: `response.as(ErrorDto.class)`
+  > - WebSocket: `message.as(MessageDto.class)`
+  >
+  > **Forbidden in assertion context**: `response.body()`, `JsonNode`, `JsonPath`, `ObjectMapper.readTree`, `org.json.*` (e.g. `JSONObject`, `JSONArray`, `JSONTokener`), `WebSocketResponse.fields()`, `WebSocketResponse.getField(...)`, `WebSocketResponse.rawJson()`.
+  >
+  > **Carve-outs (allowed)**:
+  > - Raw `response.body()` passed to `Allure.addAttachment(...)` / `logger.info(...)` for diagnostics.
+  > - Non-JSON `Content-Type` endpoints (`text/plain`, `text/html`, `text/csv`).
+  > - Header assertions via `response.raw().headers()` — e.g. `assertThat(response.raw().headers().firstValue("Retry-After")).isPresent()`.
+  >
+  > **204 No Content / 304 Not Modified / empty body**: assert only `statusCode()`. Do not read the body.
+  >
+  > **FIX protocol is out of scope**: `FixMessage` has no `.as(Class<T>)` and tag/value access is the protocol's native model — `getField(Tag)` / `fields()` remain the correct API for FIX assertions.
+
+  > **List vs envelope responses**: For paginated/envelope responses (Spring `Page<T>`, etc.), use `as()` with a wrapper class — NOT `asList()`. See "Paginated Responses" earlier in this guide for the rule and the wrapper-class example.
+
+  Each project defines its own error DTO matching its backend's error contract. There is no single canonical `ApiError` shipped with the framework. A typical Spring Boot validation error contract looks like this:
+
+  ```java
+  package com.example.api.error;
+
+  import java.util.List;
+  import java.util.Map;
+
+  /**
+   * Project-specific error DTO. Field names mirror the backend's JSON error contract.
+   * Different projects may use different schemas — e.g. an RFC 7807 ProblemDetails
+   * variant might define `code`/`detail`/`type`/`instance` instead of `errorCode`/`message`.
+   * Inspect the actual error response body once, then define the record to match.
+   */
+  public record ApiError(
+      int statusCode,
+      String errorCode,
+      String message,
+      Map<String, List<String>> validationErrors
+  ) {}
+  ```
+
+  **Additional error DTO variants** — beyond the 4-field record shown above, projects with different backends may use:
+
+  ```java
+  // RFC 7807 ProblemDetails — standard HTTP problem details (rfc7807)
+  import java.net.URI;
+  public record ProblemDetails(
+      URI type,
+      String title,
+      int status,
+      String detail,
+      URI instance
+  ) {}
+
+  // Minimal {code, message} — common in small APIs
+  public record ApiError(
+      String code,
+      String message
+  ) {}
+  ```
+
+  Inspect the actual error response body for your backend once, then define the record to match — the 4-field shape above, RFC 7807 ProblemDetails, the minimal shape, or your own variant.
+
+  **Deserialize and assert on typed fields**:
+
+  ```java
+  // 400 Bad Request — field-level validation
+  ApiResponse response = OrderService.createOrder(traderToken, invalidRequest);
+  assertThat(response.statusCode()).isEqualTo(400);
+  ApiError error = response.as(ApiError.class);
+  assertThat(error.errorCode()).isEqualTo("VALIDATION_FAILED");
+  assertThat(error.message()).isEqualTo("Order request is invalid");
+  assertThat(error.validationErrors())
+      .containsKey("quantity")
+      .extractingByKey("quantity", as(InstanceOfAssertFactories.LIST))
+      .contains("Quantity must be positive");
+
+  // 404 Not Found
+  ApiResponse notFound = OrderService.getOrder(traderToken, "ORDER-DOES-NOT-EXIST");
+  assertThat(notFound.statusCode()).isEqualTo(404);
+  ApiError notFoundError = notFound.as(ApiError.class);
+  assertThat(notFoundError.errorCode()).isEqualTo("ORDER_NOT_FOUND");
+
+  // 204 No Content — DO NOT read the body
+  ApiResponse deleted = OrderService.deleteOrder(traderToken, orderId);
+  assertThat(deleted.statusCode()).isEqualTo(204);
+  ```
+
+  **Diagnostics carve-out** — raw body is fine for Allure / logs, never for assertions:
+
+  ```java
+  ApiResponse response = OrderService.createOrder(traderToken, request);
+  // OK — diagnostic attachment only
+  Allure.addAttachment("response body", "application/json", response.body());
+  logger.info("Raw response: {}", response.body());
+
+  // For the actual assertion, deserialize:
+  ApiError error = response.as(ApiError.class);
+  assertThat(error.message()).isEqualTo("Invalid symbol");
+  ```
+
+  **Header assertions carve-out**:
+
+  ```java
+  ApiResponse response = OrderService.createOrder(traderToken, request);
+  assertThat(response.raw().headers().firstValue("Location")).isPresent();
+  assertThat(response.raw().headers().firstValue("Content-Type"))
+      .hasValue("application/json");
+  ```
+
+  **Non-JSON `Content-Type` carve-out** — raw body is the correct return type for plaintext / HTML / CSV endpoints:
+
+  ```java
+  // Endpoint returns text/csv
+  ApiResponse export = ReportService.exportOrdersAsCsv(traderToken, "2026-04");
+  assertThat(export.statusCode()).isEqualTo(200);
+  assertThat(export.raw().headers().firstValue("Content-Type"))
+      .hasValue("text/csv");
+  assertThat(export.body())   // OK — Content-Type is not JSON
+      .startsWith("orderId,symbol,side,quantity,price");
+  ```
+
+  > **Deprecation path.** This rule's enforcement value depends on `response.body()` remaining a `String`-returning method on the public API surface of `ApiResponse`. If the framework removes `response.body()`, marks it package-private, or renames it to something whose name makes the diagnostic-only intent unambiguous (e.g. `response.rawBodyForLogging()`), the rule becomes structurally enforced by the type system and the API name — at that point the prose rule and every restatement in the sync targets should be removed in the same change, since the duplication becomes pure context cost. The WebSocket half of the rule retires on the same condition: when `WebSocketResponse.getField(...)`, `.fields()`, and `.rawJson()` are removed from the public API, retire the WebSocket clause alongside the REST clause. Until those API changes ship, the rule remains load-bearing.
+
+  ### Negative Scenario Testing Examples
+
+  **These examples demonstrate WHY service classes MUST NOT use defensive programming:**
+
+  #### Testing 400 Bad Request - Invalid Quantity
+
+  ```java
+  @Test
+  void test_order_createWithInvalidQuantity_returns400() {
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, -1000, 1.0850  // Invalid: negative quantity
+      );
+
+      // Service class returns the 400 response - doesn't throw exception!
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+
+      assertThat(response.statusCode()).isEqualTo(400);
+      ApiError error = response.as(ApiError.class);
+      assertThat(error.errorCode()).isEqualTo("VALIDATION_FAILED");
+      assertThat(error.validationErrors())
+          .extractingByKey("quantity", as(InstanceOfAssertFactories.LIST))
+          .contains("Quantity must be positive");
+  }
+  ```
+
+  **Key Point**: If service class had try-catch or validation, this test would be impossible.
+
+  #### Testing 401 Unauthorized - Missing Authentication
+
+  ```java
+  @Test
+  void test_order_createWithoutAuthentication_returns401() {
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, 100000, 1.0850
+      );
+
+      // Pass null authToken — no Authorization header sent
+      ApiResponse response = OrderService.createOrder(null, request);
+
+      assertThat(response.statusCode()).isEqualTo(401);
+      ApiError error = response.as(ApiError.class);
+      assertThat(error.errorCode()).isEqualTo("AUTHENTICATION_REQUIRED");
+      assertThat(error.message()).isEqualTo("Authentication required: missing Bearer token");
+  }
+  ```
+
+  **Key Point**: If service class checked authentication, we couldn't test the API's auth validation.
+
+  #### Testing 404 Not Found - Non-Existent Resource
+
+  ```java
+  @Test
+  void test_order_getNonExistent_returns404() {
+      String fakeId = "ORDER-DOES-NOT-EXIST";
+
+      // Service class returns 404 - doesn't throw exception!
+      ApiResponse response = OrderService.getOrder(traderToken, fakeId);
+
+      assertThat(response.statusCode()).isEqualTo(404);
+      ApiError error = response.as(ApiError.class);
+      assertThat(error.errorCode()).isEqualTo("ORDER_NOT_FOUND");
+      assertThat(error.message()).contains(fakeId);
+  }
+  ```
+
+  **Key Point**: If service class validated ID format, we couldn't test 404 behavior.
+
+  #### Testing 409 Conflict - Duplicate Resource
+
+  ```java
+  @Test
+  void test_order_createDuplicate_returns409() {
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, 100000, 1.0850, "DUPLICATE-ID"
+      );
+
+      // First request succeeds
+      ApiResponse firstResponse = OrderService.createOrder(traderToken, request);
+      assertThat(firstResponse.statusCode()).isEqualTo(201);
+      OrderResponse firstOrder = firstResponse.as(OrderResponse.class);
+
+      // Second request with same client order ID conflicts
+      ApiResponse secondResponse = OrderService.createOrder(traderToken, request);
+
+      // Service class returns 409 - doesn't throw exception!
+      assertThat(secondResponse.statusCode()).isEqualTo(409);
+      ApiError error = secondResponse.as(ApiError.class);
+      assertThat(error.errorCode()).isEqualTo("DUPLICATE_CLIENT_ORDER_ID");
+      assertThat(error.message()).contains("DUPLICATE-ID");
+
+      // Cleanup
+      OrderService.deleteOrder(traderToken, firstOrder.id());
+  }
+  ```
+
+  **Key Point**: If service class had duplicate checking, we couldn't test the API's conflict detection.
+
+  #### Testing 422 Unprocessable Entity - Business Rule Violation
+
+  ```java
+  @Test
+  void test_order_createExceedingBalance_returns422() {
+      // Try to place order larger than account balance
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, 1_000_000_000, 1.0850  // Exceeds account balance
+      );
+
+      // Service class returns 422 - doesn't throw exception!
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+
+      assertThat(response.statusCode()).isEqualTo(422);
+      ApiError error = response.as(ApiError.class);
+      assertThat(error.errorCode()).isEqualTo("INSUFFICIENT_BALANCE");
+      assertThat(error.message()).isEqualTo("Insufficient balance for required margin");
+  }
+  ```
+
+  **Key Point**: If service class had business rule validation, we couldn't test the API's business logic.
+
+  #### Testing 500 Internal Server Error - Server Failure
+
+  ```java
+  @Test
+  void test_order_createTriggeringServerError_returns500() {
+      // Scenario that triggers server error (e.g., database down)
+      // This might require test environment configuration
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, Integer.MAX_VALUE, 1.0850
+      );
+
+      // Service class returns 500 - doesn't throw exception!
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+
+      assertThat(response.statusCode()).isEqualTo(500);
+      ApiError error = response.as(ApiError.class);
+      assertThat(error.errorCode()).isEqualTo("INTERNAL_SERVER_ERROR");
+  }
+  ```
+
+  **Key Point**: If service class had try-catch, we'd get null instead of being able to verify the 500 response.
+
+  #### Testing 503 Service Unavailable - Rate Limiting
+
+  ```java
+  @Test
+  void test_order_createExceedingRateLimit_returns503() {
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, 100000, 1.0850
+      );
+
+      // Send many requests rapidly to trigger rate limit
+      ApiResponse lastResponse = null;
+      for (int i = 0; i < 100; i++) {
+          lastResponse = OrderService.createOrder(traderToken, request);
+          if (lastResponse.statusCode() == 503) {
+              break;
+          }
+      }
+
+      // Service class returns 503 - doesn't throw exception!
+      assertThat(lastResponse.statusCode()).isEqualTo(503);
+      ApiError error = lastResponse.as(ApiError.class);
+      assertThat(error.errorCode()).isEqualTo("RATE_LIMIT_EXCEEDED");
+
+      // Header carve-out: header assertions go through raw().headers()
+      assertThat(lastResponse.raw().headers().firstValue("Retry-After")).isPresent();
+  }
+  ```
+
+  **Key Point**: If service class had retry logic, we couldn't test rate limiting behavior.
+
+  #### Timeout Configuration
+
+  Configure request timeouts via `.timeout(Duration)` on `ApiRequest`. Timeout behavior is implementation-specific to the underlying HTTP client. Service classes should expose timeout as a parameter when needed:
+
+  ```java
+  public static ApiResponse createOrderWithTimeout(CreateOrderRequest request, Duration timeout) {
+      return post(ORDERS_ENDPOINT).body(request).timeout(timeout).send();
+  }
+  ```
+
+  **CRITICAL INSIGHT**: ALL these negative test scenarios would be impossible if service classes used:
+  - Try-catch blocks (would mask errors)
+  - Status code validation (would throw same exception for all errors)
+  - Parameter validation (would prevent API validation from being tested)
+  - Retry logic (would hide single-attempt failures)
+  - Assertions (would fail tests before we can verify error details)
+
+  This is why service classes MUST be simple passthroughs with ZERO defensive programming.
+
+  ## WebSocket Testing
+
+  ### WebSocketClient Interface
+
+  The framework's WebSocketClient is fully async — all operations return `CompletableFuture<Void>`:
+
+  ```java
+  public interface WebSocketClient {
+      CompletableFuture<Void> connect();
+      CompletableFuture<Void> sendText(String message);
+      CompletableFuture<Void> sendBinary(byte[] data);
+      CompletableFuture<Void> sendJson(Object object);
+      CompletableFuture<Void> sendPing();
+      CompletableFuture<Void> close();
+      CompletableFuture<Void> close(int statusCode, String reason);
+      boolean isConnected();
+      URI getUri();
+  }
+  ```
+
+  ### WebSocketResponse
+
+  ```java
+  public final class WebSocketResponse {
+      String rawJson();                                    // Raw JSON string
+      Instant receivedAt();                                // Reception timestamp
+      Map<String, Object> fields();                        // Parsed JSON fields
+      Optional<Object> getField(String fieldName);         // Get field by name
+      <T> Optional<T> getField(String fieldName, Class<T> type); // Get typed field
+      <T> T as(Class<T> type);                             // Deserialize full response
+  }
+  ```
+
+  ### WebSocketMessageCollector
+
+  Thread-safe collector with blocking wait semantics:
+
+  ```java
+  public final class WebSocketMessageCollector {
+      WebSocketResponse waitFor(Predicate<WebSocketResponse> matcher, Duration timeout); // null if timeout
+      WebSocketResponse waitForType(String type, Duration timeout);                       // null if timeout
+      WebSocketResponse waitForCorrelationId(long correlationId, Duration timeout);       // null if timeout
+      List<WebSocketResponse> getAllMessages();
+      List<WebSocketResponse> getMessages(Predicate<WebSocketResponse> matcher);
+      int messageCount();
+      void clear();
+  }
+  ```
+
+  **Related classes**: `NativeWebSocketClient` (implementation with builder).
+
+  > **Note**: WebSocket connections are inherently stateful. Unlike REST service classes which are stateless, WebSocket helpers manage a connection instance. The test owns the lifecycle — create in setup, close in teardown.
+
+  ### WebSocket Helper Pattern
+
+  ```java
+  public final class MarketDataHelper {
+      private final WebSocketClient wsClient;
+      private final WebSocketMessageCollector collector;
+
+      public MarketDataHelper(String url) {
+          this.wsClient = NativeWebSocketClient.builder()
+              .uri(URI.create(url))
+              .build();
+          this.collector = new WebSocketMessageCollector();
+      }
+
+      public void connect(String symbol) {
+          logger.info("Connecting to market data for: {}", symbol);
+          wsClient.connect().join();
+          wsClient.sendJson(Map.of("subscribe", symbol)).join();
+      }
+
+      public void disconnect() {
+          logger.info("Disconnecting from market data");
+          wsClient.close().join();
+      }
+  }
+  ```
+
+  ### Test Example
+
+  ```java
+  private MarketDataHelper marketData;
+
+  @BeforeEach
+  void setUp() {
+      marketData = new MarketDataHelper("wss://api.example.com/market-data");
+  }
+
+  @AfterEach
+  void tearDown() {
+      marketData.disconnect();
+  }
+
+  @Test
+  void test_marketData_subscribe_receivesMessages() {
+      marketData.connect("EURUSD");
+
+      // Use AsyncWaitUtil to wait for messages
+      AsyncWaitUtil.waitForCondition(() -> collector.hasMessages())
+          .withTimeout(Duration.ofSeconds(5))
+          .execute();
+
+      WebSocketResponse message = collector.getLatestMessage();
+      assertThat(message).isNotNull();
+
+      // Deserialize to a per-project record matching the message payload.
+      // Never assert on message.getField(...) / .fields() / .rawJson().
+      MarketDataMessage msg = message.as(MarketDataMessage.class);
+      assertThat(msg.symbol()).isEqualTo("EURUSD");
+  }
+  ```
+
+  > **`MarketDataMessage` is project-defined** — each project declares its own record(s) matching its WebSocket message contracts, e.g.:
+  > ```java
+  > public record MarketDataMessage(String type, String symbol, double bid, double ask, Instant timestamp) {}
+  > ```
+  
+  ## FIX Protocol Testing
+
+  > **FIX is exempt from the "deserialize for assertions" rule.** `FixMessage` has no `.as(Class<T>)` method — tag/value access via `getField(Tag)`, `getField(int)`, and `fields()` is the protocol's native model and the correct API for FIX assertions. The deserialize-only rule applies to REST (`ApiResponse`) and WebSocket (`WebSocketResponse`) only.
+
+  ### FixMessage Interface
+
+  `FixMessage` is the immutable interface for both sent and received FIX messages:
+
+  ```java
+  public interface FixMessage {
+      String messageType();                       // Tag 35 value (e.g., "D", "8", "A")
+      Map<String, String> fields();               // All tag-value pairs
+      Optional<String> getField(String tag);       // By string tag number
+      Optional<String> getField(int tag);          // By int tag number
+      Optional<String> getSenderCompId();          // Tag 49
+      Optional<String> getTargetCompId();          // Tag 56
+      Optional<Integer> getMsgSeqNum();            // Tag 34
+      Optional<String> getSendingTime();           // Tag 52
+  }
+  ```
+
+  **FixMessage.MsgType constants**: `HEARTBEAT="0"`, `TEST_REQUEST="1"`, `REJECT="3"`, `LOGOUT="5"`, `EXECUTION_REPORT="8"`, `ORDER_CANCEL_REJECT="9"`, `LOGON="A"`, `NEW_ORDER_SINGLE="D"`, `ORDER_CANCEL_REQUEST="F"`, `ORDER_CANCEL_REPLACE_REQUEST="G"`, `MARKET_DATA_REQUEST="V"`, `MARKET_DATA_SNAPSHOT="W"`
+
+  **FixMessage.Tag constants**: `CL_ORD_ID="11"`, `MSG_SEQ_NUM="34"`, `MSG_TYPE="35"`, `ORDER_ID="37"`, `SENDER_COMP_ID="49"`, `SIDE="54"`, `SYMBOL="55"`, `TARGET_COMP_ID="56"`, `ORDER_QTY="38"`, `ORD_TYPE="40"`, `PRICE="44"`, `TIME_IN_FORCE="59"`
+
+  ### FixRequestBuilder
+
+  Factory methods: `create(String msgType)`, `logon()`, `logout()`, `heartbeat()`, `newOrderSingle()`, `orderCancelRequest()`, `marketDataRequest()`
+
+  Builder methods: `.field(String tag, String value)`, `.field(int tag, String value)`, `.field(String tag, int value)`, `.field(int tag, int value)`, `.fields(Map)`, `.senderCompId(String)`, `.targetCompId(String)`, `.build()` → `FixMessage`
+
+  ### FixMessageCollector
+
+  Thread-safe collector returned by `FixClient.getMessageCollector()`:
+
+  ```java
+  FixMessage waitFor(Predicate<FixMessage> predicate, Duration timeout)  // null if timeout
+  FixMessage waitForType(String msgType, Duration timeout)               // null if timeout
+  List<FixMessage> getAllMessages()
+  ```
+
+  ### FIX Service Class Pattern
+
+  ```java
+  public final class FixOrderService {
+      private FixOrderService() {}
+
+      public static FixMessage sendNewOrderSingle(FixClient fixClient, String clOrdId,
+              String symbol, String side, int quantity, double price) {
+          FixMessage order = FixRequestBuilder.newOrderSingle()
+              .field(FixMessage.Tag.CL_ORD_ID, clOrdId)
+              .field(FixMessage.Tag.SYMBOL, symbol)
+              .field(FixMessage.Tag.SIDE, side)
+              .field(FixMessage.Tag.ORDER_QTY, String.valueOf(quantity))
+              .field(FixMessage.Tag.PRICE, String.valueOf(price))
+              .field(FixMessage.Tag.ORD_TYPE, "2")        // Limit
+              .field(FixMessage.Tag.TIME_IN_FORCE, "0")   // Day
+              .build();
+
+          fixClient.sendMessage(order).join();
+
+          return fixClient.getMessageCollector()
+              .waitForType(FixMessage.MsgType.EXECUTION_REPORT, Duration.ofSeconds(5));
+      }
+
+      public static FixMessage sendOrderCancelRequest(FixClient fixClient,
+              String origClOrdId, String clOrdId) {
+          FixMessage cancel = FixRequestBuilder.orderCancelRequest()
+              .field(FixMessage.Tag.CL_ORD_ID, clOrdId)
+              .field("41", origClOrdId)   // OrigClOrdID
+              .build();
+
+          fixClient.sendMessage(cancel).join();
+
+          return fixClient.getMessageCollector()
+              .waitForType(FixMessage.MsgType.EXECUTION_REPORT, Duration.ofSeconds(5));
+      }
+  }
+  ```
+
+  ### Test Example
+
+  ```java
+  @Test
+  void test_fix_newOrderSingle_returnsNewStatus() {
+      FixMessage execReport = FixOrderService.sendNewOrderSingle(
+          fixClient, "ORD-001", "EURUSD", "1", 100000, 1.0850);
+
+      assertThat(execReport).isNotNull();
+      assertThat(execReport.messageType()).isEqualTo(FixMessage.MsgType.EXECUTION_REPORT);
+      assertThat(execReport.getField(FixMessage.Tag.CL_ORD_ID)).hasValue("ORD-001");
+      assertThat(execReport.getField(FixMessage.Tag.SYMBOL)).hasValue("EURUSD");
+  }
+
+  @Test
+  void test_fix_cancelOrder_returnsCanceledStatus() {
+      // Setup - Create order first
+      FixMessage createResponse = FixOrderService.sendNewOrderSingle(
+          fixClient, "ORD-002", "EURUSD", "1", 100000, 1.0850);
+      String orderId = createResponse.getField(FixMessage.Tag.ORDER_ID).orElseThrow();
+
+      // Test - Cancel order
+      FixMessage cancelResponse = FixOrderService.sendOrderCancelRequest(
+          fixClient, "ORD-002", "ORD-002-CANCEL");
+
+      // Verify cancel acknowledgment
+      assertThat(cancelResponse).isNotNull();
+      assertThat(cancelResponse.getField(FixMessage.Tag.ORDER_ID)).hasValue(orderId);
+  }
+  ```
+  
+  ## Testing Patterns
+  
+  ### Pattern 1: CRUD Operations
+  
+  ```java
+  @Test
+  void test_order_crudLifecycle_completesSuccessfully() {
+      // Create
+      ApiResponse createResponse = OrderService.createOrder(traderToken, request);
+      assertThat(createResponse.statusCode()).isEqualTo(201);
+      OrderResponse order = createResponse.as(OrderResponse.class);
+  
+      // Read
+      ApiResponse getResponse = OrderService.getOrder(traderToken, order.id());
+      assertThat(getResponse.statusCode()).isEqualTo(200);
+      OrderResponse fetchedOrder = getResponse.as(OrderResponse.class);
+      assertThat(fetchedOrder.id()).isEqualTo(order.id());
+  
+      // Update
+      UpdateOrderRequest updateRequest = new UpdateOrderRequest(order.id(), 1.0900);
+      ApiResponse updateResponse = OrderService.updateOrder(traderToken, order.id(), updateRequest);
+      assertThat(updateResponse.statusCode()).isEqualTo(200);
+  
+      // Delete
+      ApiResponse deleteResponse = OrderService.deleteOrder(traderToken, order.id());
+      assertThat(deleteResponse.statusCode()).isEqualTo(204);
+  
+      // Verify deleted
+      ApiResponse verifyResponse = OrderService.getOrder(traderToken, order.id());
+      assertThat(verifyResponse.statusCode()).isEqualTo(404);
+  }
+  ```
+  
+  ### Pattern 2: Error Handling
+  
+  ```java
+  @Test
+  void test_order_variousErrorScenarios_returnsExpectedCodes() {
+      // 400 - Invalid data
+      ApiResponse response400 = OrderService.createOrder(traderToken, invalidRequest);
+      assertThat(response400.statusCode()).isEqualTo(400);
+  
+      // 401 - Unauthorized
+      ApiResponse response401 = OrderService.getOrder(null, "some-id");  // null token = no auth
+      assertThat(response401.statusCode()).isEqualTo(401);
+  
+      // 404 - Not found
+      ApiResponse response404 = OrderService.getOrder(traderToken, "non-existent");
+      assertThat(response404.statusCode()).isEqualTo(404);
+  
+      // 409 - Conflict
+      ApiResponse response409 = OrderService.createOrder(traderToken, duplicateRequest);
+      assertThat(response409.statusCode()).isEqualTo(409);
+  }
+  ```
+  
+  ### Pattern 3: Data Setup for UI Tests
+  
+  ```java
+  @Test
+  @WebTest
+  void test_order_displayInUI_showsCorrectDetails() {
+      // Setup via API (fast - 2 seconds)
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, 100000, 1.0850
+      );
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+      assertThat(response.statusCode()).isEqualTo(201);
+  
+      OrderResponse order = response.as(OrderResponse.class);
+  
+      // Verify in UI
+      OrderPage page = new OrderPage();
+      page.navigateToOrder(order.id());
+  
+      assertThat(page.getDisplayedSymbol()).isEqualTo("EURUSD");
+      assertThat(page.getDisplayedStatus()).isEqualTo("NEW");
+      assertThat(page.getDisplayedQuantity()).isEqualTo("100,000");
+  }
+  ```
+  
+  ### Pattern 4: Cleanup
+  
+  ```java
+  @Test
+  void test_order_createWithCleanup_succeeds() {
+      // Create test data
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+      OrderResponse order = response.as(OrderResponse.class);
+  
+      try {
+          // Test logic
+          assertThat(order.status()).isEqualTo("NEW");
+      } finally {
+          // Cleanup
+          OrderService.deleteOrder(traderToken, order.id());
+      }
+  }
+  ```
+  
+  ### Pattern 5: Parameterized Tests
+
+  > **CANONICAL SOURCE OF TRUTH — Parameterize repetitive tests.**
+  > This section is the single source of truth for the parameterize-repetitive-tests rule, including the carve-out boundary heuristic and the @CsvSource/@MethodSource/@ValueSource decision matrix. When updating the rule, **update this section first**, then propagate to the sync targets listed below.
+  >
+  > **Rule sync checklist** — when this rule changes, update these files in lockstep:
+  > 1. `agents/qa-automation-architect.md` — "Mandatory Quality Standards" #9 + "Test Review Checklist" #10
+  > 2. `agents/qa-code-reviewer.md` — Stage 2 Code Quality (20%) + Severity Classification
+  > 3. `commands/qa/automate-functional-tests.md` — "Framework Standards (cross-cutting)" block
+  > 4. `commands/qa/automate-functional-tests/references/automation-prompt.md` — Key constraints "Parameterize repetitive tests"
+  > 5. `commands/qa/automate-functional-tests/references/review-prompt.md` — Stage 2 Code Quality (20%) + MAJOR classification
+  > 6. `commands/qa/automate-functional-tests/references/fix-prompt.md` — Fix item for repetitive tests (with rewrite examples)
+  > 7. `contexts/test-automation/guides/TEST_PATTERNS.yaml` — Service Class Best Practices #17
+
+  > **Compatibility with `CLAUDE.md` "One behavior per test".** The two rules are compatible, not in tension: each parameter row exercises the **same behavior** under different inputs, which is exactly the unit "one behavior per test" allows. The carve-out below handles the reverse case — when each row would represent a **different behavior**, keep them as separate `@Test` methods.
+
+  Use whenever 2+ tests share the same arrange-act-assert structure and differ only in input/expected values. Prefer `@CsvSource` for ≤5 primitives, `@MethodSource` returning `Stream<Arguments>` for object inputs or computed values, `@ValueSource` for a single primitive dimension.
+
+  **Carve-out boundary heuristic — apply this decision check before parameterizing:**
+
+  Ask: *"If I read only the parameter row, would I know what the test is verifying — what the system MUST do or NOT do?"*
+
+  - **YES, the row is enough** → the parameter is **data** (a currency pair, a quantity, a price). Parameterize.
+  - **NO, the row only makes sense once I read the test name** → the parameter is **scenario-defining** (a different error category, a different domain rule, a different policy branch). Keep tests separate.
+
+  Secondary checks (any one being YES = keep separate):
+  - Do the rows exercise **different code paths** in the system under test (e.g. expired-token check vs revoked-token check are different validators)?
+  - Does each row carry a **different domain identifier** the test is asserting on (e.g. `errorCode = "TOKEN_EXPIRED"` vs `errorCode = "TOKEN_REVOKED"` — different domain rules)?
+  - Would future readers need the test name to understand a bug report ("`test_login_withRevokedToken_returns401` failed") in a way they wouldn't if it were a CSV row index?
+
+  The test name is the documentation; don't bury a meaningful distinction in a CSV row.
+
+  ```java
+  @ParameterizedTest
+  @CsvSource({
+      "EURUSD, BUY, 100000, 1.0850",
+      "GBPUSD, SELL, 50000, 1.2500",
+      "USDJPY, BUY, 200000, 150.25"
+  })
+  void test_order_createMultipleSymbols_returns201(String symbol, OrderSide side, int quantity, double price) {
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(symbol, side, quantity, price);
+
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+
+      assertThat(response.statusCode()).isEqualTo(201);
+      OrderResponse order = response.as(OrderResponse.class);
+      assertThat(order.symbol()).isEqualTo(symbol);
+  }
+
+  // @MethodSource — for object inputs or computed values
+  @ParameterizedTest
+  @MethodSource("validOrderInputs")
+  void test_order_createWithDiverseInputs_returns201(CreateOrderRequest request) {
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+      assertThat(response.statusCode()).isEqualTo(201);
+  }
+
+  static Stream<Arguments> validOrderInputs() {
+      return Stream.of(
+          Arguments.of(CreateOrderRequest.limitOrder("EURUSD", OrderSide.BUY, 100000, 1.0850)),
+          Arguments.of(CreateOrderRequest.limitOrder("GBPUSD", OrderSide.SELL, 50000, 1.2500)),
+          Arguments.of(CreateOrderRequest.limitOrder("USDJPY", OrderSide.BUY, 200000, 150.25))
+      );
+  }
+
+  // @ValueSource — single primitive dimension
+  @ParameterizedTest
+  @ValueSource(strings = {"EURUSD", "GBPUSD", "USDJPY"})
+  void test_marketData_subscribeKnownSymbol_returnsTicks(String symbol) {
+      marketData.connect(symbol);
+      // assert ticks received
+  }
+  ```
+  
+  ## Best Practices
+  
+  ### 1. Always Use Service Classes
+  
+  ```java
+  // ✅ CORRECT
+  ApiResponse response = OrderService.createOrder(traderToken, request);
+  
+  // ❌ WRONG
+  ApiResponse response = post("/api/orders")
+      .body(request)
+      .send();
+  ```
+  
+  ### 2. Service Classes Are Simple
+  
+  ```java
+  // ✅ CORRECT - Simple, clean
+  public static ApiResponse createOrder(String authToken, CreateOrderRequest request) {
+      logger.info("Creating order: {}", request);
+
+      return post("/api/orders")
+          .bearerAuth(authToken)
+          .body(request)
+          .send();
+  }
+
+  // ❌ WRONG - Complex logic
+  public static ApiResponse createOrder(String authToken, CreateOrderRequest request) {
+      try {  // NO!
+          ApiResponse response = post("/api/orders")
+              .body(request)
+              .send();
+  
+          if (response.statusCode() == 201) {  // NO!
+              // Do something
+          }
+  
+          return response;
+      } catch (Exception e) {
+          return null;
+      }
+  }
+  ```
+  
+  ### 3. Use AssertJ for Assertions
+  
+  ```java
+  // ✅ CORRECT
+  assertThat(response.statusCode()).isEqualTo(201);
+  assertThat(order.symbol()).isEqualTo("EURUSD");
+  assertThat(orders).isNotEmpty();
+  assertThat(orders).hasSize(5);
+  
+  // ❌ WRONG
+  assertTrue(response.statusCode() == 201);
+  assertEquals("EURUSD", order.symbol());
+  ```
+  
+  ### 4. Test Negative Scenarios
+
+  ```java
+  @Test
+  void test_order_createWithInvalidSymbol_returns400() {
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "INVALID", OrderSide.BUY, 100000, 1.0850
+      );
+
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+
+      assertThat(response.statusCode()).isEqualTo(400);
+      ApiError error = response.as(ApiError.class);
+      assertThat(error.errorCode()).isEqualTo("INVALID_SYMBOL");
+      assertThat(error.message()).isEqualTo("Symbol 'INVALID' is not a recognized instrument");
+  }
+  ```
+  
+  ### 5. Use Service Classes for UI Test Setup
+  
+  ```java
+  // ✅ CORRECT - 2 seconds setup
+  @Test
+  @WebTest
+  void test_order_displayInUI_showsCorrectDetails() {
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+      OrderResponse order = response.as(OrderResponse.class);
+
+      OrderPage page = new OrderPage();
+      page.navigateToOrder(order.id());
+      // Verify UI
+  }
+
+  // ❌ WRONG - 30 seconds setup
+  @Test
+  @WebTest
+  void test_order_displayInUI_slow() {
+      LoginPage login = new LoginPage();
+      login.login("user", "pass");
+      OrderPage page = new OrderPage();
+      page.createOrderViaUI(...);
+      // Verify UI
+  }
+  ```
+  
+  ### 6. Clean Up Test Data
+  
+  ```java
+  @AfterEach
+  void cleanup() {
+      // Delete test orders
+      if (createdOrderId != null) {
+          OrderService.deleteOrder(traderToken, createdOrderId);
+      }
+  }
+  ```
+  
+  ### 7. Use Records for Request/Response Models
+  
+  ```java
+  // ✅ CORRECT - Immutable record
+  public record CreateOrderRequest(
+      String symbol,
+      OrderSide side,
+      int quantity,
+      double price
+  ) {
+      public static CreateOrderRequest limitOrder(String symbol, OrderSide side, int qty, double price) {
+          return new CreateOrderRequest(symbol, side, qty, price);
+      }
+  }
+  
+  // ❌ WRONG - Mutable class
+  public class CreateOrderRequest {
+      private String symbol;  // Mutable
+      // Getters/setters
+  }
+  ```
+
+  ### 8. Deserialize for Assertions
+
+  REST and WebSocket response assertions MUST be made against deserialized types — never raw strings, `JsonNode`, `JsonPath`, `ObjectMapper.readTree`, `org.json.*` (e.g. `JSONObject`, `JSONArray`, `JSONTokener`), or `WebSocketResponse.getField(...)` / `fields()` / `rawJson()`. See "Error Response Models" above for the full rule and carve-outs.
+
+  ```java
+  // ✅ CORRECT - Deserialize, then assert on typed fields
+  ApiResponse response = OrderService.createOrder(traderToken, invalidRequest);
+  assertThat(response.statusCode()).isEqualTo(400);
+  ApiError error = response.as(ApiError.class);
+  assertThat(error.errorCode()).isEqualTo("INVALID_SYMBOL");
+  assertThat(error.message()).isEqualTo("Symbol 'INVALID' is not a recognized instrument");
+
+  // ❌ WRONG - Brittle, breaks on whitespace / casing / wording changes,
+  //           misses structural validation, hides response schema drift
+  assertThat(response.body()).contains("Invalid symbol");
+  ```
+
+  WebSocket — same rule:
+
+  ```java
+  // ✅ CORRECT
+  MarketDataMessage msg = message.as(MarketDataMessage.class);
+  assertThat(msg.symbol()).isEqualTo("EURUSD");
+
+  // ❌ WRONG
+  assertThat(message.getField("symbol")).contains("EURUSD");
+  assertThat(message.fields().get("symbol")).isEqualTo("EURUSD");
+  assertThat(message.rawJson()).contains("EURUSD");
+  ```
+
+  ---
+
+  **Next**: Read `TEST_PATTERNS.yaml` for complete test structure patterns including BaseTest, Page Objects, and Service classes.

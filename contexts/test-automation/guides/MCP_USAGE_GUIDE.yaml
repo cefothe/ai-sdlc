@@ -1,0 +1,298 @@
+name: "MCP_USAGE_GUIDE"
+type: "guide"
+version: "1.0.0"
+description: "Guidelines for using Playwright MCP during test development and exploration."
+last_updated: "2026-02-02"
+maintained_by: "QA Team"
+
+content: |
+  # Playwright MCP Usage Guide
+
+  > Guidelines for using Playwright MCP during test development while maintaining hexagonal architecture.
+
+  ## Core Principle
+
+  ```
+  MCP Tools = Development/Exploration    |    Framework = Production Test Code
+  ----------------------------------------|----------------------------------------
+  - Exploratory testing                   | - Automated test suites
+  - Locator discovery                     | - CI/CD execution
+  - Scenario validation                   | - Hexagonal architecture
+  - Interactive debugging                 | - Page Object Model
+  ```
+
+  **Rule**: MCP tools help understand WHAT to test. Framework interfaces define HOW to test it.
+  **Rule**: MCP exploration is read-only — it discovers and reports findings. Code changes (adding data-testid, implementing Page Objects) are the responsibility of the automation agent, not the exploration step.
+
+  ## When to Use MCP Tools
+
+  **USE MCP FOR**:
+  - Exploratory testing and feature discovery
+  - Validating test scenarios before implementation
+  - Discovering locators and element selectors
+  - Visual verification of UI states
+  - Interactive debugging of test failures
+  - Capturing screenshots for documentation
+
+  **DO NOT USE MCP FOR**:
+  - Actual test code implementation (use framework interfaces)
+  - CI/CD automated test execution
+  - Production test suites
+
+  ## Available MCP Tools
+
+  ### Navigation Tools
+
+  | Tool | Description | Use Case |
+  |------|-------------|----------|
+  | `mcp__playwright__browser_navigate` | Navigate to URL | Open target page |
+  | `mcp__playwright__browser_navigate_back` | Browser back | Test navigation flows |
+
+  ### Interaction Tools
+
+  | Tool | Description | Use Case |
+  |------|-------------|----------|
+  | `mcp__playwright__browser_click` | Click element | Validate interactions |
+  | `mcp__playwright__browser_type` | Type text (append) | Test text input |
+  | `mcp__playwright__browser_fill_form` | Fill form fields | Test form fields |
+  | `mcp__playwright__browser_select_option` | Select dropdown | Test dropdowns |
+  | `mcp__playwright__browser_hover` | Hover over element | Test hover states |
+
+  ### Inspection Tools
+
+  | Tool | Description | Use Case |
+  |------|-------------|----------|
+  | `mcp__playwright__browser_snapshot` | Get accessibility tree | Discover locators |
+  | `mcp__playwright__browser_take_screenshot` | Take screenshot | Visual documentation |
+
+  ## Monorepo Workflow: Adding Missing data-testid
+
+  **IMPORTANT**: This project is a monorepo where frontend code and test automation code live together.
+
+  When MCP exploration reveals elements WITHOUT `data-testid` attributes, **report them as findings** with component paths and suggested testid values. The automation agent (not the exploration step) is responsible for adding them to the frontend component code.
+
+  ### Workflow for Missing Locators
+
+  ```
+  Step 1: Explore UI with MCP
+  ─────────────────────────────
+  mcp__playwright__browser_navigate url="https://app.example.com/orders"
+  mcp__playwright__browser_snapshot
+
+  Step 2: Identify Missing data-testid
+  ─────────────────────────────────────
+  # Snapshot shows: <button class="btn-primary">Create Order</button>
+  # Missing: data-testid attribute
+
+  Step 3: Locate Frontend Component
+  ─────────────────────────────────
+  # Search for component in monorepo
+  # Example: apps/web/dashboard/src/components/orders/CreateOrderButton.tsx
+
+  Step 4: Add data-testid to Component
+  ─────────────────────────────────────
+  # Before:
+  <button className="btn-primary" onClick={handleCreate}>
+    Create Order
+  </button>
+
+  # After:
+  <button
+    className="btn-primary"
+    onClick={handleCreate}
+    data-testid="create-order-btn"
+  >
+    Create Order
+  </button>
+
+  Step 5: Verify with MCP
+  ───────────────────────
+  mcp__playwright__browser_snapshot
+  # Confirm: data-testid="create-order-btn" now visible
+
+  Step 6: Implement Test with New Locator
+  ───────────────────────────────────────
+  private static final Locator CREATE_ORDER_BTN = testId("create-order-btn");
+  ```
+
+  ### data-testid Naming Convention
+
+  Follow consistent naming for new data-testid attributes:
+
+  | Pattern | Example | Use Case |
+  |---------|---------|----------|
+  | `{feature}-{element}` | `order-submit-btn` | Buttons |
+  | `{feature}-{field}-input` | `order-quantity-input` | Input fields |
+  | `{feature}-{item}-row` | `order-item-row` | List/table rows |
+  | `{feature}-modal` | `order-confirmation-modal` | Modals/dialogs |
+  | `{feature}-{section}` | `order-summary-section` | Sections |
+
+  ### Finding Frontend Components
+
+  Monorepo component locations:
+
+  **Frontend Component Locations:**
+  These paths are project-specific. Check your project's `.claude/PROJECT_TEST_CONTEXT.yaml` for the `frontend_component_paths` section, or ask the user for the correct paths. See `templates/PROJECT_CONTEXT_TEMPLATE.yaml` for the template.
+
+  **Search Strategies:**
+  1. Search for text content: `grep -r "Create Order" apps/web/`
+  2. Search for class names: `grep -r "btn-primary" apps/web/`
+  3. Search shared components: `grep -r "ButtonComponent" libs/web/ui-components/`
+  4. Find by component name: Follow import hierarchy from page component
+
+  ## Workflow: Locator Discovery
+
+  Use MCP to discover stable locators before implementing Page Objects:
+
+  ```
+  # Step 1: Navigate to target page
+  mcp__playwright__browser_navigate url="https://app.example.com/login"
+
+  # Step 2: Get accessibility snapshot
+  mcp__playwright__browser_snapshot
+  # Returns element tree with data-testid, aria-label, id attributes
+
+  # Step 3: Extract locators from snapshot
+  # Map snapshot attributes to Framework Locator strategies (priority order):
+
+  | Priority | Snapshot Attribute | Framework Locator | Example |
+  |----------|-------------------|-------------------|---------|
+  | 1 (Best) | data-testid | testId() | testId("login-button") |
+  | 2 | id | id() | id("submit-button") |
+  | 3 | class | className() | className("btn-primary") |
+  | 4 | CSS selector | css() | css("button[type='submit']") |
+  | 5 | partial id | partialId() | partialId("submit") |
+  | 6 | partial text | partialText() | partialText("Click") |
+  | 7 | partial class | partialClass() | partialClass("btn") |
+  | 8 | regex pattern | regex() | regex("button-\\d+") |
+  | 9 (Last) | XPath | xpath() | xpath("//button[@type='submit']") |
+
+  # IMPORTANT: If element lacks data-testid, report it as a finding. The automation agent is responsible for adding it.
+
+  # Step 4: Implement in Page Object (using Framework)
+  private static final Locator USERNAME = testId("login-username");
+  private static final Locator PASSWORD = testId("login-password");
+  private static final Locator SUBMIT = testId("login-submit");
+  ```
+
+  ## Framework Locator Reference
+
+  All 14 locator strategies available in the framework:
+
+  ```java
+  // Primary locators (prefer these)
+  testId("login-button")           // data-testid attribute (BEST)
+  id("submit-button")              // id attribute
+  role("button", "Submit")         // ARIA role with accessible name
+  label("Username")                // Associated label text
+  placeholder("Enter email")       // Placeholder attribute
+  css(".btn-primary")              // CSS selector
+
+  // Secondary locators
+  className("primary-button")      // class name
+  name("username")                 // name attribute
+  text("Submit")                   // Exact text match
+  text("Submit", false)            // Substring text match
+  xpath("//button[@type='submit']") // XPath (avoid if possible)
+
+  // Partial match locators (useful for dynamic elements)
+  partialId("submit")              // Partial ID match
+  partialText("Click")             // Partial text match
+  partialClass("btn")              // Partial class match
+  regex("button-\\d+")             // Regex pattern match
+  ```
+
+  ## Workflow: Scenario Validation
+
+  Before implementing complex UI tests, validate the flow with MCP:
+
+  ```
+  # Step 1: Navigate to starting point
+  mcp__playwright__browser_navigate url="https://app.example.com/orders"
+
+  # Step 2: Capture initial state
+  mcp__playwright__browser_take_screenshot
+
+  # Step 3: Perform user action
+  mcp__playwright__browser_click selector="[data-testid='create-order-btn']"
+
+  # Step 4: Verify expected result
+  mcp__playwright__browser_snapshot
+  # Confirm modal appears, form fields present
+
+  # Step 5: Document findings for test implementation
+  # - Button selector: data-testid="create-order-btn"
+  # - Modal selector: data-testid="order-modal"
+  # - Expected behavior: Modal opens with form
+  ```
+
+  ## MCP vs Framework Mapping
+
+  | MCP Tool | Framework Equivalent | When to Use Each |
+  |----------|---------------------|------------------|
+  | `browser_navigate` | `driver.navigateTo()` | MCP: Exploration / Framework: Test code |
+  | `browser_click` | `element.click()` | MCP: Validation / Framework: Test code |
+  | `browser_fill_form` | `textBox.enterText()` | MCP: Form testing / Framework: Test code |
+  | `browser_snapshot` | (none) | MCP only: Locator discovery |
+  | `browser_take_screenshot` | `driver.takeScreenshot()` | MCP: Docs / Framework: Failure capture |
+
+  ## Integration with Test Development
+
+  ### Standard Workflow
+
+  1. **Explore with MCP**: Use MCP tools to understand the UI
+  2. **Discover Locators**: Use `browser_snapshot` to find stable selectors
+  3. **Report Missing data-testid**: If locators are missing, report as findings with component paths (the automation agent adds them)
+  4. **Validate Scenario**: Walk through the flow with MCP tools
+  5. **Document Findings**: Record locators and expected behaviors
+  6. **Implement with Framework**: Write test code using framework interfaces
+  7. **Verify Implementation**: Run test to confirm it matches MCP exploration
+
+  ### Example: Complete Test Development Flow
+
+  > **Note**: This example shows the full lifecycle across TWO agents. Phases 1 and 3 are exploration (done by the explore-ui agent — read-only). Phases 2, 4, and 5 are implementation (done by the automation agent). The exploration agent only performs read-only discovery.
+
+  ```
+  # Phase 1: MCP Exploration (explore-ui agent — read-only)
+  mcp__playwright__browser_navigate url="https://app.example.com/login"
+  mcp__playwright__browser_snapshot
+  # Found: data-testid="login-username", data-testid="login-password"
+  # Missing: Submit button has no data-testid
+
+  # Phase 2: Add Missing Locator (automation agent — NOT explore-ui)
+  # File: apps/web/shell/src/components/auth/LoginForm.tsx
+  # Add: data-testid="login-submit" to submit button
+
+  # Phase 3: Verify Addition (explore-ui agent — read-only)
+  mcp__playwright__browser_snapshot
+  # Confirmed: data-testid="login-submit" now present
+
+  # Phase 4: Validate Flow (automation agent)
+  mcp__playwright__browser_fill_form selector="[data-testid='login-username']" value="testuser"
+  mcp__playwright__browser_fill_form selector="[data-testid='login-password']" value="password123"
+  mcp__playwright__browser_click selector="[data-testid='login-submit']"
+  mcp__playwright__browser_take_screenshot
+  # Confirmed: Redirects to dashboard after login
+
+  # Phase 5: Framework Implementation (automation agent)
+  public final class LoginPage extends BasePage {
+      private static final Locator USERNAME = testId("login-username");
+      private static final Locator PASSWORD = testId("login-password");
+      private static final Locator SUBMIT = testId("login-submit");
+
+      public void login(String username, String password) {
+          textBox(USERNAME).enterText(username);
+          textBox(PASSWORD).enterText(password);
+          button(SUBMIT).click();
+      }
+  }
+  ```
+
+  ## Important Notes
+
+  1. **MCP is Optional**: Test automation works without MCP; it's an enhancement
+  2. **Exploration is Read-Only**: MCP exploration discovers and reports findings — it does NOT modify code
+  3. **Maintain Separation**: Never mix MCP tools in production test code
+  4. **Framework First**: All automated tests use framework interfaces
+  5. **Hexagonal Architecture**: Tests depend on interfaces, never implementations
+  6. **Monorepo Advantage**: Missing data-testid attributes are reported with component paths; the automation agent adds them

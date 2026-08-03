@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-sdlc.io/schemas/v1alpha1/capability-map.v1.schema.json",
+  "title": "AI-SDLC CapabilityMap",
+  "description": "Binds pipeline stages (plan/implement/review/test) to PROVIDERS — an existing skill (e.g. code-plan, code-review-pr, code-security-scan) or a specialized agent (e.g. java-pro, security-auditor, qa-code-reviewer). This is how the framework's existing skills, agents, and agent-teams become first-class SDLC stages. Routing rules select the right provider per task (by language, labels, or Java-test-file detection); a review stage with >=3 providers is dispatched as a team (Native Teams). Cross-harness assignment (implementer harness != reviewer harness) is enforced at resolve time.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "$ref": "common.schema.json#/$defs/apiVersion" },
+    "kind": { "type": "string", "const": "CapabilityMap" },
+    "metadata": { "$ref": "common.schema.json#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "required": ["stages"],
+      "properties": {
+        "stages": {
+          "type": "object",
+          "description": "Stage name -> binding. Recognized stages: plan, implement, review, test.",
+          "additionalProperties": { "$ref": "#/$defs/stageBinding" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "provider": {
+      "type": "object",
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "type": "string", "enum": ["skill", "agent"], "description": "skill = an existing slash-command skill (code-plan, code-review-pr); agent = a specialized subagent." },
+        "name": { "type": "string", "minLength": 1, "description": "Skill or agent name, e.g. 'code-plan', 'java-pro', 'qa-code-reviewer'." },
+        "role": { "type": "string", "description": "Reviewer role label for review-stage providers (code-reviewer / test-reviewer / security-reviewer)." },
+        "harness": { "type": "string", "description": "Execution harness (e.g. claude, codex). For review providers this must differ from the implementer harness — enforced at resolve time." }
+      },
+      "additionalProperties": false
+    },
+    "routingRule": {
+      "type": "object",
+      "description": "Conditional provider selection. First matching rule wins for single-provider stages; for team stages, matching rules add/replace providers.",
+      "properties": {
+        "when": {
+          "type": "object",
+          "properties": {
+            "languages": { "type": "array", "items": { "type": "string" }, "description": "Match when the task touches any of these languages." },
+            "labels": { "type": "array", "items": { "type": "string" }, "description": "Match when the task carries any of these labels." },
+            "javaTestFiles": { "type": "boolean", "description": "Match when the task touches Java test files (routes to qa-code-reviewer)." }
+          },
+          "additionalProperties": false
+        },
+        "provider": { "$ref": "#/$defs/provider", "description": "Replace the stage's provider(s) with this one when matched (single-provider stages)." },
+        "addProvider": { "$ref": "#/$defs/provider", "description": "Add this provider to a team stage when matched." },
+        "replaceRole": { "type": "string", "description": "For team stages: replace the provider with this role instead of appending." }
+      },
+      "additionalProperties": false
+    },
+    "stageBinding": {
+      "type": "object",
+      "properties": {
+        "provider": { "$ref": "#/$defs/provider", "description": "Default single provider for the stage." },
+        "providers": { "type": "array", "items": { "$ref": "#/$defs/provider" }, "description": "Provider set for a team stage (e.g. the 3 reviewers)." },
+        "team": { "type": "boolean", "description": "Force team dispatch. Otherwise team is inferred when >=3 providers resolve." },
+        "skill": { "type": "string", "description": "Optional umbrella skill for the stage (e.g. code-review-pr) invoked instead of individual providers." },
+        "routing": { "type": "array", "items": { "$ref": "#/$defs/routingRule" }, "description": "Ordered conditional provider selection." }
+      },
+      "additionalProperties": false
+    }
+  }
+}

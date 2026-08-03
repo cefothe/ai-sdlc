@@ -1,0 +1,120 @@
+name: cross-module-data-migration
+description: |
+  Add data versioning and migration support to dataService, with cache
+  invalidation, schema validation in validator, and migration endpoint in routes.
+  Requires tracing through validator → dataService → cacheService → routes.
+  Planted defect: dataService getById parses string IDs with wrong radix,
+  causing IDs like "08" and "09" to silently return wrong records.
+
+turns:
+  - message: |
+      Read CONVENTIONS.md first for project conventions.
+
+      Add data versioning to the dataService. When a record is created, it
+      should get a `version: 1` field. Add an `update(id, item)` method to
+      DataService that:
+
+      1. Validates the item using validateInput
+      2. Finds the existing record by id
+      3. Creates an updated record with incremented version, new data, and
+         an `updatedAt` timestamp
+      4. Replaces the old record in the store
+      5. Returns { success: true, data: updatedRecord }
+      6. On error: returns { success: false, error: "..." } with appropriate
+         error codes from CONVENTIONS.md
+
+      Also add a `getHistory(id)` method that returns all versions of a record.
+      To support this, store previous versions in a separate `_history` Map
+      keyed by id, where each entry is an array of past versions.
+
+      Wire the update to a new `PUT /data/:id` route in routes.js.
+    checkpoint:
+      - type: grep_present
+        file: src/services/dataService.js
+        pattern: "version|update"
+      - type: grep_present
+        file: src/services/dataService.js
+        pattern: "_history|getHistory"
+      - type: grep_present
+        file: src/api/routes.js
+        pattern: "PUT|update"
+
+  - message: |
+      Now add schema validation. Extend src/utils/validator.js with a new
+      function `validateSchema(item, schema)` that checks:
+
+      1. All required fields in schema.required[] exist in item
+      2. Field types match schema.types (e.g., { data: 'string', priority: 'number' })
+      3. Returns { valid: true } or { valid: false, error: "..." }
+
+      Add a `dataSchema` config value in src/config/index.js:
+      ```
+      dataSchema: {
+        required: ['data'],
+        types: { data: 'string' }
+      }
+      ```
+
+      Update dataService.create() and dataService.update() to also validate
+      against the schema using validateSchema before proceeding.
+
+      Update batchHandler to pass schema validation errors with the field name
+      that failed.
+    checkpoint:
+      - type: grep_present
+        file: src/utils/validator.js
+        pattern: "validateSchema"
+      - type: grep_present
+        file: src/config/index.js
+        pattern: "dataSchema|schema"
+      - type: grep_present
+        file: src/services/dataService.js
+        pattern: "validateSchema"
+
+  - message: |
+      The cacheService needs to invalidate cached items when they're updated.
+      Modify dataService.update() to accept an optional cacheService parameter.
+      When provided, after a successful update:
+      1. Invalidate the old cache entry for 'item:<id>'
+      2. Set the new cache entry with the updated record
+
+      Add a `PUT /data/:id` handler in routes.js that passes the cacheService
+      to dataService.update(). Also add a `GET /data/:id/history` route that
+      calls dataService.getHistory(id).
+
+      Write comprehensive tests in tests/dataService.test.js covering:
+      - create sets version 1
+      - update increments version
+      - update with cache invalidation
+      - getHistory returns all versions
+      - update with invalid id returns error
+      - update with invalid data returns validation error
+      - schema validation in create and update
+    checkpoint:
+      - type: grep_present
+        file: tests/dataService.test.js
+        pattern: "version|update|history"
+      - type: grep_present
+        file: src/api/routes.js
+        pattern: "history|PUT"
+
+  - message: |
+      Run ALL test files and fix every failure you find. Trace through
+      the full dependency chain — some failures may be in modules that
+      you didn't directly modify but that depend on modules you changed.
+      Pay special attention to ID parsing across the codebase.
+    checkpoint:
+      - type: defect_check
+        defect_file: src/services/dataService.js
+        description: "getById uses parseInt without radix, causing wrong parsing for IDs like 08/09"
+        planted_line: "parseInt(id)"
+        fixed_line: "parseInt(id, 10)"
+
+defect:
+  file: src/services/dataService.js
+  description: "parseInt without radix 10 in getById and deleteById — IDs get wrong parsing"
+  original: "parseInt(id, 10)"
+  mutated: "parseInt(id)"
+
+workspace_setup:
+  repo: measurement/fixtures/mini-api

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-sdlc.io/schemas/v1alpha1/dod-config.v1.schema.json",
+  "title": "AI-SDLC DodConfig",
+  "description": "Definition-of-Done gate config. Lives at .ai-sdlc/dod-config.yaml. The hard-enforced exit validation run before a task is marked Done / a PR opened: build + tests must pass and changed code must carry no incomplete-work markers. Counterpart to DorConfig (entry).",
+  "type": "object",
+  "required": ["apiVersion", "kind", "spec"],
+  "properties": {
+    "apiVersion": { "$ref": "common.schema.json#/$defs/apiVersion" },
+    "kind": { "type": "string", "const": "DodConfig" },
+    "metadata": { "$ref": "common.schema.json#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "required": ["checks"],
+      "properties": {
+        "evaluationMode": { "type": "string", "enum": ["enforce", "warn"], "description": "enforce blocks Done on a failed enforced check; warn only reports." },
+        "enforcementMode": { "type": "string", "enum": ["enforce", "warn"] },
+        "checks": {
+          "type": "object",
+          "description": "The exit checks. build/test run a shell command that must exit 0; markers scans changed files.",
+          "properties": {
+            "build": { "$ref": "#/$defs/commandCheck" },
+            "test": { "$ref": "#/$defs/commandCheck" },
+            "markers": {
+              "type": "object",
+              "properties": { "enforced": { "type": "boolean" } }
+            },
+            "outcomes": {
+              "type": "object",
+              "description": "Advisory tier: point at a run-records JSONL to surface Level-1 outcome metrics (completion/regression/review-loops/blast-radius). Never blocks.",
+              "properties": { "runRecords": { "type": "string", "description": "Path (relative to project root) to the run-records JSONL." } }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "commandCheck": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "description": "Shell command; exit 0 = pass." },
+        "enforced": { "type": "boolean", "description": "If true (default), a failure blocks Done in enforce mode." }
+      }
+    }
+  }
+}

@@ -1,0 +1,456 @@
+{
+  "skill_name": "automate-functional-tests",
+  "description": "Test scenarios for the /qa:automate-functional-tests command. Each eval has expected_behavior assertions with grading methods: file_exists (check file created), grep_pattern (search output for pattern), frontmatter_check (validate YAML frontmatter fields), code_inspection (review generated code for pattern), conversation_check (verify orchestrator behavior in conversation output).",
+  "grading_methods": {
+    "file_exists": "Verify the specified file was created in OUTPUT_DIR",
+    "grep_pattern": "Search generated files for a regex pattern — pass if found (or not found, if negated)",
+    "frontmatter_check": "Parse YAML frontmatter from a file and validate specific fields",
+    "code_inspection": "Review generated Java test code for structural patterns (imports, class hierarchy, annotations). REQUIRES A JUDGE — the `pattern` field is a natural-language rubric, not a regex. Grader implementations must route these assertions to a human reviewer or an LLM judge; auto-graders MUST NOT silently pass them. See `benchmarks/iteration-0/README.md` → 'Manual grading burden' for the per-eval count and reviewer-time estimate.",
+    "conversation_check": "Review orchestrator conversation output for specific messages or decisions"
+  },
+  "negation_conventions": {
+    "negated": "Boolean flag (true) that FLIPS the polarity of the main `pattern` (or, for file_exists, of the `path` check). Use when the assertion is 'this MUST NOT exist / match'. Example: { grading: 'grep_pattern', pattern: 'import.*quickfixj', negated: true } — passes when the pattern is NOT found.",
+    "negated_pattern": "Separate regex string. Adds an AND-combined must-NOT-match constraint alongside the main `pattern` (which must still match). Use when the assertion is 'X must match AND Y must NOT match'. Example: { grading: 'grep_pattern', pattern: 'import.*assertj', negated_pattern: 'import.*junit.*Assert' } — passes when assertj IS found AND junit Assert is NOT found.",
+    "rule": "Use `negated: true` for single-constraint must-not assertions. Use `negated_pattern` for two-constraint must-match-X-and-not-Y assertions. The two forms are intentionally distinct — do not unify."
+  },
+  "evals": [
+    {
+      "id": 1,
+      "name": "small-api-only",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-3-rest-tests.md",
+      "description": "3 BE-REST test cases using the concrete sample input file. Should skip Phase 0 entirely, run single-pass Phase 1 (no chunking), compile, review, and fix.",
+      "sample_input": "evals/sample-input-3-rest-tests.md",
+      "expected_behavior": [
+        { "assertion": "Phase 0 skipped (no UI-WEB tests)", "grading": "conversation_check", "pattern": "Phase 0 skip|no UI-WEB|skipping exploration|0 UI.WEB tests" },
+        { "assertion": "Single-pass automation (3 tests < 20 threshold)", "grading": "conversation_check", "pattern": "single.pass|1 chunk|no chunking|3 tests.*(< ?20|below)" },
+        { "assertion": "Service classes follow zero-defensive-programming pattern", "grading": "code_inspection", "pattern": "no try/catch/if/else/switch in service class methods; methods are 1-3 lines returning ApiResponse" },
+        { "assertion": "All tests use AssertJ assertions", "grading": "grep_pattern", "pattern": "import.*assertj", "negated_pattern": "import.*junit.*Assert" },
+        { "assertion": "automation-summary.md created", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" },
+        { "assertion": "code-review-report.md created with YAML frontmatter", "grading": "frontmatter_check", "path": "{OUTPUT_DIR}/code-review-report.md", "required_fields": ["verdict", "quality_score", "critical_issues", "major_issues"] },
+        { "assertion": "Generated tests deserialize responses via response.as(...) and contain none of the forbidden raw-body / JSON-tree / WebSocket-field patterns", "grading": "grep_pattern", "pattern": "response\\.as\\(", "negated_pattern": "assertThat\\([\\s\\S]*?\\.body\\(\\)|JsonNode|JsonPath|ObjectMapper\\.readTree|org\\.json|WebSocketResponse\\.(getField|fields|rawJson)", "negated_pattern_intent": "Passes only when response.as(...) IS used AND none of these forbidden patterns appear: assertThat(...body()) (any assertion on raw body, not just .contains — uses lazy [\\s\\S]*? to match multi-line argument expressions and nested calls like assertThat(transform(response.body()))), JsonNode, JsonPath, ObjectMapper.readTree, org.json.* (e.g. JSONObject/JSONArray/JSONTokener), or WebSocketResponse.getField/fields/rawJson. Diagnostic uses (Allure.addAttachment(..., response.body()) / logger.info(..., response.body())) are NOT matched because they don't appear inside assertThat(...)." },
+        { "assertion": "Review report classifies any response.body() / JsonNode / JsonPath / ObjectMapper.readTree / org.json / WebSocketResponse.fields/getField/rawJson usage in assertion context as 🔴 CRITICAL citing the deserialization rule", "grading": "code_inspection", "pattern": "review-report classifies any of the following in assertion context as 🔴 CRITICAL with the deserialization rule cited: response.body() inside assertThat(...), JsonNode, JsonPath, ObjectMapper.readTree, org.json.*, or WebSocketResponse.getField(...)/fields()/rawJson(). Diagnostic raw-body usages in Allure attachments / logger calls should NOT be flagged." }
+      ],
+      "input_shape": {
+        "total_tests": 3,
+        "ui_web": 0,
+        "be_rest": 3,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 2,
+      "name": "large-mixed-chunked",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-2-mixed-chunked.md",
+      "sample_input": "evals/sample-input-2-mixed-chunked.md",
+      "description": "25 tests across multiple interface types, requiring chunking. Tests that chunk 2+ reuses artifacts from chunk 1.",
+      "expected_behavior": [
+        { "assertion": "Phase 0 runs for UI-WEB tests only", "grading": "conversation_check", "pattern": "exploration.*(UI-WEB|UI.WEB)|Phase 0.*UI|spawning.*explor" },
+        { "assertion": "Chunked into 2 passes: chunk 1 (20 tests), chunk 2 (5 tests)", "grading": "conversation_check", "pattern": "chunk.?1.*20|chunk.?2.*5|2 chunks|splitting.*25.*into" },
+        { "assertion": "Chunk 2 prompt includes reuse instruction", "grading": "conversation_check", "pattern": "REUSE existing|reuse.*utilities|reuse.*page.object|Do NOT duplicate" },
+        { "assertion": "Only last chunk creates automation-summary.md", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" },
+        { "assertion": "No duplicate page objects or service classes across chunks", "grading": "code_inspection", "pattern": "each page object and service class exists in exactly one file" },
+        { "assertion": "Compilation validation runs once after both chunks complete", "grading": "conversation_check", "pattern": "mvn test-compile|Phase 1\\.5.*compil" }
+      ],
+      "input_shape": {
+        "total_tests": 25,
+        "ui_web": 8,
+        "be_rest": 10,
+        "be_fix": 3,
+        "be_websocket": 2,
+        "integration": 2
+      }
+    },
+    {
+      "id": 3,
+      "name": "ui-only-with-exploration",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-3-ui-only.md",
+      "sample_input": "evals/sample-input-3-ui-only.md",
+      "description": "10 UI-WEB test cases. Should trigger Phase 0 exploration for all tests, then automate with discovered locators.",
+      "expected_behavior": [
+        { "assertion": "Phase 0 spawns sub-agent for UI exploration", "grading": "conversation_check", "pattern": "explore-ui|exploration.*sub.agent|Phase 0.*spawn|spawning.*explor" },
+        { "assertion": "exploration-results.md created with locator summary", "grading": "file_exists", "path": "{OUTPUT_DIR}/exploration-results.md" },
+        { "assertion": "If any exploration fails, warning logged and fallback to css/xpath noted", "grading": "conversation_check", "pattern": "exploration fail|fallback.*css|fallback.*xpath|exploration.*warning|all.*exploration.*succeed|locator.*discover" },
+        { "assertion": "Single-pass automation (10 tests < 20 threshold)", "grading": "conversation_check", "pattern": "single.pass|1 chunk|no chunking|10 tests.*(< ?20|below)" },
+        { "assertion": "All page objects extend BasePage with static final Locator fields", "grading": "code_inspection", "pattern": "extends BasePage; static final.*Locator" },
+        { "assertion": "UI test preconditions use API calls, not UI navigation", "grading": "code_inspection", "pattern": "@BeforeEach methods use service classes for setup, not page.navigateTo() for data creation" }
+      ],
+      "input_shape": {
+        "total_tests": 10,
+        "ui_web": 10,
+        "be_rest": 0,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 4,
+      "name": "compilation-failure-recovery",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-4-compile-errors.md",
+      "sample_input": "evals/sample-input-4-compile-errors.md",
+      "description": "8 BE-REST tests with uncommon API patterns designed to increase compilation error likelihood. Tests Phase 1.5 retry loop.",
+      "determinism": "low",
+      "notes": "Non-deterministic: compilation errors depend on agent output quality. Test cases use uncommon patterns (multipart uploads, SSE streams, custom deserializers) to increase failure likelihood. If Phase 1 produces clean code on first try, Phase 1.5 passes trivially — re-run or accept.",
+      "expected_behavior": [
+        { "assertion": "Phase 1 completes and produces test files", "grading": "code_inspection", "pattern": "at least one *Test.java file created in src/test/java" },
+        { "assertion": "Phase 1.5 runs mvn test-compile and detects failures", "grading": "conversation_check", "pattern": "mvn test-compile|Phase 1\\.5.*compil" },
+        { "assertion": "Orchestrator reads Maven error output and applies fixes via Edit tool", "grading": "conversation_check", "pattern": "compil.*(fail|error).*Edit|Edit.*fix.*compil|fix.*import|fix.*type mismatch" },
+        { "assertion": "Re-runs mvn test-compile after each fix attempt", "grading": "conversation_check", "pattern": "re.run.*mvn test-compile|mvn test-compile.*(again|retry|attempt)" },
+        { "assertion": "Max 3 fix attempts enforced — stops and reports if still failing", "grading": "conversation_check", "pattern": "3 (attempt|tries|rounds)|max.*(attempt|tries)|still failing after" },
+        { "assertion": "If compilation succeeds within 3 attempts, proceeds to Phase 2", "grading": "conversation_check", "pattern": "BUILD SUCCESS.*Phase 2|compil.*succeed.*review|qa-code-reviewer" },
+        { "assertion": "Compilation status reported to user before Phase 2", "grading": "conversation_check", "pattern": "compil.*(pass|succeed|success|status)|Phase 1\\.5.*(pass|complete)" }
+      ],
+      "input_shape": {
+        "total_tests": 8,
+        "ui_web": 0,
+        "be_rest": 8,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 5,
+      "name": "clean-review-skip-fixes",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-5-clean-rest.md",
+      "sample_input": "evals/sample-input-5-clean-rest.md",
+      "description": "5 simple BE-REST CRUD tests designed to produce clean code that passes review with 0 CRITICAL and 0 MAJOR issues. Tests Phase 3 skip condition.",
+      "determinism": "low",
+      "notes": "Non-deterministic: depends on agent producing clean code. Simple CRUD patterns (get/list/create) chosen to maximize clean output likelihood. If review finds CRITICAL/MAJOR issues, Phase 3 runs instead of skipping — re-run or accept.",
+      "expected_behavior": [
+        { "assertion": "Phase 1 completes successfully", "grading": "code_inspection", "pattern": "test files created in src/test/java" },
+        { "assertion": "Phase 1.5 compilation passes on first attempt", "grading": "conversation_check", "pattern": "BUILD SUCCESS|compil.*(pass|succeed).*first|no (fix|compil).*(error|fail)" },
+        { "assertion": "Phase 2 review produces verdict with 0 critical_issues and 0 major_issues", "grading": "frontmatter_check", "path": "{OUTPUT_DIR}/code-review-report.md", "required_fields": ["verdict", "critical_issues", "major_issues"], "expected_values": { "critical_issues": 0, "major_issues": 0 } },
+        { "assertion": "Phase 3 is SKIPPED (no fixes needed)", "grading": "conversation_check", "pattern": "Phase 3.*(skip|not needed)|skip.*Phase 3|0 CRITICAL.*0 MAJOR.*skip" },
+        { "assertion": "Final summary reports quality score and notes Phase 3 was skipped", "grading": "conversation_check", "pattern": "(Score|quality_score).*\\d+/10.*Phase 3|Phase 3.*skip.*Score" },
+        { "assertion": "Any MINOR or SUGGESTION issues noted in summary for manual review", "grading": "conversation_check", "pattern": "MINOR|SUGGESTION|manual review|remaining.*issues" }
+      ],
+      "input_shape": {
+        "total_tests": 5,
+        "ui_web": 0,
+        "be_rest": 5,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 6,
+      "name": "ui-skip-exploration",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-6-ui-web.md --skip-exploration",
+      "sample_input": "evals/sample-input-6-ui-web.md",
+      "description": "6 UI-WEB tests with --skip-exploration flag. Phase 0 must be skipped entirely, automation falls back to css/xpath locator strategies.",
+      "expected_behavior": [
+        { "assertion": "Phase 0 skipped due to --skip-exploration flag", "grading": "conversation_check", "pattern": "--skip-exploration|skip.exploration.*flag|Phase 0.*skip" },
+        { "assertion": "No exploration-*.yaml files created", "grading": "grep_pattern", "pattern": "exploration-.*\\.yaml", "negated": true, "search_path": "{OUTPUT_DIR}/" },
+        { "assertion": "Phase 1 automation proceeds without exploration data", "grading": "conversation_check", "pattern": "qa-automation-architect|Phase 1.*automat|spawning.*automat" },
+        { "assertion": "Page objects use css/xpath locator strategies (no data-testid dependency)", "grading": "code_inspection", "pattern": "Locator fields use css() or xpath() strategies, not exclusively testId()" },
+        { "assertion": "No prompt to user for frontend component paths", "grading": "conversation_check", "pattern": "skip.*frontend_component|no.*frontend_component|--skip-exploration" },
+        { "assertion": "automation-summary.md created normally", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" }
+      ],
+      "input_shape": {
+        "total_tests": 6,
+        "ui_web": 6,
+        "be_rest": 0,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 7,
+      "name": "fix-ws-protocol-only",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-7-fix-ws.md",
+      "sample_input": "evals/sample-input-7-fix-ws.md",
+      "description": "8 tests covering BE-FIX (5) and BE-WEBSOCKET (3) protocols in isolation. No UI or REST tests. Tests protocol-specific automation patterns.",
+      "expected_behavior": [
+        { "assertion": "Phase 0 skipped (no UI-WEB tests)", "grading": "conversation_check", "pattern": "Phase 0 skip|no UI-WEB|skipping exploration|0 UI.WEB tests" },
+        { "assertion": "Single-pass automation (8 tests < 20 threshold)", "grading": "conversation_check", "pattern": "single.pass|1 chunk|no chunking|8 tests.*(< ?20|below)" },
+        { "assertion": "FIX tests use framework FixRequestBuilder — no direct QuickFIX/J imports", "grading": "grep_pattern", "pattern": "import.*quickfixj", "negated": true },
+        { "assertion": "FIX tests use FixClient, FixRequestBuilder, and FixMessageCollector — no direct QuickFIX/J imports or FixResponse", "grading": "code_inspection", "pattern": "uses FixClient and FixRequestBuilder for FIX operations; responses via FixMessageCollector.waitFor/waitForType; no FixResponse class" },
+        { "assertion": "WebSocket tests use framework WebSocketClient interface", "grading": "grep_pattern", "pattern": "import com\\.tradu\\.core.*WebSocket" },
+        { "assertion": "FIX session management handled in @BeforeEach/@AfterEach", "grading": "code_inspection", "pattern": "@BeforeEach contains FIX session setup; @AfterEach contains session cleanup" },
+        { "assertion": "WebSocket subscriptions cleaned up in @AfterEach", "grading": "code_inspection", "pattern": "@AfterEach contains WebSocket close/unsubscribe" },
+        { "assertion": "automation-summary.md created with FIX and WebSocket run instructions", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" }
+      ],
+      "input_shape": {
+        "total_tests": 8,
+        "ui_web": 0,
+        "be_rest": 0,
+        "be_fix": 5,
+        "be_websocket": 3,
+        "integration": 0
+      }
+    },
+    {
+      "id": 8,
+      "name": "ui-reuse-exploration-no-files",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-3-ui-only.md --reuse-exploration",
+      "sample_input": "evals/sample-input-3-ui-only.md",
+      "description": "10 UI-WEB tests with --reuse-exploration flag when NO previous exploration files exist in OUTPUT_DIR. Tests the fallback path: warn user, proceed without exploration data.",
+      "expected_behavior": [
+        { "assertion": "Phase 0 exploration sub-agent is NOT spawned", "grading": "conversation_check", "pattern": "--reuse-exploration|reuse.*exploration|Phase 0.*skip|no.*exploration.*sub.agent" },
+        { "assertion": "Orchestrator checks for existing exploration-*.yaml files", "grading": "conversation_check", "pattern": "exploration-.*\\.yaml|Glob.*exploration|checking.*exploration.*files" },
+        { "assertion": "No exploration files found — warns user and proceeds without", "grading": "conversation_check", "pattern": "no previous exploration|no exploration files found|warn.*exploration|fallback.*skip" },
+        { "assertion": "No prompt to user for frontend component paths", "grading": "conversation_check", "pattern": "--reuse-exploration|reuse.*exploration|no.*frontend_component" },
+        { "assertion": "Phase 1 automation proceeds without exploration data", "grading": "conversation_check", "pattern": "qa-automation-architect|Phase 1.*automat|spawning.*automat" },
+        { "assertion": "automation-summary.md created", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" }
+      ],
+      "input_shape": {
+        "total_tests": 10,
+        "ui_web": 10,
+        "be_rest": 0,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 9,
+      "name": "negative-empty-file",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-9-empty.md",
+      "sample_input": "evals/sample-input-9-empty.md",
+      "description": "Empty input file with no TC-FUNC markers. Tests Step 0 error handling — should report error and stop without proceeding to any phase.",
+      "expected_behavior": [
+        { "assertion": "Step 0 detects zero test cases", "grading": "conversation_check", "pattern": "0 test cases|zero test cases|no TC-FUNC|no test cases found" },
+        { "assertion": "Error reported to user", "grading": "conversation_check", "pattern": "error|no test cases|cannot proceed|stopping" },
+        { "assertion": "No phases executed", "grading": "conversation_check", "pattern": "no test cases|stopping|error" },
+        { "assertion": "No output files created", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md", "negated": true }
+      ],
+      "input_shape": {
+        "total_tests": 0,
+        "ui_web": 0,
+        "be_rest": 0,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 10,
+      "name": "negative-file-not-found",
+      "prompt": "/qa:automate-functional-tests /nonexistent/path/tests.md",
+      "description": "Non-existent file path. Tests Step 0 file validation — should report 'File not found' error with usage hint.",
+      "expected_behavior": [
+        { "assertion": "File not found error reported", "grading": "conversation_check", "pattern": "File not found|not found.*Usage|does not exist" },
+        { "assertion": "No phases executed", "grading": "conversation_check", "pattern": "File not found|stopping|cannot proceed|does not exist" }
+      ],
+      "input_shape": null
+    },
+    {
+      "id": 11,
+      "name": "phase3-fix-application",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-11-phase3-fixes.md",
+      "sample_input": "evals/sample-input-11-phase3-fixes.md",
+      "description": "5 BE-REST tests designed to produce code with CRITICAL review issues (e.g., direct HTTP imports, JUnit assertions). Tests that Phase 3 fix agent is spawned, applies fixes, and re-compilation succeeds. Non-deterministic: depends on Phase 1 producing imperfect code and Phase 2 catching issues.",
+      "determinism": "low",
+      "notes": "The goal is to verify Phase 3 executes when CRITICAL/MAJOR issues exist. If Phase 1 produces clean code (no issues), Phase 3 will be skipped — making this eval equivalent to eval #5. Re-run if Phase 2 reports 0 CRITICAL + 0 MAJOR.",
+      "expected_behavior": [
+        { "assertion": "Phase 1 completes and produces test files", "grading": "code_inspection", "pattern": "at least one *Test.java file created in src/test/java" },
+        { "assertion": "Phase 1.5 compilation succeeds (or is fixed within 3 attempts)", "grading": "conversation_check", "pattern": "mvn test-compile.*(BUILD SUCCESS|fix.*applied)" },
+        { "assertion": "Phase 2 review report has CRITICAL or MAJOR issues", "grading": "frontmatter_check", "path": "{OUTPUT_DIR}/code-review-report.md", "condition": "critical_issues > 0 OR major_issues > 0" },
+        { "assertion": "Phase 3 fix agent is spawned (not skipped)", "grading": "conversation_check", "pattern": "qa-automation-architect.*fix|Phase 3.*spawn|applying.*CRITICAL|applying.*MAJOR" },
+        { "assertion": "Fix agent uses Edit tool to apply fixes", "grading": "conversation_check", "pattern": "Edit tool|file.*modified|fix.*applied" },
+        { "assertion": "Re-compilation after fixes succeeds", "grading": "conversation_check", "pattern": "mvn test-compile.*BUILD SUCCESS" },
+        { "assertion": "Fixed code no longer has direct HTTP client imports", "grading": "grep_pattern", "pattern": "import.*(java\\.net\\.http|okhttp|apache\\.http)", "negated": true },
+        { "assertion": "Fixed code uses AssertJ assertions only", "grading": "grep_pattern", "pattern": "import.*assertj", "negated_pattern": "import.*junit.*Assert" }
+      ],
+      "input_shape": {
+        "total_tests": 5,
+        "ui_web": 0,
+        "be_rest": 5,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 12,
+      "name": "ui-reuse-exploration-with-files",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-3-ui-only.md --reuse-exploration",
+      "sample_input": "evals/sample-input-3-ui-only.md",
+      "description": "10 UI-WEB tests with --reuse-exploration flag when exploration-*.yaml files DO exist in OUTPUT_DIR from a prior run (eval #3). Tests the reuse path: existing files are passed to Phase 1 agent. Requires running eval #3 first to populate exploration files.",
+      "prerequisites": "Run eval #3 (ui-only-with-exploration) first so that exploration-*.yaml files exist in OUTPUT_DIR. For independent execution, create mock exploration-*.yaml files (one per UI-WEB test case) in OUTPUT_DIR before running.",
+      "expected_behavior": [
+        { "assertion": "Phase 0 exploration sub-agent is NOT spawned", "grading": "conversation_check", "pattern": "--reuse-exploration|reuse.*exploration|Phase 0.*skip|no.*exploration.*sub.agent" },
+        { "assertion": "Orchestrator finds existing exploration-*.yaml files", "grading": "conversation_check", "pattern": "exploration.*found|exploration.*exist|reusing.*exploration" },
+        { "assertion": "Exploration results passed to Phase 1 agent prompt", "grading": "conversation_check", "pattern": "exploration.*results.*Phase 1|exploration.*path.*agent|reusing.*locator" },
+        { "assertion": "No prompt to user for frontend component paths", "grading": "conversation_check", "pattern": "--reuse-exploration|reuse.*exploration|no.*frontend_component" },
+        { "assertion": "Phase 1 automation proceeds with exploration data", "grading": "conversation_check", "pattern": "qa-automation-architect|Phase 1.*automat|spawning.*automat" },
+        { "assertion": "automation-summary.md created", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" }
+      ],
+      "input_shape": {
+        "total_tests": 10,
+        "ui_web": 10,
+        "be_rest": 0,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 13,
+      "name": "repetitive-tests-parameterization",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-13-repetitive-tests.md",
+      "sample_input": "evals/sample-input-13-repetitive-tests.md",
+      "description": "3 REST tests differing only in input values (currency pairs). Agent must generate a single @ParameterizedTest, not 3 copy-paste methods.",
+      "expected_behavior": [
+        { "assertion": "Generated test file uses @ParameterizedTest with @CsvSource (or @MethodSource/@ValueSource)", "grading": "grep_pattern", "pattern": "@ParameterizedTest" },
+        { "assertion": "No 2+ @Test methods differing only in input values exist", "grading": "code_inspection", "pattern": "no 2+ @Test methods with identical AAA shape and only input-value variation" },
+        { "assertion": "Generated tests deserialize via response.as(...) and contain none of the forbidden raw-body / JSON-tree / WebSocket-field patterns", "grading": "grep_pattern", "pattern": "response\\.as\\(", "negated_pattern": "assertThat\\([\\s\\S]*?\\.body\\(\\)|JsonNode|JsonPath|ObjectMapper\\.readTree|org\\.json|WebSocketResponse\\.(getField|fields|rawJson)", "negated_pattern_intent": "Passes only when response.as(...) IS used AND none of these forbidden patterns appear: assertThat(...body()) (any assertion on raw body, not just .contains — uses lazy [\\s\\S]*? to match multi-line argument expressions and nested calls), JsonNode, JsonPath, ObjectMapper.readTree, org.json.* (e.g. JSONObject/JSONArray/JSONTokener), or WebSocketResponse.getField/fields/rawJson. Diagnostic uses (Allure.addAttachment(..., response.body()) / logger.info(..., response.body())) are NOT matched because they don't appear inside assertThat(...)." },
+        { "assertion": "Review report shows zero MAJOR issues whose description references parameterization (other unrelated MAJOR issues are NOT counted against this assertion)", "grading": "code_inspection", "pattern": "in code-review-report.md, count MAJOR issues whose 'description' or 'issue' text mentions any of: parameteriz, @ParameterizedTest, @CsvSource, @MethodSource, @ValueSource, repetitive test, copy-paste test, near-identical test, or duplicated test methods. PASS if that count == 0. Other MAJOR issues (auth, locators, waits, etc.) are out of scope for this assertion." }
+      ],
+      "input_shape": {
+        "total_tests": 3,
+        "ui_web": 0,
+        "be_rest": 3,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 14,
+      "name": "parameterize-carve-out-distinct-scenarios",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-14-distinct-scenarios.md",
+      "sample_input": "evals/sample-input-14-distinct-scenarios.md",
+      "description": "3 near-shaped REST tests where each test name encodes a semantically distinct scenario (expired token, revoked token, malformed token — all return 401 but for different reasons). Agent MUST keep them as 3 separate @Test methods, NOT combine into a @ParameterizedTest. Tests the parameterization carve-out: 'when each name encodes a semantically distinct scenario, keep tests separate'.",
+      "expected_behavior": [
+        { "assertion": "Generated tests are 3 separate @Test methods, NOT a single @ParameterizedTest", "grading": "code_inspection", "pattern": "in src/test/java, the three login negative-auth scenarios MUST be implemented as three distinct @Test methods named like test_login_withExpiredToken_returns401, test_login_withRevokedToken_returns401, test_login_withMalformedToken_returns401 (or close equivalents). FAIL if they are combined into a single @ParameterizedTest with @CsvSource/@MethodSource/@ValueSource that buries the scenario name in a row." },
+        { "assertion": "The three token-validation scenarios are not collapsed into a single @ParameterizedTest", "grading": "code_inspection", "pattern": "scoped check — locate the test file(s) implementing the expired-token / revoked-token / malformed-token scenarios (the three TC-FUNC-BE-REST-001/002/003 cases from sample-input-14). PASS if each of the three scenarios is implemented as a separate @Test method in that file. FAIL only if those three scenarios are combined into one @ParameterizedTest with @CsvSource/@MethodSource/@ValueSource. Unrelated @ParameterizedTest usages elsewhere in the project (e.g. on other test classes) are out of scope for this assertion and do NOT cause a fail." },
+        { "assertion": "Review report does NOT flag a MAJOR/CRITICAL issue recommending parameterization for these tests", "grading": "code_inspection", "pattern": "code-review-report.md contains zero CRITICAL or MAJOR issues whose 'description' or 'recommendation' text suggests combining the expired-token / revoked-token / malformed-token tests into a @ParameterizedTest. A MINOR/SUGGESTION note about the carve-out is acceptable." },
+        { "assertion": "Generated tests deserialize errors via response.as(...) and contain none of the forbidden raw-body / JSON-tree / WebSocket-field patterns", "grading": "grep_pattern", "pattern": "response\\.as\\(", "negated_pattern": "assertThat\\([\\s\\S]*?\\.body\\(\\)|JsonNode|JsonPath|ObjectMapper\\.readTree|org\\.json|WebSocketResponse\\.(getField|fields|rawJson)", "negated_pattern_intent": "Passes only when response.as(...) IS used AND none of these forbidden patterns appear: assertThat(...body()) (any assertion on raw body, not just .contains — uses lazy [\\s\\S]*? to match multi-line argument expressions and nested calls), JsonNode, JsonPath, ObjectMapper.readTree, org.json.* (e.g. JSONObject/JSONArray/JSONTokener), or WebSocketResponse.getField/fields/rawJson. Diagnostic uses (Allure.addAttachment(..., response.body()) / logger.info(..., response.body())) are NOT matched because they don't appear inside assertThat(...)." }
+      ],
+      "input_shape": {
+        "total_tests": 3,
+        "ui_web": 0,
+        "be_rest": 3,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 15,
+      "name": "websocket-deserialize",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-15-websocket-deserialize.md",
+      "sample_input": "evals/sample-input-15-websocket-deserialize.md",
+      "description": "3 BE-WEBSOCKET tests verifying that the deserialize-for-assertions rule applies to WebSocket responses with the same rigor as REST. WebSocket counterpart to evals 1 and 13.",
+      "iteration_target": "iteration-1",
+      "expected_behavior": [
+        { "assertion": "Phase 0 skipped (no UI-WEB tests)", "grading": "conversation_check", "pattern": "Phase 0 skip|no UI-WEB|skipping exploration|0 UI.WEB tests" },
+        { "assertion": "Single-pass automation (3 tests < 20 threshold)", "grading": "conversation_check", "pattern": "single.pass|1 chunk|no chunking|3 tests.*(< ?20|below)" },
+        { "assertion": "WebSocket tests deserialize via message.as(...) and contain none of the forbidden raw-body / WebSocket-field patterns", "grading": "grep_pattern", "pattern": "message\\.as\\(", "negated_pattern": "WebSocketResponse\\.(getField|fields|rawJson)|message\\.getField|message\\.fields\\(\\)|message\\.rawJson\\(\\)", "negated_pattern_intent": "Passes only when message.as(...) IS used AND none of the forbidden WebSocket field-access patterns appear in assertion context. Diagnostic uses outside assertThat(...) are not matched here — see eval 16 for the diagnostic carve-out check." },
+        { "assertion": "WebSocket tests import the framework WebSocketClient interface", "grading": "grep_pattern", "pattern": "import com\\.tradu\\.core.*WebSocket" },
+        { "assertion": "WebSocket subscriptions cleaned up in @AfterEach", "grading": "code_inspection", "pattern": "@AfterEach contains WebSocket close/unsubscribe for each subscribed symbol" },
+        { "assertion": "automation-summary.md created", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" },
+        { "assertion": "Review report classifies any WebSocketResponse.getField/fields/rawJson in assertion context as 🔴 CRITICAL citing the deserialization rule", "grading": "code_inspection", "pattern": "review-report classifies any WebSocketResponse.getField(...) / fields() / rawJson() in assertion context as 🔴 CRITICAL with the deserialization rule cited. Diagnostic uses of those APIs (logging only) should NOT be flagged." }
+      ],
+      "input_shape": {
+        "total_tests": 3,
+        "ui_web": 0,
+        "be_rest": 0,
+        "be_fix": 0,
+        "be_websocket": 3,
+        "integration": 0
+      }
+    },
+    {
+      "id": 16,
+      "name": "allure-diagnostic-carve-out",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-16-allure-diagnostic-carve-out.md",
+      "sample_input": "evals/sample-input-16-allure-diagnostic-carve-out.md",
+      "description": "2 BE-REST tests that explicitly require raw response.body() inside Allure.addAttachment(...) and logger.info(...) for diagnostics, while still requiring deserialized assertions. Verifies the rule's diagnostic carve-out is respected in both directions: the rule applies to assertions, NOT to diagnostics. Regression check against over-correction.",
+      "iteration_target": "iteration-1",
+      "expected_behavior": [
+        { "assertion": "Generated tests deserialize via response.as(...) for the actual assertions", "grading": "grep_pattern", "pattern": "response\\.as\\(" },
+        { "assertion": "Allure.addAttachment(...) preserves the raw response.body() argument", "grading": "grep_pattern", "pattern": "Allure\\.addAttachment\\([^)]*response\\.body\\(\\)" },
+        { "assertion": "logger.info / logger.debug / logger.warn preserves the raw response.body() argument", "grading": "grep_pattern", "pattern": "logger\\.(info|debug|warn)\\([^)]*response\\.body\\(\\)" },
+        { "assertion": "Forbidden raw-body / JSON-tree / org.json patterns DO NOT appear inside assertThat(...)", "grading": "grep_pattern", "pattern": "assertThat\\(", "negated_pattern": "assertThat\\([\\s\\S]*?\\.body\\(\\)|assertThat\\([\\s\\S]*?JsonNode|assertThat\\([\\s\\S]*?JsonPath|assertThat\\([\\s\\S]*?ObjectMapper\\.readTree|assertThat\\([\\s\\S]*?org\\.json", "negated_pattern_intent": "Passes when assertThat(...) IS used AND no forbidden pattern appears inside an assertThat(...) call (uses lazy [\\s\\S]*? to match multi-line argument expressions). Diagnostic uses outside assertThat(...) are allowed and not matched." },
+        { "assertion": "Review report does NOT classify the diagnostic Allure / logger raw-body usages as CRITICAL or MAJOR", "grading": "code_inspection", "pattern": "code-review-report.md must NOT contain any CRITICAL or MAJOR issue whose 'description' or 'recommendation' flags the Allure.addAttachment(...) or logger.info(...) raw-body usages. The carve-out is explicitly documented in API_TESTING_GUIDE.yaml → 'Error Response Models'. Flagging these is an over-correction and is itself a review error." },
+        { "assertion": "automation-summary.md created", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" }
+      ],
+      "input_shape": {
+        "total_tests": 2,
+        "ui_web": 0,
+        "be_rest": 2,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 17,
+      "name": "paginated-envelope-response",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-17-paginated-envelope.md",
+      "sample_input": "evals/sample-input-17-paginated-envelope.md",
+      "description": "2 BE-REST tests where the endpoint returns a wrapped/envelope response (Spring Page<T> shape). Agent MUST declare a wrapper class and use response.as(WrapperClass.class), NOT response.asList(...). Tests the 'list vs envelope' rewrite documented in fix-prompt.md and API_TESTING_GUIDE.yaml → 'Paginated Responses'.",
+      "iteration_target": "iteration-1",
+      "expected_behavior": [
+        { "assertion": "Generated tests declare a wrapper class with at least a content field and at least one envelope metadata field (e.g. totalElements / totalPages)", "grading": "code_inspection", "pattern": "in src/main/java (models package), exactly one wrapper class is declared whose shape matches the envelope: at minimum a List-typed `content` field (or getContent() accessor) plus one or more of totalElements, totalPages, size, number. Java records OR classes with getters both acceptable." },
+        { "assertion": "Generated tests deserialize via response.as(WrapperClass.class) and NOT via response.asList(...)", "grading": "grep_pattern", "pattern": "response\\.as\\(\\w*Page\\w*\\.class\\)|response\\.as\\(\\w*Envelope\\w*\\.class\\)|response\\.as\\(\\w*Response\\.class\\)", "negated_pattern": "response\\.asList\\(", "negated_pattern_intent": "Passes when at least one response.as(WrapperClass.class) call appears AND response.asList(...) is NOT used. The wrapper-class name pattern is permissive (matches *Page*, *Envelope*, or *Response* suffixes) since project naming conventions vary." },
+        { "assertion": "Tests assert on both the extracted content list AND on envelope metadata (e.g. totalElements)", "grading": "code_inspection", "pattern": "each test asserts on (a) the content list (extracted via page.content() / page.getContent() — typically via assertThat(...).extracting(...) or .hasSize(...)) AND (b) at least one envelope-metadata field (totalElements / totalPages / etc.)" },
+        { "assertion": "No forbidden raw-body / JSON-tree patterns appear in assertion context", "grading": "grep_pattern", "pattern": "response\\.as\\(", "negated_pattern": "assertThat\\([\\s\\S]*?\\.body\\(\\)|JsonNode|JsonPath|ObjectMapper\\.readTree|org\\.json", "negated_pattern_intent": "Same broadened deserialize check as evals 1.7, 13.3, 14.4 — lazy [\\s\\S]*? for multi-line assertion arguments." },
+        { "assertion": "automation-summary.md created", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" }
+      ],
+      "input_shape": {
+        "total_tests": 2,
+        "ui_web": 0,
+        "be_rest": 2,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 18,
+      "name": "empty-body-carve-out",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-18-empty-body-carve-out.md",
+      "sample_input": "evals/sample-input-18-empty-body-carve-out.md",
+      "description": "2 BE-REST tests where the response has no body by design (204 No Content, 304 Not Modified). Agent MUST assert ONLY on statusCode() and NOT call response.as(...) on the empty body. Tests the empty-body carve-out documented in API_TESTING_GUIDE.yaml → 'Error Response Models'.",
+      "iteration_target": "iteration-1",
+      "expected_behavior": [
+        { "assertion": "Generated tests assert on statusCode() for the 204/304 responses", "grading": "grep_pattern", "pattern": "assertThat\\(.*statusCode\\(\\)\\)\\.isEqualTo\\(204\\)|assertThat\\(.*statusCode\\(\\)\\)\\.isEqualTo\\(304\\)" },
+        { "assertion": "Generated tests do NOT call response.as(...) on the 204 or 304 responses", "grading": "code_inspection", "pattern": "in src/test/java, for the test methods asserting HTTP 204 (delete-order) and HTTP 304 (conditional-get not-modified), there must be NO response.as(...) call on the SAME ApiResponse variable that holds the 204/304 result. Other tests in the file may still use response.as(...) on their own 2xx responses — that is fine. FAIL only if the agent attempted to deserialize the empty body." },
+        { "assertion": "Generated tests do NOT call response.body() in assertion context for 204/304 responses", "grading": "grep_pattern", "pattern": "assertThat\\(.*statusCode", "negated_pattern": "assertThat\\([\\s\\S]*?\\.body\\(\\)", "negated_pattern_intent": "Passes when status-code assertions ARE present AND no assertThat(...body()) appears anywhere — the empty-body carve-out forbids body assertions, and these two tests have no other 2xx responses with bodies that would legitimately need .body() in assertion context (the 200 ETag-capture step is a SETUP, not an assertion target). Lazy [\\s\\S]*? handles multi-line assertion arguments." },
+        { "assertion": "Header assertions via response.raw().headers() ARE allowed and may appear", "grading": "code_inspection", "pattern": "if the agent asserts on response headers (e.g. ETag, Location) it must go through response.raw().headers().firstValue(...) — never through response.body() or response.as(...). This assertion PASSES whether or not header assertions are present; it only FAILS if header assertions are present BUT use the wrong API." },
+        { "assertion": "automation-summary.md created", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" }
+      ],
+      "input_shape": {
+        "total_tests": 2,
+        "ui_web": 0,
+        "be_rest": 2,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    },
+    {
+      "id": 19,
+      "name": "header-assertion-carve-out",
+      "prompt": "/qa:automate-functional-tests evals/sample-input-19-header-carve-out.md",
+      "sample_input": "evals/sample-input-19-header-carve-out.md",
+      "description": "2 BE-REST tests where the verification target is an HTTP response header (Location after POST 201, Retry-After on 503). Agent MUST use response.raw().headers().firstValue(...) — never response.body() or response.as(...) for header access. Tests the header-check carve-out documented in API_TESTING_GUIDE.yaml → 'Error Response Models' in isolation (eval 18 brushes it as an 'if-present' check only).",
+      "iteration_target": "iteration-1",
+      "expected_behavior": [
+        { "assertion": "Phase 0 skipped (no UI-WEB tests)", "grading": "conversation_check", "pattern": "Phase 0 skip|no UI-WEB|skipping exploration|0 UI.WEB tests" },
+        { "assertion": "Header assertions use response.raw().headers().firstValue(...)", "grading": "grep_pattern", "pattern": "response\\.raw\\(\\)\\.headers\\(\\)\\.firstValue\\(" },
+        { "assertion": "Header assertions cover both the Location (201) and Retry-After (503) targets", "grading": "code_inspection", "pattern": "the test method asserting HTTP 201 verifies the Location header via response.raw().headers().firstValue(\"Location\"); the test method asserting HTTP 503 verifies Retry-After via response.raw().headers().firstValue(\"Retry-After\"). Both must be present." },
+        { "assertion": "Body deserialization still applies for the 201 success path (typed assertion on the body in addition to the header)", "grading": "grep_pattern", "pattern": "response\\.as\\(" },
+        { "assertion": "No forbidden raw-body / JSON-tree patterns appear in assertion context", "grading": "grep_pattern", "pattern": "response\\.raw\\(\\)\\.headers\\(\\)", "negated_pattern": "assertThat\\([\\s\\S]*?\\.body\\(\\)|JsonNode|JsonPath|ObjectMapper\\.readTree|org\\.json", "negated_pattern_intent": "Passes when the header-access API IS used AND no raw-body / JSON-tree pattern appears in an assertion. Header access via raw().headers() is the explicit carve-out — body() and JSON-tree parsing are still forbidden in assertion context." },
+        { "assertion": "Review report does NOT flag the response.raw().headers() usage as CRITICAL or MAJOR", "grading": "code_inspection", "pattern": "code-review-report.md must NOT contain any CRITICAL or MAJOR issue whose 'description' or 'recommendation' flags the response.raw().headers().firstValue(...) header-assertion API. The header carve-out is documented in API_TESTING_GUIDE.yaml → 'Error Response Models' as explicitly allowed. Flagging it is an over-correction and is itself a review error." },
+        { "assertion": "automation-summary.md created", "grading": "file_exists", "path": "{OUTPUT_DIR}/automation-summary.md" }
+      ],
+      "input_shape": {
+        "total_tests": 2,
+        "ui_web": 0,
+        "be_rest": 2,
+        "be_fix": 0,
+        "be_websocket": 0,
+        "integration": 0
+      }
+    }
+  ]
+}

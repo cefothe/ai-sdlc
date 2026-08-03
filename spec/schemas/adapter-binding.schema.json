@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-sdlc.io/schemas/v1alpha1/adapter-binding.schema.json",
+  "title": "AI-SDLC AdapterBinding",
+  "description": "Declares a tool integration as a swappable provider behind a uniform interface contract.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "$ref": "common.schema.json#/$defs/apiVersion"
+    },
+    "kind": {
+      "type": "string",
+      "const": "AdapterBinding"
+    },
+    "metadata": {
+      "$ref": "common.schema.json#/$defs/metadata"
+    },
+    "spec": {
+      "type": "object",
+      "required": ["interface", "type", "version"],
+      "properties": {
+        "interface": {
+          "type": "string",
+          "enum": [
+            "IssueTracker",
+            "SourceControl",
+            "CIPipeline",
+            "CodeAnalysis",
+            "Messenger",
+            "DeploymentTarget",
+            "AuditSink",
+            "Sandbox",
+            "SecretStore",
+            "MemoryStore",
+            "EventBus",
+            "DesignTokenProvider",
+            "ComponentCatalog",
+            "VisualRegressionRunner",
+            "UsabilitySimulationRunner"
+          ],
+          "description": "The abstract contract name."
+        },
+        "type": {
+          "type": "string",
+          "description": "The concrete implementation (e.g., linear, github, jira)."
+        },
+        "version": {
+          "type": "string",
+          "description": "Adapter version (SemVer).",
+          "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?(\\+[a-zA-Z0-9.]+)?$"
+        },
+        "source": {
+          "type": "string",
+          "description": "Location of the adapter (registry URI, local path, or git reference)."
+        },
+        "config": {
+          "type": "object",
+          "description": "Adapter-specific configuration. This field permits additional properties.",
+          "additionalProperties": true
+        },
+        "soulOverrides": {
+          "type": "array",
+          "description": "Per-soul adapter configuration overrides per RFC-0009 §8.2. Allows the same AdapterBinding to read from different concrete sources per soul (e.g., per-soul issue tracker channel, per-soul customer-signal source). Omission preserves single-DID behavior (platform-wide config only).",
+          "items": {
+            "type": "object",
+            "required": ["soul", "config"],
+            "properties": {
+              "soul": {
+                "type": "string",
+                "description": "Soul DID URI this override applies to (e.g., `did:platform-x:soul:soul-a`)."
+              },
+              "config": {
+                "type": "object",
+                "description": "Soul-specific adapter configuration. Merges over the top-level `config` field at resolution time.",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "healthCheck": {
+          "type": "object",
+          "description": "Health check configuration.",
+          "properties": {
+            "interval": {
+              "type": "string",
+              "description": "Time between health checks.",
+              "pattern": "^\\d+[smhdw]$"
+            },
+            "timeout": {
+              "type": "string",
+              "description": "Maximum time to wait for a health check response.",
+              "pattern": "^\\d+[smhdw]$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "connected": {
+          "type": "boolean",
+          "description": "Whether the adapter is currently connected."
+        },
+        "lastHealthCheck": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last successful health check."
+        },
+        "adapterVersion": {
+          "type": "string",
+          "description": "The running adapter version."
+        },
+        "specVersionSupported": {
+          "type": "string",
+          "description": "The spec version the adapter supports."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

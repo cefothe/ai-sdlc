@@ -1,0 +1,755 @@
+name: "API_QUICK_REFERENCE"
+type: "reference"
+version: "1.1.0"
+description: "Cheat sheet for the Tradu Test Automation Framework APIs."
+last_updated: "2026-05-22"
+maintained_by: "Tradu QA Team"
+changelog:
+  - version: "1.1.0"
+    date: "2026-05-22"
+    changes:
+      - "Added comment above ApiResponse.body() warning that raw body is for logging / Allure attachments / diagnostics ONLY — never for assertions (canonical source: API_TESTING_GUIDE.yaml → 'Error Response Models')"
+  - version: "1.0.0"
+    date: "2026-01-13"
+    changes:
+      - "Initial release"
+
+content: |
+  # API Quick Reference
+  
+  > Cheat sheet for the Tradu Test Automation Framework APIs.
+  
+  ## Table of Contents
+  
+  - [WebDriver API](#webdriver-api)
+  - [Element API](#element-api)
+  - [Locator Strategies](#locator-strategies)
+  - [HTTP/REST API](#httprest-api)
+  - [ApiResponse Methods](#apiresponse-methods)
+  - [WebSocket API](#websocket-api)
+  - [FIX Protocol API](#fix-protocol-api)
+  - [Configuration](#configuration)
+  - [Allure Annotations](#allure-annotations)
+  - [Assertions](#assertions)
+  - [Waits and Timeouts](#waits-and-timeouts)
+  - [Common Patterns](#common-patterns)
+  
+  ## WebDriver API
+  
+  ```java
+  // Get driver
+  WebDriver driver = DriverManager.getDriver();
+  
+  // Navigation
+  driver.navigateTo("https://example.com");
+
+  // Find elements
+  Element element = driver.findElement(id("submit"));
+  List<Element> elements = driver.findElements(css("table tr"));
+
+  // Screenshots & Video
+  driver.takeScreenshot(Paths.get("target/screenshots/page.png"));
+  driver.startVideoRecording();
+  byte[] video = driver.stopVideoRecording();
+
+  // Cleanup (automatic when BaseTest is implemented)
+  driver.close();
+  driver.quit();
+  ```
+  
+  ## Element API
+
+  ```java
+  // Base Element operations
+  element.click();
+  element.sendKeys("text");
+
+  String text = element.getText();
+  String attr = element.getAttribute("class");
+  boolean visible = element.isDisplayed();
+  boolean enabled = element.isEnabled();
+
+  // Waits
+  element.waitUntilVisible(Duration.ofSeconds(10));
+  element.waitUntilClickable(Duration.ofSeconds(10));
+  ```
+
+  ### ElementFactory (creating typed elements)
+
+  ```java
+  TextBox textBox = textBox(id("username"));
+  Button button = button(css("button[type='submit']"));
+  CheckBox checkBox = checkBox(id("terms"));
+  RadioButton radio = radioButton(id("option-1"));
+  DropDown dropDown = dropDown(id("country"));
+  Element generic = element(testId("header"));
+  ```
+
+  ### TextBox
+
+  ```java
+  TextBox textBox = textBox(id("username"));
+
+  textBox.enterText("username");      // Clear then type
+  textBox.clear();                    // Clear field
+  String value = textBox.getValue();  // Get current value
+  ```
+
+  ### Button
+
+  ```java
+  Button button = button(css("button[type='submit']"));
+
+  button.click();
+  boolean clickable = button.isClickable();
+  ```
+
+  ### CheckBox
+
+  ```java
+  CheckBox checkBox = checkBox(id("terms"));
+
+  checkBox.check();
+  checkBox.uncheck();
+  boolean checked = checkBox.isChecked();
+  ```
+
+  ### RadioButton
+
+  ```java
+  RadioButton radio = radioButton(id("option-1"));
+
+  radio.select();
+  boolean selected = radio.isSelected();
+  ```
+
+  ### DropDown
+
+  ```java
+  DropDown dropDown = dropDown(id("country"));
+
+  dropDown.selectByText("United States");
+  dropDown.selectByValue("us");
+  String selected = dropDown.getSelectedValue();
+  ```
+
+  ### TextArea
+
+  ```java
+  textArea(id("notes")).enterText("text");
+  textArea(id("notes")).appendText("\nmore");
+  textArea(id("notes")).clear();
+  String val = textArea(id("notes")).getValue();
+  int lines = textArea(id("notes")).getLineCount();
+  ```
+
+  ### Link
+
+  ```java
+  link(testId("help")).click();
+  String href = link(testId("help")).getHref();
+  boolean newTab = link(testId("help")).opensInNewTab();
+  ```
+
+  ### Label
+
+  ```java
+  String text = label(testId("balance")).getText();
+  boolean has = label(testId("balance")).hasText();
+  ```
+
+  ### Table
+
+  ```java
+  Table table = table(testId("orders-table"));
+  int rows = table.getRowCount();                        // Data rows (excludes header)
+  String cell = table.getCellValue(0, 1);                // 0-based row, col
+  List<String> col = table.getColumnValues("Status");    // By header text
+  Element row = table.getRow(0);
+  Element found = table.findRowByText("EURUSD");
+  ```
+
+  ### FileInput
+
+  ```java
+  FileInput upload = fileInput(testId("doc-upload"));
+  upload.setFile(Path.of("test.pdf"));                   // Single file
+  upload.setFiles(List.of(path1, path2));                // Multiple files
+  ```
+
+  ### Image
+
+  ```java
+  Image img = image(testId("logo"));
+  String src = img.getSrc();
+  String alt = img.getAlt();
+  boolean loaded = img.isLoaded();
+  ```
+
+  ### Element all() — Multiple Matches
+
+  ```java
+  List<Button> buttons = button(css(".action")).all();    // Typed list
+  List<TextBox> inputs = textBox(css("input")).all();
+  int count = element(css("tr")).all().size();
+  ```
+
+  ### Custom Element (AbstractCustomElement)
+
+  Use for domain-specific UI components (price tickers, toggles, data grids) where built-in types don't capture the semantics. All `Element` methods auto-delegated. Platform-independent.
+
+  ```java
+  // Define: extend AbstractCustomElement, constructor takes Element
+  public class PriceCell extends AbstractCustomElement {
+      public PriceCell(Element delegate) { super(delegate); }
+      public String getPrice() { return getText().trim(); }
+      public boolean isPositive() { return getAttribute("class").contains("positive"); }
+  }
+
+  // Use in page object via custom():
+  custom(PriceCell.class, testId("bid")).getPrice()
+  custom(PriceCell.class, testId("bid")).isPositive()
+
+  // ToggleSwitch, Tooltip, DatePicker — same pattern
+  public class ToggleSwitch extends AbstractCustomElement {
+      public ToggleSwitch(Element delegate) { super(delegate); }
+      public boolean isOn() { return getAttribute("aria-checked").equals("true"); }
+      public void turnOn() { if (!isOn()) click(); }
+  }
+  ```
+
+  ## Locator Strategies
+  
+  ```java
+  // 1. ID (Best)
+  id("submit-button")
+  
+  // 2. Test ID (Best)
+  testId("login-submit")
+  
+  // 3. CSS Selector
+  css("button.btn-primary")
+  css("table#orders tbody tr")
+  
+  // 4. Class Name
+  className("error-message")
+  
+  // 5. XPath (Last Resort)
+  xpath("//button[@type='submit']")
+  
+  // 6. Partial ID
+  partialId("submit")
+  
+  // 7. Partial Text
+  partialText("Click here")
+  
+  // 8. Partial Class
+  partialClass("btn")
+  
+  // 9. Regex
+  regex("order-\\d+")
+
+  // 10. Name (by name attribute)
+  name("username")
+
+  // 11. Role (ARIA role)
+  role("button")                    // Any button role
+  role("button", "Submit")          // Role with accessible name
+
+  // 12. Label (associated label text)
+  label("Username")
+
+  // 13. Placeholder
+  placeholder("Enter your email")
+
+  // 14. Text (content match)
+  text("Submit")                    // Exact match
+  text("Submit", false)             // Substring match
+  ```
+
+  **Priority**: testId > id > role/label/placeholder > css > className > xpath
+  
+  ## HTTP/REST API
+  
+  ### Service Class Pattern
+  
+  ```java
+  // Service classes extend the appropriate gateway base (not BaseService directly)
+  // authToken as first parameter enables multi-account testing; pass null for unauthorized tests
+  public final class OrderService extends ApiGatewayService {
+      private static final String ORDERS_ENDPOINT = "/api/v1/orders";
+      private OrderService() {}
+
+      public static ApiResponse createOrder(String authToken, CreateOrderRequest request) {
+          return post(ORDERS_ENDPOINT).bearerAuth(authToken).body(request).send();
+      }
+
+      public static ApiResponse getOrder(String authToken, String orderId) {
+          return get(ORDERS_ENDPOINT + "/" + orderId).bearerAuth(authToken).send();
+      }
+
+      public static ApiResponse getAllOrders(String authToken) {
+          return get(ORDERS_ENDPOINT).bearerAuth(authToken).send();
+      }
+
+      public static ApiResponse updateOrder(String authToken, String orderId, UpdateOrderRequest request) {
+          return put(ORDERS_ENDPOINT + "/" + orderId).bearerAuth(authToken).body(request).send();
+      }
+
+      public static ApiResponse deleteOrder(String authToken, String orderId) {
+          return delete(ORDERS_ENDPOINT + "/" + orderId).bearerAuth(authToken).send();
+      }
+  }
+  ```
+  
+  ### ApiRequest Builder Methods (via Gateway Base Classes)
+
+  ```java
+  // Gateway HTTP Methods → return ApiRequest
+  get(String path)
+  post(String path)
+  put(String path)
+  delete(String path)
+  patch(String path)
+  
+  // Headers
+  .contentType(String contentType)
+  .accept(String accept)
+  .header(String key, String value)
+  
+  // Authentication
+  .bearerAuth(String token)           // Sets Authorization: Bearer {token}
+
+  // Async execution
+  .sendAsync()                        // Returns CompletableFuture<ApiResponse>
+  
+  // Body
+  .body(Object body)              // JSON serialization
+  .body(String rawBody)           // Raw string
+  
+  // Configuration
+  .timeout(Duration timeout)
+  
+  // Execution
+  .send()                      // Returns ApiResponse
+  ```
+  
+  ## ApiResponse Methods
+  
+  ```java
+  ApiResponse response = OrderService.createOrder(traderToken, request);
+  
+  // Status
+  int status = response.statusCode();
+  
+  // Single object
+  OrderResponse order = response.as(OrderResponse.class);
+  
+  // List of objects
+  List<OrderResponse> orders = response.asList(OrderResponse.class);
+  
+  // Raw response body — for logging / Allure attachments / diagnostics ONLY.
+  // NEVER assert on this. For assertions, deserialize to a typed DTO:
+  //     ApiError error = response.as(ApiError.class);
+  //     assertThat(error.message()).isEqualTo("Invalid symbol");
+  // See API_TESTING_GUIDE.yaml → "Error Response Models" for the full rule and carve-outs.
+  String body = response.body();
+
+  // Check if successful (2xx status)
+  boolean ok = response.isSuccessful();
+  ```
+  
+  ## WebSocket API
+
+  ```java
+  // Build client
+  WebSocketClient client = NativeWebSocketClient.builder()
+      .uri(URI.create("wss://api.example.com/market-data"))
+      .build();
+  WebSocketMessageCollector collector = new WebSocketMessageCollector();
+
+  // Connect (async — .join() blocks until complete)
+  client.connect().join();
+
+  // Send JSON message
+  client.sendJson(Map.of("type", "subscribe", "symbol", "EURUSD")).join();
+
+  // Send text message
+  client.sendText("{\"type\":\"subscribe\",\"symbol\":\"EURUSD\"}").join();
+
+  // Wait for messages with Awaitility
+  await().atMost(5, SECONDS).until(() -> collector.hasMessages());
+  WebSocketResponse message = collector.getLatestMessage();
+
+  // Check connection
+  boolean connected = client.isConnected();
+
+  // Close connection
+  client.close().join();
+  ```
+  
+  ## FIX Protocol API
+  
+  ```java
+  // Build a FIX message
+  FixMessage order = FixRequestBuilder.newOrderSingle()
+      .senderCompId("CLIENT")
+      .targetCompId("SERVER")
+      .field(FixMessage.Tag.CL_ORD_ID, "ORDER123")
+      .field(FixMessage.Tag.SYMBOL, "EURUSD")
+      .field(FixMessage.Tag.SIDE, "1")           // Buy
+      .field(FixMessage.Tag.ORDER_QTY, "100000")
+      .field(FixMessage.Tag.ORD_TYPE, "2")       // Limit
+      .field(FixMessage.Tag.PRICE, "1.0850")
+      .build();
+
+  // Send and wait for response
+  fixClient.sendMessage(order).join();
+  FixMessage execReport = fixClient.getMessageCollector()
+      .waitForType(FixMessage.MsgType.EXECUTION_REPORT, Duration.ofSeconds(5));
+
+  // Read fields from response
+  Optional<String> orderId = execReport.getField(FixMessage.Tag.ORDER_ID);
+  String msgType = execReport.messageType();  // "8" for ExecutionReport
+
+  // Factory methods: logon(), logout(), heartbeat(), newOrderSingle(),
+  //                  orderCancelRequest(), marketDataRequest(), create(String msgType)
+  // FixMessageCollector: waitFor(Predicate, Duration), waitForType(String, Duration), getAllMessages()
+  ```
+  
+  ## Configuration
+  
+  ```java
+  // String
+  String baseUrl = ConfigurationManager.getProperty("api.base.url");
+  String browser = ConfigurationManager.getProperty("browser.type", "chromium");
+
+  // Integer
+  int timeout = Integer.parseInt(ConfigurationManager.getProperty("api.timeout.seconds"));
+
+  // Boolean
+  boolean headless = Boolean.parseBoolean(ConfigurationManager.getProperty("browser.headless"));
+  ```
+  
+  ## Allure Annotations
+  
+  ```java
+  // Class level
+  @Epic("Trading Platform")
+  @Feature("Order Management")
+  public class OrderTests extends BaseApiTest {
+  
+      // Test level
+      @Test
+      @Story("Order Creation")
+      @Severity(SeverityLevel.CRITICAL)
+      @Description("Tests successful limit order creation")
+      @Issue("JIRA-123")
+      @TmsLink("TEST-456")
+      @XRayTest(testId = "PROJ-123")
+      void test_order_create_succeeds() {
+          // Test implementation
+      }
+  }
+  
+  // Custom steps
+  @Step("Login as user {username}")
+  public DashboardPage loginAs(String username, String password) {
+      // Implementation
+  }
+  
+  // Inline steps
+  Allure.step("Create order via API");
+  ApiResponse response = OrderService.createOrder(traderToken, request);
+  
+  // Attachments
+  Allure.addAttachment("Screenshot", "image/png", bytes, "png");
+  Allure.addAttachment("Response", "application/json", json, "json");
+  ```
+  
+  **Severity Levels**: `BLOCKER`, `CRITICAL`, `NORMAL`, `MINOR`, `TRIVIAL`
+  
+  ## Assertions
+  
+  ```java
+  import static org.assertj.core.api.Assertions.*;
+  
+  // Equality
+  assertThat(response.statusCode()).isEqualTo(201);
+  assertThat(order.symbol()).isEqualTo("EURUSD");
+  
+  // Null checks
+  assertThat(order.id()).isNotNull();
+  assertThat(error).isNull();
+  
+  // Boolean
+  assertThat(page.isErrorDisplayed()).isTrue();
+  assertThat(page.isLoading()).isFalse();
+  
+  // Strings
+  assertThat(message).contains("success");
+  assertThat(message).startsWith("Order");
+  assertThat(message).endsWith("completed");
+  assertThat(symbol).isEqualToIgnoringCase("eurusd");
+  
+  // Numbers
+  assertThat(price).isGreaterThan(1.0);
+  assertThat(quantity).isLessThanOrEqualTo(1000000);
+  assertThat(amount).isBetween(100.0, 200.0);
+  
+  // Collections
+  assertThat(orders).isNotEmpty();
+  assertThat(orders).hasSize(5);
+  assertThat(orders).contains(order1, order2);
+  assertThat(symbols).containsExactly("EURUSD", "GBPUSD");
+  
+  // Descriptive assertions
+  assertThat(order.status())
+      .as("Order status after creation")
+      .isEqualTo("NEW");
+  
+  // Exception assertions
+  assertThatThrownBy(() -> service.createOrder(null))
+      .isInstanceOf(ValidationException.class)
+      .hasMessageContaining("Order must not be null");
+  
+  // Soft assertions (multiple checks)
+  SoftAssertions softly = new SoftAssertions();
+  softly.assertThat(order.symbol()).isEqualTo("EURUSD");
+  softly.assertThat(order.side()).isEqualTo(OrderSide.BUY);
+  softly.assertThat(order.status()).isEqualTo("NEW");
+  softly.assertAll();
+  ```
+  
+  ## Waits and Timeouts
+  
+  ### Element Waits
+  
+  ```java
+  Element button = driver.findElement(id("submit"));
+  
+  // Wait for visible
+  button.waitUntilVisible(Duration.ofSeconds(10));
+  
+  // Wait for clickable
+  button.waitUntilClickable(Duration.ofSeconds(10));
+  
+  // Wait for hidden
+  button.waitUntilHidden(Duration.ofSeconds(10));
+  ```
+  
+  ### Awaitility
+  
+  ```java
+  import static org.awaitility.Awaitility.*;
+  import static java.util.concurrent.TimeUnit.*;
+  
+  // Wait for condition
+  await().atMost(10, SECONDS)
+      .until(() -> page.isErrorDisplayed());
+  
+  // Poll interval
+  await().atMost(30, SECONDS)
+      .pollInterval(1, SECONDS)
+      .until(() -> order.getStatus().equals("FILLED"));
+  
+  // Ignore exceptions during polling
+  await().atMost(10, SECONDS)
+      .ignoreExceptions()
+      .until(() -> {
+          Element element = driver.findElement(id("dynamic"));
+          return element.isVisible();
+      });
+  
+  // With alias (for better error messages)
+  await("order status to be FILLED")
+      .atMost(30, SECONDS)
+      .until(() -> order.getStatus().equals("FILLED"));
+  ```
+  
+  ## Common Patterns
+  
+  ### BaseTest
+  
+  ```java
+  public final class LoginTest extends BaseWebTest {
+      private LoginPage loginPage;
+  
+      @BeforeEach
+      void setUpTest() {
+          Allure.step("Navigate to login page");
+          loginPage = new LoginPage();
+      }
+  
+      @Test
+      @WebTest
+      void test_login_validCredentials_showsDashboard() {
+          Allure.step("Login with valid credentials");
+          DashboardPage dashboard = loginPage.login("testuser", "password");
+  
+          Allure.step("Verify user is on dashboard");
+          assertThat(dashboard.isWelcomeMessageDisplayed()).isTrue();
+      }
+  }
+  ```
+  
+  ### Page Object
+  
+  ```java
+  public final class LoginPage extends BasePage {
+      private static final Locator USERNAME = id("username");
+      private static final Locator PASSWORD = id("password");
+      private static final Locator LOGIN_BTN = css("button[type='submit']");
+
+      public DashboardPage login(String username, String password) {
+          textBox(USERNAME).enterText(username);
+          textBox(PASSWORD).enterText(password);
+          button(LOGIN_BTN).click();
+          return new DashboardPage();
+      }
+  }
+  ```
+  
+  ### API Test
+  
+  ```java
+  @Test
+  void test_order_lifecycle_completesSuccessfully() {
+      Allure.step("Create order");
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, 100000, 1.0850
+      );
+      ApiResponse createResponse = OrderService.createOrder(traderToken, request);
+      assertThat(createResponse.statusCode()).isEqualTo(201);
+      OrderResponse order = createResponse.as(OrderResponse.class);
+  
+      Allure.step("Get order");
+      ApiResponse getResponse = OrderService.getOrder(traderToken, order.id());
+      assertThat(getResponse.statusCode()).isEqualTo(200);
+  
+      Allure.step("Delete order");
+      ApiResponse deleteResponse = OrderService.deleteOrder(traderToken, order.id());
+      assertThat(deleteResponse.statusCode()).isEqualTo(204);
+  }
+  ```
+  
+  ### UI Test with API Setup
+  
+  ```java
+  @Test
+  @WebTest
+  void test_order_displayInUI_showsCorrectDetails() {
+      Allure.step("Create order via API");
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, 100000, 1.0850
+      );
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+      assertThat(response.statusCode()).isEqualTo(201);
+      OrderResponse order = response.as(OrderResponse.class);
+  
+      Allure.step("Navigate to order page");
+      OrderPage page = new OrderPage();
+      page.navigateToOrder(order.id());
+  
+      Allure.step("Verify order details");
+      assertThat(page.getDisplayedSymbol()).isEqualTo("EURUSD");
+      assertThat(page.getDisplayedStatus()).isEqualTo("NEW");
+  }
+  ```
+  
+  ### Test Data Models
+  
+  ```java
+  // Records for immutability
+  public record CreateOrderRequest(
+      @JsonProperty("symbol") String symbol,
+      @JsonProperty("side") OrderSide side,
+      @JsonProperty("quantity") int quantity,
+      @JsonProperty("price") double price
+  ) {
+      public static CreateOrderRequest limitOrder(String symbol, OrderSide side, int qty, double price) {
+          return new CreateOrderRequest(symbol, side, qty, price);
+      }
+  }
+  
+  public record OrderResponse(
+      @JsonProperty("id") String id,
+      @JsonProperty("symbol") String symbol,
+      @JsonProperty("status") String status
+  ) {}
+  
+  public enum OrderSide {
+      BUY, SELL
+  }
+  ```
+  
+  ### Driver Configuration
+  
+  ```java
+  // Default configuration (from properties)
+  WebDriver driver = DriverManager.initializeDriver();
+  
+  // Custom configuration (record + builder pattern)
+  DriverConfig config = DriverConfig.builder()
+      .browser(Browser.CHROME)           // CHROME, FIREFOX, SAFARI, EDGE
+      .executionMode(ExecutionMode.LOCAL) // LOCAL, CONTAINER, BROWSERSTACK (planned)
+      .headless(true)
+      .recordVideo(true)
+      .captureTrace(true)
+      .captureDiagnostics(true)
+      .downloadsPath("/tmp/downloads")
+      .wsEndpoint("ws://localhost:3000/ws")  // For CONTAINER mode
+      .build();
+  WebDriver driver = DriverManager.initializeDriver(config);
+  
+  // Get current driver
+  WebDriver driver = DriverManager.getDriver();
+  
+  // Quit driver (automatic in BaseTest)
+  DriverManager.quitDriver();
+  ```
+  
+  ## Test Execution
+  
+  ```bash
+  # Run all tests
+  mvn clean test
+  
+  # Run specific test
+  mvn test -Dtest=OrderApiTest
+  
+  # Run specific method
+  mvn test -Dtest=OrderApiTest#testCreateOrder
+  
+  # Run tests in parallel
+  mvn test -Dparallel=all -DthreadCount=4
+  
+  # Run with specific environment
+  mvn test -Dtest.env=staging
+  
+  # Generate Allure report
+  mvn allure:serve
+  
+  # Skip tests
+  mvn install -DskipTests
+  ```
+  
+  ## Maven Dependencies
+  
+  ```xml
+  <dependency>
+      <groupId>com.tradu</groupId>
+      <artifactId>tradu-test-automation-framework</artifactId>
+      <version>1.0.0</version>
+      <scope>test</scope>
+  </dependency>
+  ```
+  
+  ---
+  
+  **For detailed information**, see the complete guides:
+  - **Web Testing**: `WEB_AUTOMATION_GUIDE.yaml`
+  - **API Testing**: `API_TESTING_GUIDE.yaml`
+  - **Test Patterns**: `TEST_PATTERNS.yaml`
+  - **Configuration**: `CONFIGURATION_GUIDE.yaml`
+  - **Reporting**: `REPORTING_GUIDE.yaml`

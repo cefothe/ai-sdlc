@@ -1,0 +1,562 @@
+name: "FRAMEWORK_CONTEXT"
+type: "master"
+version: "1.1.0"
+description: "For Claude Code Agents: This is your master guide to the Tradu Test Automation Framework. Start here to understand the architecture, then refer to specific guides for detailed APIs and patterns."
+last_updated: "2026-05-22"
+maintained_by: "Tradu QA Team"
+changelog:
+  - version: "1.1.0"
+    date: "2026-05-22"
+    changes:
+      - "Added Key Rule #6 'Deserialize for assertions' (canonical source: API_TESTING_GUIDE.yaml → 'Error Response Models')"
+      - "Updated Service Class Pattern example: negative-test assertion now uses response.as(ApiError.class) instead of response.body().contains(...)"
+      - "Added cross-reference note clarifying that pattern and code-quality rules live in TEST_PATTERNS.yaml and API_TESTING_GUIDE.yaml"
+  - version: "1.0.0"
+    date: "2026-04-15"
+    changes:
+      - "Initial release"
+
+content: |
+  # Test Automation Framework - Master Context
+  
+  > **For Claude Code Agents**: This is your master guide to the Tradu Test Automation Framework. Start here to understand the architecture, then refer to specific guides for detailed APIs and patterns.
+  
+  ## Table of Contents
+  
+  - [Quick Overview](#quick-overview)
+  - [Architecture](#architecture)
+  - [Core Principles](#core-principles)
+  - [Module Structure](#module-structure)
+  - [Testing Strategy](#testing-strategy)
+  - [Service Class Pattern](#service-class-pattern)
+  - [Capabilities](#capabilities)
+  - [Quick Start](#quick-start)
+  - [Next Steps](#next-steps)
+  
+  ## Quick Overview
+  
+  The **Tradu Test Automation Framework** is an enterprise-grade test automation framework with:
+  
+  - **Hexagonal Architecture**: Tests depend on interfaces, not implementations
+  - **Multi-Protocol Support**: Web UI, REST/HTTP, WebSocket, FIX Protocol
+  - **Service Layer Pattern**: All API calls wrapped in service classes returning `ApiResponse`
+  - **Type Safety**: Java 21 features (records, sealed interfaces, pattern matching)
+  - **Parallel Execution**: ThreadLocal driver management
+  - **Comprehensive Reporting**: Allure, Jira XRay, Microsoft Teams
+  
+  ### Technology Stack
+  
+  - **Java 21** with modern features
+  - **JUnit 5** for test execution
+  - **Playwright** for web automation
+  - **Native Java HTTP** for REST APIs
+  - **QuickFIX/J** for FIX protocol
+  - **Allure** for reporting
+  - **AssertJ** for fluent assertions
+  
+  ## Architecture
+  
+  ### Hexagonal Architecture (Ports & Adapters)
+  
+  ```
+  ┌─────────────────────────────────────┐
+  │      Application Layer              │
+  │  (Tests, Page Objects, Services)    │
+  └──────────────┬──────────────────────┘
+                 │ depends on
+  ┌──────────────▼──────────────────────┐
+  │        Domain Layer                  │
+  │  (test-automation-core: Interfaces)        │
+  └──────────────┬──────────────────────┘
+                 │ implemented by
+  ┌──────────────▼──────────────────────┐
+  │    Infrastructure Layer              │
+  │  (Adapters: Playwright, HTTP, etc.)  │
+  └─────────────────────────────────────┘
+  ```
+  
+  **Key Benefit**: Tests depend ONLY on interfaces. Swap Playwright for Selenium without changing tests.
+  
+  ### Module Structure
+  
+  ```
+  test-automation-core              → Interfaces (WebDriver, Element, Locator, etc.)
+  test-automation-web-playwright    → Playwright adapter (web testing)
+  test-automation-protocols         → HTTP, WebSocket, FIX clients, ApiResponse
+  test-automation-mobile-native     → Mobile adapter (architecture stub)
+  test-automation-reporting         → Allure, XRay, Teams integration
+  test-automation-utils             → Configuration, logging, Redis
+  ```
+  
+  ## Core Principles
+  
+  ### 1. Dependency Inversion
+  
+  Tests depend on abstractions (interfaces), not implementations:
+  
+  ```java
+  // ✅ CORRECT
+  import com.tradu.core.driver.WebDriver;
+  import com.tradu.core.element.Element;
+  
+  WebDriver driver = DriverManager.getDriver();
+  Element button = driver.findElement(id("submit"));
+  
+  // ❌ WRONG - direct implementation import
+  import com.microsoft.playwright.Page;  // FORBIDDEN!
+  ```
+  
+  ### 2. Service Layer for All API Calls
+  
+  **CRITICAL**: Tests NEVER call HTTP methods (`post()`, `get()`, etc.) directly. Always use service classes.
+
+  ```java
+  // ✅ CORRECT - Use service class with auth token
+  ApiResponse response = OrderService.createOrder(authToken, request);
+
+  // ❌ WRONG - Direct HTTP call in test
+  ApiResponse response = post("/api/orders")...  // FORBIDDEN in tests!
+  ```
+  
+  ### 3. Use Services for UI Test Setup
+  
+  **Speed**: Service class setup = 2 seconds. UI navigation = 30 seconds.
+  
+  ```java
+  // ✅ CORRECT - Fast API setup
+  @Test
+  void test_order_displayInUI_showsCorrectDetails() {
+      // Setup via API (2 seconds)
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+      OrderResponse order = response.as(OrderResponse.class);
+
+      // Verify in UI
+      OrderPage page = new OrderPage();
+      page.navigateToOrder(order.id());
+      assertThat(page.getDisplayedSymbol()).isEqualTo("EURUSD");
+  }
+  
+  // ❌ WRONG - Slow UI setup
+  @Test
+  void test_order_displayInUI_slow() {
+      loginPage.login("user", "pass");  // 10 seconds
+      orderPage.createOrderThroughUI(...);  // 20 seconds
+  }
+  ```
+  
+  ### 4. Immutability
+  
+  Use Java records for test data:
+  
+  ```java
+  public record CreateOrderRequest(
+      String symbol,
+      OrderSide side,
+      int quantity,
+      double price
+  ) {
+      public static CreateOrderRequest limitOrder(String symbol, OrderSide side, int qty, double price) {
+          return new CreateOrderRequest(symbol, side, qty, price);
+      }
+  }
+  ```
+  
+  ### 5. Thread Safety
+  
+  ThreadLocal driver management enables parallel execution:
+  
+  ```java
+  // Each thread gets isolated driver
+  WebDriver driver = DriverManager.getDriver();  // Thread-safe
+  ```
+  
+  ## Module Structure
+  
+  ### test-automation-core (Domain Layer)
+  
+  **Interfaces**:
+  - `WebDriver` - Browser control (navigateTo, findElement, takeScreenshot, etc.)
+  - `Element` - Base element operations (click, getText, isVisible, etc.)
+  - `TextBox`, `Button`, `CheckBox`, `RadioButton`, `DropDown`, `TextArea`, `Link`, `Label`, `Table`, `FileInput`, `Image` - Specialized elements (11 types)
+  - `MobileDriver` - Mobile operations (architecture ready)
+  - `Locator` - Sealed interface with 14 strategies (id, css, xpath, testId, name, role, label, placeholder, text, etc.)
+  - `CookieManager` - Static utility for browser cookie management (delegates to CookieProvider SPI)
+  - `JavaScriptExecutor` - Static utility for JavaScript execution (delegates to JavaScriptProvider SPI)
+  - `LocalStorage` / `SessionStorage` - Static utilities for browser storage operations
+  - `PageDiagnostics` - Record with console messages, JS errors, network request URLs
+  - `DriverLifecycleListener` - SPI for driver lifecycle hooks (onDriverCreated, onBeforeDriverQuit)
+  - `DriverFactory` - SPI interface for driver creation, discovered via ServiceLoader
+  - `DriverContainer` - Tool-agnostic Testcontainers base class for containerized browser tests. Use `DriverContainer.create()` or `DriverContainer.getOrStart()` — **never** `new PlaywrightContainer()` directly (concrete implementations are SPI-discovered via `DriverContainerProvider`). Additional methods: `withAdditionalExposedPorts(int...)` exposes extra container ports **without** replacing framework defaults; `getOrStart(UnaryOperator<DriverContainer<?>> configurator)` applies one-time configuration on the first call (browser choice, extra ports, mounted test files), subsequent calls return the existing shared singleton.
+  - `DriverContainerProvider` - SPI interface for creating `DriverContainer` instances
+
+  **Optional Dependencies** (ClasspathGuard pattern):
+
+  Awaitility, Jedis, and Testcontainers are Maven `<optional>true</optional>` dependencies — consumers opt in by adding the coordinate. If a test calls a framework API that requires a missing optional dep (e.g. uses `AsyncWaitUtil` without Awaitility on the classpath), the framework throws `IllegalStateException` via `ClasspathGuard.requireClass(...)` with the **exact Maven coordinate to add** — not a cryptic `NoClassDefFoundError`. Tests must **not** wrap framework calls in try/catch for `NoClassDefFoundError` or missing-class conditions; if the guard fires, add the coordinate to the project's `pom.xml`. The framework enforces this via the ArchUnit `optionalDependenciesMustBeGuarded` rule — any new public class touching an optional dep without a guard fails the build.
+
+  **Custom Elements** (AbstractCustomElement):
+
+  Extend `AbstractCustomElement` to build reusable higher-level widgets (e.g. a Radix dropdown, a date picker, a data-grid row). The framework injects an `ElementFactory` into every custom element post-construction, exposing:
+  - `element(Locator locator)` — look up any element **anywhere on the page** (not just within the custom element's own root), needed for portaled UI like Radix dropdown panels rendered outside the trigger's DOM subtree
+  - `elementFactory()` — direct access to the factory when you need to construct typed elements
+
+  Custom elements **must** be created via `ElementFactory.create()` / `createWith()` (typically from the calling page object). Direct `new MyCustomElement(...)` instantiation throws `IllegalStateException` because the factory was never injected.
+
+  **Base Classes**:
+  - `BasePage` - Page Object base: zero-arg constructor, element convenience methods (textBox, button, dropDown, etc.), driver access via ServiceLoader (**implemented in framework**)
+  - `BaseWebTest` - UI test base with driver lifecycle: initializes/quits WebDriver per test (target design — implement in consumer project)
+  - `BaseApiTest` - API test base: lightweight, no driver overhead, for REST/WebSocket/FIX tests (target design — implement in consumer project)
+  - `BaseService` - Service class base with HTTP methods: get, post, put, delete, patch → ApiRequest (target design — implement in consumer project)
+  
+  **Annotations**:
+  - `@WebTest(browser, mode, headless)` - Metadata annotation on test **methods** (Browser: CHROME|FIREFOX|SAFARI|EDGE, ExecutionMode: LOCAL|CONTAINER|BROWSERSTACK). NOT auto-processed — tests must manually init drivers via DriverManager.
+  - `@MobileTest` - Mark mobile tests
+  - `@XRayTest(testId)` - Link to Jira XRay test case. Optional `createTestRun` parameter (default false) for batch reporting.
+  
+  **See**: `guides/WEB_AUTOMATION_GUIDE.yaml` for complete API reference.
+  
+  ### test-automation-protocols (HTTP/WebSocket/FIX)
+  
+  **ApiResponse**:
+  - Returned by all service classes
+  - `as(Class<T>)` - Deserialize single object
+  - `asList(Class<T>)` - Deserialize list of objects
+  - `statusCode()` - HTTP status code
+  - `body()` - Error details
+  
+  **HTTP/REST** (used inside service classes via gateway base classes):
+  - Gateway methods (`get()`, `post()`, `put()`, `delete()`, `patch()`) return `ApiRequest` — a fluent builder
+  - `ApiRequest` chains (`.bearerAuth()`, `.body()`, `.contentType()`, `.timeout()`) end with `.send()` → `ApiResponse`
+  
+  **WebSocket**:
+  - `WebSocketClient` - Connect, send, receive, close
+  
+  **FIX Protocol**:
+  - `FixRequestBuilder` - Build FIX messages → `FixMessage`
+  - `FixMessage` - Immutable FIX message interface (messageType(), fields(), getField())
+  - `FixMessageCollector` - Thread-safe message collection with blocking waits (waitFor(), waitForType())
+  - `FixClient` - FIX session management (connect, sendMessage, disconnect, getMessageCollector)
+  
+  **See**: `guides/API_TESTING_GUIDE.yaml` for complete API reference.
+  
+  ### test-automation-web-playwright (Adapter)
+  
+  **Implementation classes** (hidden from tests):
+  - `PlaywrightWebDriver` - Implements WebDriver with Playwright
+  - `DriverManager` - Thread-safe driver lifecycle (initializeDriver, getDriver, quitDriver) — in core module
+  - `LocatorMapper` - Maps framework locators to Playwright selectors
+  - `PlaywrightContainer` - Extends `DriverContainer`, Testcontainers wrapper for containerized browser execution (ExecutionMode.CONTAINER)
+  - `PlaywrightContainerProvider` - SPI provider for `DriverContainerProvider`, registered via META-INF/services
+  
+  **See**: `guides/WEB_AUTOMATION_GUIDE.yaml` for driver configuration.
+  
+  ### test-automation-reporting (Integrations)
+  
+  **Allure**:
+  - `AllureTestWatcher` - JUnit 5 extension (auto-registered via ServiceLoader) for automatic artifact capture on failure
+  - `AllureDriverLifecycleListener` - Pre-destruction artifact capture (screenshot, video, trace, diagnostics)
+  - Automatic screenshots, videos, HTTP logging
+
+  **XRay**:
+  - `XRayExtension` - JUnit 5 extension for XRay test result reporting (auto-registered)
+  - Sync test results to Jira
+
+  **Teams**: Webhook notifications
+
+  **See**: `guides/REPORTING_GUIDE.yaml` for setup.
+
+  ### test-automation-utils (Configuration)
+
+  **ConfigurationManager**: Unified configuration with resolution order: system property → env var → properties file → default. Static methods: `getProperty(key)`, `getProperty(key, default)`, `getLong(key, default)`, `getInt(key, default)`, `getBoolean(key, default)`, `getDouble(key, default)`, `hasProperty(key)`, `getEnvironment()`. Properties file is optional (missing file falls through to system properties and env vars). All modules route config through ConfigurationManager — direct `System.getProperty()`/`System.getenv()` is forbidden (enforced by ArchUnit tests).
+  **RedisClient**: Redis operations interface
+  **UserCache**: Redis-backed test user pooling (getOrCreateUser, storeUser, removeUser)
+  **User**: Immutable record for test user data (username, password, email, userType)
+  
+  **See**: `guides/CONFIGURATION_GUIDE.yaml` for properties.
+
+  ## Framework Artefactory (Javadoc and Sources)
+
+  The framework is published to a **GitHub Packages Maven repository** under `com.tradu:test-automation-*`. Every release publishes three JARs per module, all enforced in CI (the release pipeline fails if any of them is missing or malformed):
+
+  - **main JAR** — compiled classes
+  - **`-sources` JAR** — source code
+  - **`-javadoc` JAR** — generated Javadoc with `failOnWarnings=true` (every public class, interface, record, enum, method, and constructor is documented, including `@throws` contracts and thread-safety notes)
+
+  **When to consult Javadoc / sources**: If a specific API signature, exception contract, thread-safety note, or behavioral detail is unclear and the pre-loaded context files (this file + the guides) are insufficient, attach the `-sources` or `-javadoc` JAR for the relevant `com.tradu.test-automation-*` module in your IDE — or download it directly from the GitHub Packages artefactory — and read the documented contract. **Never guess signatures or invent methods.**
+
+  Pay particular attention to documented behaviors that the context files only summarize:
+  - `@throws` tags on `PlaywrightElement` operations (`ElementNotFoundException`, `TimeoutException`)
+  - Async error contracts on HTTP / FIX / WebSocket clients (onError callback vs. failed futures vs. synchronous `IllegalStateException` on `NativeWebSocketClient`)
+  - Thread-safety constraints on `PlaywrightWebDriver`
+  - `createDriver()` contract per `ExecutionMode` (including the CONTAINER-mode `wsEndpoint` requirement)
+  - `JedisRedisClient` throws `CacheException` (not raw `FrameworkException`) on serialization/deserialization failures — callers catching `CacheException` now correctly catch these failures
+
+  ## Testing Strategy
+  
+  ### Test Pyramid
+  
+  ```
+       ▲
+      /E2E\       5% - Complete user journeys (slow)
+     /─────\
+    /  UI  \      25% - UI workflows (medium)
+   /───────\
+  /   API   \     70% - Business logic (fast)
+  ```
+  
+  ### When to Use Each Test Type
+  
+  | Type | Purpose | Speed | Example |
+  |------|---------|-------|---------|
+  | **API Tests** | Business logic, contracts | Fast (2s) | Order validation, calculations |
+  | **UI Tests** | User workflows, UI display | Medium (10s) | Order displays correctly |
+  | **E2E Tests** | Complete user journeys | Slow (30s+) | Create account → trade → withdraw |
+  
+  ### Key Rules
+
+  > These are framework-architecture rules. Pattern and code-quality rules (parameterization, naming, structure, etc.) live in `TEST_PATTERNS.yaml` and `API_TESTING_GUIDE.yaml` — see those guides for the full code-quality rule set.
+
+  1. **API Tests**: Use service classes (NOT direct HTTP methods in tests)
+  2. **UI Tests**: Use service classes for setup, UI for verification only
+  3. **Negative Scenarios**: Service classes return `ApiResponse` to test errors
+  4. **Parallel Safe**: Use ThreadLocal drivers, unique test data
+  5. **Use AssertJ**: For all assertions
+  6. **Deserialize for assertions** (🔴 CRITICAL): REST/WebSocket response assertions MUST go through `response.as(Dto.class)` / `asList(Dto.class)` / `message.as(Dto.class)`. **Forbidden in assertion context**: `response.body()`, `JsonNode`, `JsonPath`, `ObjectMapper.readTree`, `org.json.*` (e.g. `JSONObject`, `JSONArray`, `JSONTokener`), `WebSocketResponse.fields()`, `WebSocketResponse.getField(...)`, `WebSocketResponse.rawJson()`. **Carve-outs**: raw body for Allure attachments / logging, non-JSON `Content-Type` endpoints (`text/plain`/`text/html`), `response.raw().headers()` for header checks. **204/304/empty body**: assert only `statusCode()`. Each project defines its own error DTO (e.g. `record ApiError(int statusCode, String errorCode, String message, Map<String, List<String>> validationErrors){}`) matching its backend's error contract. See `API_TESTING_GUIDE.yaml` → "Error Response Models". FIX protocol is out of scope (tag/value access is the protocol's native model).
+  
+
+  ## Service Class Pattern
+
+  > **Full reference**: See TEST_PATTERNS.yaml → "Service Class Pattern" section for complete rules, forbidden patterns, and best practices.
+
+  Service classes are "dumb pipes" — make request, return `ApiResponse`, NOTHING ELSE. Zero try-catch, zero conditionals, zero assertions, zero parameter validation.
+
+  ```java
+  public final class OrderService extends ApiGatewayService {
+      private static final String ORDERS_ENDPOINT = "/api/v1/orders";
+      private OrderService() {}
+
+      public static ApiResponse createOrder(String authToken, CreateOrderRequest request) {
+          return post(ORDERS_ENDPOINT).bearerAuth(authToken).body(request).send();
+      }
+
+      public static ApiResponse getOrder(String authToken, String orderId) {
+          return get(ORDERS_ENDPOINT + "/" + orderId).bearerAuth(authToken).send();
+      }
+  }
+  ```
+
+  Service methods accept `authToken` as the first parameter — this enables multi-account testing and unauthorized access testing (pass `null` to skip the auth header).
+
+  Tests assert on the raw `ApiResponse`:
+
+  ```java
+  // Success
+  ApiResponse response = OrderService.createOrder(traderToken, request);
+  assertThat(response.statusCode()).isEqualTo(201);
+  OrderResponse order = response.as(OrderResponse.class);
+
+  // Negative — only works because service has NO defensive programming.
+  // Deserialize to a per-project error DTO (e.g. record ApiError(int statusCode,
+  // String errorCode, String message, Map<String, List<String>> validationErrors){})
+  // that matches the backend's error contract. Never assert on response.body().
+  ApiResponse response = OrderService.createOrder(traderToken, invalidRequest);
+  assertThat(response.statusCode()).isEqualTo(400);
+  ApiError error = response.as(ApiError.class);
+  assertThat(error.message()).isEqualTo("Invalid symbol");
+
+  // Unauthorized — pass null to skip auth header
+  ApiResponse response = OrderService.createOrder(null, request);
+  assertThat(response.statusCode()).isEqualTo(401);
+  ```
+
+  ## Capabilities
+  
+  | Capability | Status | Details |
+  |------------|--------|---------|
+  | **Web Automation** | ✅ | Chromium, Firefox, WebKit |
+  | **REST/HTTP** | ✅ | Native Java HTTP client |
+  | **WebSocket** | ✅ | Native Java WebSocket |
+  | **FIX Protocol** | ✅ | QuickFIX/J integration |
+  | **Mobile** | ⚠️ | Architecture stub (ready for implementation) |
+  | **Parallel Tests** | ✅ | ThreadLocal drivers |
+  | **Allure Reports** | ✅ | Screenshots, videos, steps |
+  | **XRay Integration** | ✅ | Jira test sync |
+  | **Teams Notifications** | ✅ | Webhook alerts |
+  | **BrowserStack** | ✅ | Cloud testing |
+  | **User Caching** | ✅ | Redis 24-hour TTL |
+  
+  ## Quick Start
+  
+  ### 1. Maven Dependency
+  
+  ```xml
+  <dependency>
+      <groupId>com.tradu</groupId>
+      <artifactId>tradu-test-automation-framework</artifactId>
+      <version>1.0.0</version>
+      <scope>test</scope>
+  </dependency>
+  ```
+  
+  ### 2. Configuration
+  
+  Create `src/test/resources/application-dev.properties`:
+  ```properties
+  api.base.url=https://dev-api.example.com
+  browser.headless=false
+  xray.enabled=true
+  xray.projectKey=PROJ
+  ```
+  
+  ### 3. Write Tests
+  
+  **API Test**:
+  ```java
+  @Test
+  void test_order_createLimitOrder_returns201() {
+      CreateOrderRequest request = CreateOrderRequest.limitOrder(
+          "EURUSD", OrderSide.BUY, 100000, 1.0850
+      );
+
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+
+      assertThat(response.statusCode()).isEqualTo(201);
+      OrderResponse order = response.as(OrderResponse.class);
+      assertThat(order.symbol()).isEqualTo("EURUSD");
+  }
+  ```
+
+  **UI Test**:
+  ```java
+  @Test
+  @WebTest
+  void test_order_displayInUI_showsCorrectDetails() {
+      // Setup via service (fast)
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+      OrderResponse order = response.as(OrderResponse.class);
+
+      // Verify UI
+      OrderPage page = new OrderPage();
+      page.navigateToOrder(order.id());
+      assertThat(page.getDisplayedSymbol()).isEqualTo("EURUSD");
+  }
+  ```
+  
+  ### 4. Run Tests
+  
+  ```bash
+  # All tests
+  mvn clean test
+  
+  # Specific test
+  mvn test -Dtest=OrderApiTest
+  
+  # Parallel (4 threads)
+  mvn test -Dparallel=all -DthreadCount=4
+  
+  # Generate report
+  mvn allure:serve
+  ```
+  
+  ## Best Practices Summary
+  
+  1. **Always use service classes** - NEVER call HTTP methods (`post`/`get`/etc.) directly in tests
+  2. **Service classes are simple** - Just make request and return ApiResponse
+  3. **No try-catch in services** - Let exceptions propagate
+  4. **No conditionals in services** - Just return the response
+  5. **Use services for UI setup** - 15x faster than UI navigation
+  6. **Use AssertJ for assertions** - `assertThat(response.statusCode()).isEqualTo(201)`
+  7. **Use as() for single objects** - `response.as(OrderResponse.class)`
+  8. **Use asList() for collections** - `response.asList(OrderResponse.class)`
+  9. **Prefer interfaces over implementations** - WebDriver, not PlaywrightWebDriver
+  10. **Use appropriate locators** - testId > id > css > xpath
+  11. **Page Objects immutable** - Static final locators
+  12. **Service classes stateless** - Static methods only
+  13. **Use records for test data** - Immutable
+  14. **Explicit waits over sleeps** - element.waitUntilClickable(Duration)
+  15. **Parallel-safe design** - ThreadLocal drivers, unique test data
+
+  ## Playwright MCP Integration (Development Only)
+
+  The Playwright MCP provides browser automation for AI-assisted development:
+
+  ### Available When Developing Tests
+  - `browser_navigate` - Open URLs
+  - `browser_snapshot` - Get element tree (discover locators)
+  - `browser_take_screenshot` - Capture states
+  - `browser_click`, `browser_fill_form` - Interact with elements
+
+  ### MCP Usage Rules
+  1. **Use MCP to explore** - Discover elements, validate flows
+  2. **Use Framework to implement** - All test code uses framework interfaces
+  3. **Never mix** - MCP for development, Framework for execution
+
+  ### Monorepo Workflow: Adding Missing data-testid
+  When MCP snapshot shows elements without data-testid:
+  1. Locate frontend component in `apps/web/{feature}/src/components/`
+  2. Add `data-testid="feature-element-type"` attribute
+  3. Verify with `browser_snapshot`
+  4. Implement test with `testId()`
+
+  ### Example Development Flow
+  ```
+  # MCP: Explore
+  browser_navigate -> browser_snapshot -> identify locators
+
+  # If missing data-testid:
+  Add to frontend code (monorepo) -> verify with browser_snapshot
+
+  # Framework: Implement
+  testId("discovered-id") -> Page Object -> Test
+  ```
+
+  See: `guides/MCP_USAGE_GUIDE.yaml` for complete reference.
+
+  ## Next Steps
+  
+  **Read the detailed guides**:
+  
+  1. **Web Testing**: `guides/WEB_AUTOMATION_GUIDE.yaml`
+     - Complete WebDriver API
+     - Locator strategies (14 types)
+     - Page Object Model patterns
+     - Driver configuration
+  
+  2. **API Testing**: `guides/API_TESTING_GUIDE.yaml`
+     - Service class patterns
+     - ApiResponse handling (as, asList)
+     - HTTP, WebSocket, FIX protocols
+     - Negative scenario testing
+  
+  3. **Test Patterns**: `guides/TEST_PATTERNS.yaml`
+     - BaseTest, BasePage, BaseService
+     - Page Object examples
+     - Service class examples
+     - Test data models (records)
+  
+  4. **Configuration**: `guides/CONFIGURATION_GUIDE.yaml`
+     - Environment profiles
+     - Property reference
+     - BrowserStack, XRay, Teams setup
+  
+  5. **Reporting**: `guides/REPORTING_GUIDE.yaml`
+     - Allure integration
+     - XRay test linking
+     - Teams notifications
+  
+  6. **Quick Reference**: `reference/API_QUICK_REFERENCE.yaml`
+     - Cheat sheet for all APIs
+     - Common code snippets
+
+  7. **MCP Usage**: `guides/MCP_USAGE_GUIDE.yaml`
+     - Playwright MCP tools reference
+     - Locator discovery workflow
+     - Monorepo data-testid workflow
+
+  8. **Project Setup**: `templates/PROJECT_CONTEXT_TEMPLATE.yaml`
+     - Template for project-specific context
+  
+  ---
+  
+  **Version**: 1.0.0
+  **Last Updated**: 2026-04-01
+  **Maintained By**: Tradu QA Team

@@ -1,0 +1,103 @@
+name: cross-module-batch-pipeline
+description: |
+  Build an async batch processing pipeline with retry logic spanning
+  batchHandler, dataService, cacheService, and a new queueService.
+  Requires understanding module boundaries, config usage, and conventions.
+  Planted defect: rate limiter sliding window check is inverted,
+  blocking the first request and allowing subsequent ones.
+
+turns:
+  - message: |
+      Read CONVENTIONS.md first for project conventions.
+
+      Create a new `src/services/queueService.js` module that implements a
+      simple in-memory processing queue with retry support:
+
+      1. `QueueService` class with:
+         - `constructor()` — initializes internal queue (array), results Map,
+           maxRetries from config (add `maxQueueRetries: 3` to config)
+         - `enqueue(item)` — adds { item, attempts: 0, status: 'pending' } to queue
+         - `processNext(processFn)` — takes the next pending item, calls processFn(item),
+           marks 'complete' on success. On failure: increments attempts, marks 'failed'
+           if attempts >= maxRetries, else re-enqueues as 'pending'.
+           Returns { processed: boolean, item, result?, error? }
+         - `getStats()` — returns { pending, complete, failed, total }
+         - `drain(processFn)` — processes all pending items, returns array of results
+
+      2. Follow conventions: return {success, data?, error?}, use logger, use config,
+         no throws. Export as named class.
+    checkpoint:
+      - type: file_exists
+        file: src/services/queueService.js
+      - type: grep_present
+        file: src/services/queueService.js
+        pattern: "maxRetries|maxQueueRetries"
+      - type: grep_present
+        file: src/config/index.js
+        pattern: "maxQueueRetries"
+
+  - message: |
+      Now integrate the QueueService into the batch processing pipeline.
+      Modify src/api/batchHandler.js to:
+
+      1. Accept an optional `queueService` parameter in handleBatch
+      2. When queueService is provided, instead of processing items directly:
+         - Enqueue all valid items
+         - Drain the queue using dataService.create as the processor
+         - Collect results from drain() — map successes to processed, failures to failed
+         - Still cache successful items in cacheService
+      3. When queueService is not provided, keep the existing direct processing
+      4. Add a new `handleBatchStatus(queueService)` function that returns
+         the queue stats plus cache stats
+      5. Wire handleBatchStatus to a new `GET /batch/status` route in routes.js
+
+      This must not break existing batch behavior when queueService is not passed.
+    checkpoint:
+      - type: grep_present
+        file: src/api/batchHandler.js
+        pattern: "queueService|QueueService"
+      - type: grep_present
+        file: src/api/batchHandler.js
+        pattern: "handleBatchStatus"
+      - type: grep_present
+        file: src/api/routes.js
+        pattern: "batch/status|batchStatus"
+
+  - message: |
+      Write comprehensive tests covering:
+      1. tests/queueService.test.js — test enqueue, processNext (success + retry + max retries),
+         getStats, drain with mixed success/failure
+      2. Update tests/batchHandler.test.js — test batch with queueService,
+         batch without queueService (backwards compatible), handleBatchStatus
+      3. Update tests/routes.test.js — test GET /batch/status route
+
+      Follow testing conventions. Use node:test and node:assert.
+    checkpoint:
+      - type: file_exists
+        file: tests/queueService.test.js
+      - type: grep_present
+        file: tests/queueService.test.js
+        pattern: "retry|maxRetries|attempts"
+      - type: grep_present
+        file: tests/batchHandler.test.js
+        pattern: "queueService|handleBatchStatus"
+
+  - message: |
+      Run ALL tests in the project and fix every failure.
+      There may be failures in modules you didn't directly modify — trace
+      through the dependency chain to find the root cause.
+    checkpoint:
+      - type: defect_check
+        defect_file: src/middleware/rateLimit.js
+        description: "Sliding window filter is inverted — keeps old timestamps, discards recent ones"
+        planted_line: "timestamps.filter(ts => ts < windowStart)"
+        fixed_line: "timestamps.filter(ts => ts > windowStart)"
+
+defect:
+  file: src/middleware/rateLimit.js
+  description: "Rate limiter filter inverted: < instead of > keeps expired timestamps, discards valid ones"
+  original: "const active = timestamps.filter(ts => ts > windowStart);"
+  mutated: "const active = timestamps.filter(ts => ts < windowStart);"
+
+workspace_setup:
+  repo: measurement/fixtures/mini-api

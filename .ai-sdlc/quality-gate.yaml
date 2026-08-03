@@ -1,0 +1,20 @@
+# QualityGate — promise verification enters the pipeline as an ADVISORY signal.
+# Schema: spec/schemas/quality-gate.schema.json. Promise verdicts inform the
+# independent reviewers and the operator; they never trigger a feedback-retry
+# loop on the author (R5 d=-0.64, R15 d=-1.37). Promote enforcement to
+# soft-mandatory / hard-mandatory only after measurement (Phase 8) proves the
+# gate does not regress artifact quality.
+apiVersion: ai-sdlc.io/v1alpha1
+kind: QualityGate
+metadata:
+  name: default
+spec:
+  scope:
+    authorTypes: [ai, human]
+  gates:
+    - name: promise-verification
+      enforcement: advisory
+      rule:
+        metric: promise.broken_count
+        operator: '=='
+        threshold: 0

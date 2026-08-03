@@ -1,0 +1,21 @@
+# Definition-of-Done gate — the HARD-ENFORCED exit validation (counterpart to the
+# DoR entry gate). A task cannot be marked Done / a PR opened unless the enforced
+# checks pass. Schema: spec/schemas/dod-config.v1.schema.json. Unlike the advisory
+# promise gate (R5), these checks are OBJECTIVE (build/tests pass or they don't)
+# and block the pipeline, not the author — so they are enforced from day one.
+apiVersion: ai-sdlc.io/v1alpha1
+kind: DodConfig
+metadata:
+  name: default
+spec:
+  evaluationMode: enforce   # enforce (block on failure) | warn (report only)
+  enforcementMode: enforce
+  checks:
+    build:
+      command: "npm run validate-schemas"
+      enforced: true
+    test:
+      command: "npm test"
+      enforced: true
+    markers:
+      enforced: true          # no TODO/FIXME/HACK/XXX in the changed files

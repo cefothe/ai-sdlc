@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-sdlc.io/schemas/v1alpha1/workspace.v1.schema.json",
+  "title": "AI-SDLC Workspace",
+  "description": "Declares a multi-repository project: one parent folder containing N git repositories as subfolders, governed by a single shared .ai-sdlc/ config and one backlog at the parent. This is an ai-sdlc extension beyond the reference framework, which only supports ad-hoc sibling checkouts via permittedExternalPaths (RFC-0010 makes cross-clone a non-goal). The Workspace resource lives at <parent>/.ai-sdlc/workspace.yaml. When present, backlog tasks MUST set targetRepo (backlog-task.v1) to name the repo they modify; the orchestrator resolves targetRepo -> spec.repos[].worktreeRoot and creates the per-repo worktree there. Repo subfolders hold NO .ai-sdlc/ of their own (configScope: shared).",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "$ref": "common.schema.json#/$defs/apiVersion" },
+    "kind": {
+      "type": "string",
+      "const": "Workspace",
+      "description": "The resource kind."
+    },
+    "metadata": { "$ref": "common.schema.json#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "required": ["repos"],
+      "properties": {
+        "configScope": {
+          "type": "string",
+          "enum": ["shared", "per-repo"],
+          "default": "shared",
+          "description": "shared: config + backlog live once at the parent and apply to every repo (the ai-sdlc default and the only mode the DoR/pipeline honor in workspace mode). per-repo: reserved for compatibility with the reference cascade model; not recommended."
+        },
+        "backlogRoot": {
+          "type": "string",
+          "default": "./backlog",
+          "description": "Parent-relative path to the single shared backlog directory. All tasks for every repo live here; each task names its repo via targetRepo."
+        },
+        "repos": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The repositories that compose this project, each checked out as a subfolder of the parent workspace folder.",
+          "items": {
+            "type": "object",
+            "required": ["id", "path"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]*$",
+                "description": "Stable key referenced by a task's targetRepo and by cross-repo dependencies. DNS-label format."
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Parent-relative path to the repo's working tree (e.g. './web'). Must resolve inside the workspace parent folder (path-traversal outside the parent is rejected by the loader)."
+              },
+              "remote": {
+                "type": "string",
+                "description": "Optional git remote URL, used by init to clone the repo if the subfolder is absent."
+              },
+              "defaultBranch": {
+                "type": "string",
+                "default": "main",
+                "description": "The branch the parent tree stays on (Pattern C read-only base) and the target branch for PRs in this repo."
+              },
+              "worktreeRoot": {
+                "type": "string",
+                "description": "Parent-relative directory under which per-task worktrees for THIS repo are created (default '<path>/.worktrees'). Kept under the targeted repo so each worktree is a worktree of that repo's clone, never a cross-clone worktree."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "crossRepo": {
+          "type": "object",
+          "description": "Cross-repository behavior for the dependency graph and admission.",
+          "properties": {
+            "depGraphSpanning": {
+              "type": "boolean",
+              "default": false,
+              "description": "When true, a task's dependencies[] may reference tasks whose targetRepo differs from this task's. The orchestrator builds a single dependency graph spanning all repos and admits a task only when its cross-repo upstreams are complete. When false, dependencies must stay within the same targetRepo."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "object",
+      "description": "Observed state, populated by tooling.",
+      "properties": {
+        "conditions": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/$defs/condition" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

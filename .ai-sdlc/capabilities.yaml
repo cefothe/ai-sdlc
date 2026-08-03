@@ -1,0 +1,110 @@
+# CapabilityMap — binds pipeline stages to the framework's existing skills and
+# agents. Schema: spec/schemas/capability-map.v1.schema.json. Edit this to change
+# WHO fulfills each stage without touching pipeline code.
+apiVersion: ai-sdlc.io/v1alpha1
+kind: CapabilityMap
+metadata:
+  name: default
+spec:
+  stages:
+    # Discovery comes BEFORE design — a product panel shapes the WHAT/WHY of a
+    # feature (problem, target user, success metrics, scoped acceptance criteria)
+    # before any architecture. Runs at authoring time via /ai-sdlc:new and emits
+    # a PRD (docs/prd/) whose conclusions seed the task. Collaborative/
+    # advisory (no cross-harness constraint). PM+PO are the core panel; the
+    # C-level marketing/strategy lenses are added only for strategic/gtm/launch/
+    # roadmap work, so small features stay lightweight.
+    discovery:
+      panel: true
+      providers:
+        - { role: product-manager, type: agent, name: product-manager }
+        - { role: product-owner, type: agent, name: product-owner }
+      routing:
+        - when: { labels: [strategic, gtm, launch, growth] }
+          addProvider: { role: cmo, type: agent, name: cmo }
+        - when: { labels: [strategic, roadmap, platform] }
+          addProvider: { role: cpo, type: agent, name: cpo }
+
+    # Clarify runs between discovery and PRD approval: it surfaces latent
+    # ambiguity in the drafted PRD so a human resolves it before sign-off. The
+    # deterministic tier (clarify-gate.js) blocks on unresolved open questions;
+    # this agent does the advisory semantic surfacing of unwritten ambiguity.
+    clarify:
+      provider: { type: agent, name: product-owner }
+
+    # Analyze runs between plan and implement: a read-only cross-artifact
+    # consistency audit (PRD <-> plan <-> task). The deterministic tier
+    # (analyze-gate.js) enforces linkage/coverage invariants; this agent does the
+    # advisory semantic check (does the plan implement every PRD criterion? any
+    # contradictions, orphan steps, or scope creep vs the PRD non-goals?).
+    analyze:
+      provider: { type: agent, name: code-analyzer }
+
+    # Design comes next — a panel of architects shapes the approach before any
+    # code. Their output is TWO artifacts, not code: (1) a design doc
+    # (docs/design/<feature>.md — detailed schema, module boundaries, data flow;
+    # validated by design-gate.js) and (2) the atomic ADRs it links
+    # (npm run decisions -- new --context ... --rationale ... --consequences ...).
+    # The design doc holds the detail; each ADR records one decision with its
+    # reasoning. Panel is collaborative/advisory, so no cross-harness constraint.
+    # Routing pulls in the right specialist per task.
+    design:
+      panel: true
+      providers:
+        - { role: solution-architect, type: agent, name: architect-review }
+        - { role: backend-architect, type: agent, name: backend-architect }
+      routing:
+        - when: { labels: [infra, cloud] }
+          addProvider: { role: cloud-architect, type: agent, name: cloud-architect }
+        - when: { labels: [kubernetes] }
+          addProvider: { role: platform-architect, type: agent, name: kubernetes-architect }
+        - when: { languages: [graphql] }
+          addProvider: { role: api-architect, type: agent, name: graphql-architect }
+        - when: { labels: [frontend, ui] }
+          addProvider: { role: ux-architect, type: agent, name: ui-ux-designer }
+        # Security is FRONT-LOADED: sensitive tasks get a threat-model lens at
+        # design time (not just a security review after the code is written).
+        - when: { labels: [auth, payment, security, pii] }
+          addProvider: { role: security-architect, type: agent, name: security-auditor }
+
+    # Planning turns the design into an implementation plan (/code-plan skill).
+    plan:
+      provider: { type: skill, name: code-plan }
+
+    # Implementation defaults to the general agent; routed to a language
+    # specialist when the task's languages are known.
+    implement:
+      provider: { type: agent, name: claude, harness: claude }
+      routing:
+        - when: { languages: [java] }
+          provider: { type: agent, name: java-pro, harness: claude }
+        - when: { languages: [typescript] }
+          provider: { type: agent, name: typescript-pro, harness: claude }
+        - when: { languages: [python] }
+          provider: { type: agent, name: python-pro, harness: claude }
+        - when: { languages: [go] }
+          provider: { type: agent, name: golang-pro, harness: claude }
+
+    # Review is a TEAM of 3 independent reviewers on a different harness than the
+    # implementer (codex), so cross-harness attestation can seal the work. When
+    # the task touches Java test files, the test reviewer routes to
+    # qa-code-reviewer (which owns the deserialize/parameterize carve-outs).
+    review:
+      team: true
+      skill: code-review-pr
+      providers:
+        - { role: code-reviewer, type: agent, name: code-reviewer, harness: codex }
+        - { role: test-reviewer, type: agent, name: test-automator, harness: codex }
+        - { role: security-reviewer, type: agent, name: security-auditor, harness: codex }
+      routing:
+        - when: { javaTestFiles: true }
+          replaceRole: test-reviewer
+          addProvider: { role: test-reviewer, type: agent, name: qa-code-reviewer, harness: codex }
+        # Structural changes get an architect-review LENS in addition to the
+        # code/test/security reviewers (distinct concern: design integrity).
+        - when: { labels: [architecture, refactor] }
+          addProvider: { role: architect-reviewer, type: agent, name: code-review-architect, harness: codex }
+
+    # Tests always run through the test-runner agent.
+    test:
+      provider: { type: agent, name: test-runner }

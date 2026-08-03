@@ -1,0 +1,344 @@
+name: "Test Automation Framework Context"
+type: "overview"
+version: "1.0.0"
+description: "Comprehensive documentation for Claude Code agents to write automated tests using the tradu-test-automation-framework without accessing the framework's source code"
+last_updated: "2026-01-13"
+maintained_by: "Tradu QA Team"
+
+content: |
+  # Test Automation Framework Context
+
+  > **Purpose**: Comprehensive documentation for Claude Code agents to write automated tests using the `tradu-test-automation-framework` without accessing the framework's source code.
+
+  ## 📋 Table of Contents
+
+  - [Overview](#overview)
+  - [Quick Start](#quick-start)
+  - [Documentation Structure](#documentation-structure)
+  - [For Claude Code Agents](#for-claude-code-agents)
+  - [Framework Version](#framework-version)
+  - [Contributing](#contributing)
+
+  ## Overview
+
+  This directory contains comprehensive context documentation for the **Tradu Test Automation Framework** - an enterprise-grade, hexagonal-architecture test automation framework supporting:
+
+  - ✅ **Web Testing** (Playwright adapter)
+  - ✅ **API Testing** (REST/HTTP, WebSocket, FIX Protocol)
+  - ⚠️ **Mobile Testing** (Architecture ready, implementation pending)
+  - ✅ **Reporting** (Allure, XRay, Teams)
+  - ✅ **Parallel Execution** (ThreadLocal driver management)
+  - ✅ **Configuration Management** (Environment profiles)
+
+  ## Quick Start
+
+  ### For Claude Code Agents
+
+  1. **Start with the master context**: Read `FRAMEWORK_CONTEXT.yaml` first
+  2. **Choose your testing type**:
+     - Web UI tests → `guides/WEB_AUTOMATION_GUIDE.yaml`
+     - API tests → `guides/API_TESTING_GUIDE.yaml`
+  3. **Learn patterns**: Read `guides/TEST_PATTERNS.yaml`
+  4. **Configure**: See `guides/CONFIGURATION_GUIDE.yaml`
+  5. **Quick lookup**: Use `reference/API_QUICK_REFERENCE.yaml`
+
+  ### For Project Setup
+
+  1. Copy `templates/PROJECT_CONTEXT_TEMPLATE.yaml` to your project's `.claude/` directory
+  2. Fill in project-specific details (URLs, test users, domain knowledge)
+  3. Reference both framework and project contexts in your agents
+
+  ## Documentation Structure
+
+  ```
+  ~/.claude/contexts/test-automation/
+  ├── README.yaml                           ← You are here
+  ├── FRAMEWORK_CONTEXT.yaml                ← START HERE - Master context
+  ├── guides/
+  │   ├── WEB_AUTOMATION_GUIDE.yaml         ← Web testing (Playwright)
+  │   ├── API_TESTING_GUIDE.yaml            ← REST/WebSocket/FIX
+  │   ├── TEST_PATTERNS.yaml                ← Page Objects, Services
+  │   ├── CONFIGURATION_GUIDE.yaml          ← Environment config
+  │   └── REPORTING_GUIDE.yaml              ← Allure, XRay, Teams
+  ├── reference/
+  │   └── API_QUICK_REFERENCE.yaml          ← Cheat sheet
+  └── templates/
+      └── PROJECT_CONTEXT_TEMPLATE.yaml     ← Project template
+  ```
+
+  ### File Descriptions
+
+  | File | Purpose | Size | Use When |
+  |------|---------|------|----------|
+  | **FRAMEWORK_CONTEXT.yaml** | Complete architecture overview, capabilities, technology stack | ~3000 lines | Starting a new project or understanding framework |
+  | **WEB_AUTOMATION_GUIDE.yaml** | WebDriver API, locators, Page Objects, driver management | ~2000 lines | Writing web UI tests |
+  | **API_TESTING_GUIDE.yaml** | REST/HTTP, WebSocket, FIX protocol testing | ~1500 lines | Writing API tests |
+  | **TEST_PATTERNS.yaml** | BaseTest, Page Objects, Services, test data models | ~1500 lines | Structuring test code |
+  | **CONFIGURATION_GUIDE.yaml** | Environment profiles, properties reference | ~800 lines | Configuring test environments |
+  | **REPORTING_GUIDE.yaml** | Allure, XRay, Teams integration | ~800 lines | Setting up reporting |
+  | **API_QUICK_REFERENCE.yaml** | Cheat sheet with all APIs | ~1000 lines | Quick lookups during coding |
+  | **PROJECT_CONTEXT_TEMPLATE.yaml** | Template for project-specific context | ~500 lines | Setting up project context |
+
+  ## For Claude Code Agents
+
+  ### How to Reference These Contexts
+
+  #### Option 1: In Agent YAML Configuration
+
+  ```yaml
+  # ~/.claude/agents/qa-functional-engineer.yaml
+  name: qa-functional-engineer
+  context:
+    - ~/.claude/contexts/test-automation/FRAMEWORK_CONTEXT.yaml
+    - ~/.claude/contexts/test-automation/guides/WEB_AUTOMATION_GUIDE.yaml
+    - ~/.claude/contexts/test-automation/guides/TEST_PATTERNS.yaml
+    - .claude/PROJECT_TEST_CONTEXT.yaml  # Project-specific
+  instructions: |
+    You are a QA automation engineer specializing in functional testing.
+    Use the test automation framework documented in the context files.
+
+    Your responsibilities:
+    - Write complete, production-ready test cases
+    - Follow Page Object Model patterns
+    - Use appropriate locator strategies
+    - Ensure proper error handling
+    - Add Allure and XRay annotations
+  ```
+
+  #### Option 2: Direct Reference in Prompts
+
+  ```markdown
+  You are a QA engineer writing automated tests.
+
+  Context files:
+  @~/.claude/contexts/test-automation/FRAMEWORK_CONTEXT.yaml
+  @~/.claude/contexts/test-automation/guides/WEB_AUTOMATION_GUIDE.yaml
+  @.claude/PROJECT_TEST_CONTEXT.yaml
+
+  Task: Create a complete end-to-end test for user login flow.
+  ```
+
+  ### Example Agent Configurations
+
+  #### 1. Functional Test Engineer
+  ```yaml
+  name: qa-functional-engineer
+  context:
+    - FRAMEWORK_CONTEXT.yaml
+    - guides/WEB_AUTOMATION_GUIDE.yaml
+    - guides/TEST_PATTERNS.yaml
+  specialization: End-to-end functional tests, UI workflows
+  ```
+
+  #### 2. API Test Engineer
+  ```yaml
+  name: qa-api-engineer
+  context:
+    - FRAMEWORK_CONTEXT.yaml
+    - guides/API_TESTING_GUIDE.yaml
+    - guides/TEST_PATTERNS.yaml
+  specialization: REST/WebSocket/FIX protocol testing
+  ```
+
+  #### 3. Page Object Engineer
+  ```yaml
+  name: qa-page-object-engineer
+  context:
+    - FRAMEWORK_CONTEXT.yaml
+    - guides/WEB_AUTOMATION_GUIDE.yaml
+    - guides/TEST_PATTERNS.yaml
+  specialization: Page Object Model implementation
+  ```
+
+  #### 4. Test Code Reviewer
+  ```yaml
+  name: qa-code-reviewer
+  context:
+    - FRAMEWORK_CONTEXT.yaml
+    - guides/TEST_PATTERNS.yaml
+    - reference/API_QUICK_REFERENCE.yaml
+  specialization: Code quality, patterns, best practices
+  ```
+
+  ### Agent Success Criteria
+
+  A properly configured agent using these contexts should be able to:
+
+  1. ✅ Write complete web UI tests without accessing framework source code
+  2. ✅ Write REST/WebSocket/FIX API tests without accessing framework source
+  3. ✅ Create Page Objects following framework patterns
+  4. ✅ Create Service classes following framework patterns
+  5. ✅ Configure test environments correctly
+  6. ✅ Integrate Allure and XRay reporting
+  7. ✅ Choose appropriate locator strategies
+  8. ✅ Handle test data with proper patterns
+  9. ✅ Debug test failures using framework features
+  10. ✅ Extend framework for project-specific needs
+
+  ## Framework Version
+
+  **Current Documentation Version**: 1.0.0
+  **Compatible Framework Versions**: 1.x.x
+  **Last Updated**: 2026-01-13
+
+  ### Version Compatibility
+
+  | Documentation Version | Framework Version | Status |
+  |----------------------|-------------------|--------|
+  | 1.0.0 | 1.0.0 - 1.x.x | ✅ Current |
+
+  ### Breaking Changes
+
+  When framework has breaking changes:
+  1. Documentation will be updated in this directory
+  2. Version number will be incremented
+  3. Compatibility matrix will be updated
+  4. Migration guide will be provided
+
+  ## Framework Repository
+
+  **Repository**: `tradu-test-automation-framework`
+  **Type**: Separate repository (to be moved from omnius)
+  **Access**: [Link to repository when available]
+
+  ## Contributing
+
+  ### Reporting Issues
+
+  Found an issue with the documentation?
+
+  1. **Missing Information**: Open an issue describing what's missing
+  2. **Incorrect Information**: Provide the correct information with examples
+  3. **Unclear Explanations**: Suggest improvements
+
+  ### Suggesting Improvements
+
+  Have ideas to improve these contexts?
+
+  1. **Additional Examples**: Real-world scenarios that would help
+  2. **Better Explanations**: Clearer ways to explain complex concepts
+  3. **New Sections**: Topics that should be covered
+
+  ### Keeping Documentation in Sync
+
+  When framework is updated:
+
+  1. Check `SYNC_TO_CLAUDE_CONTEXTS.md` in framework repo
+  2. Update relevant context files in this directory
+  3. Update version compatibility matrix above
+  4. Test with Claude Code agents to verify accuracy
+
+  ## Support
+
+  For questions or issues:
+
+  1. **Documentation Issues**: Check this README and individual guides
+  2. **Framework Issues**: Refer to framework repository
+  3. **Agent Configuration**: See "For Claude Code Agents" section above
+
+  ## Philosophy
+
+  ### Why These Contexts Exist
+
+  **Problem**: Claude Code agents need to write tests but shouldn't have access to framework internals.
+
+  **Solution**: Comprehensive documentation of the framework's **public API and patterns** so agents can:
+  - Understand what the framework provides
+  - Use it correctly without seeing implementation
+  - Follow established patterns and best practices
+  - Produce production-ready test code
+
+  ### Design Principles
+
+  1. **Complete**: Every public API method is documented
+  2. **Practical**: Real-world examples, not toy examples
+  3. **Clear**: No assumptions about prior knowledge
+  4. **Maintainable**: Easy to update when framework changes
+  5. **Discoverable**: Well-organized, easy to navigate
+
+  ### What's NOT Included
+
+  - Framework implementation details
+  - Internal classes and methods
+  - Build system specifics (Maven POM structure)
+  - Framework development guide
+  - How to extend framework adapters
+
+  **Rationale**: Agents use the framework, they don't develop it. These docs focus on **usage, not implementation**.
+
+  ## Quick Navigation
+
+  ### I want to...
+
+  - **Understand the framework** → `FRAMEWORK_CONTEXT.yaml`
+  - **Write web UI tests** → `guides/WEB_AUTOMATION_GUIDE.yaml`
+  - **Write API tests** → `guides/API_TESTING_GUIDE.yaml`
+  - **Structure my tests** → `guides/TEST_PATTERNS.yaml`
+  - **Configure environments** → `guides/CONFIGURATION_GUIDE.yaml`
+  - **Set up reporting** → `guides/REPORTING_GUIDE.yaml`
+  - **Look up an API quickly** → `reference/API_QUICK_REFERENCE.yaml`
+  - **Set up project context** → `templates/PROJECT_CONTEXT_TEMPLATE.yaml`
+
+  ## Examples
+
+  ### Example 1: New Project Setup
+
+  ```bash
+  # 1. Copy project template
+  cp ~/.claude/contexts/test-automation/templates/PROJECT_CONTEXT_TEMPLATE.yaml \
+     my-project/.claude/PROJECT_TEST_CONTEXT.yaml
+
+  # 2. Fill in project details
+  # Edit my-project/.claude/PROJECT_TEST_CONTEXT.yaml
+
+  # 3. Configure agent to use both framework and project contexts
+  # Edit ~/.claude/agents/my-project-qa.yaml
+  ```
+
+  ### Example 2: Writing a Web Test
+
+  ```markdown
+  **Agent Prompt:**
+
+  You are a QA engineer. Write a complete end-to-end test for the login flow.
+
+  Context:
+  @~/.claude/contexts/test-automation/FRAMEWORK_CONTEXT.yaml
+  @~/.claude/contexts/test-automation/guides/WEB_AUTOMATION_GUIDE.yaml
+  @~/.claude/contexts/test-automation/guides/TEST_PATTERNS.yaml
+  @my-project/.claude/PROJECT_TEST_CONTEXT.yaml
+
+  Requirements:
+  - Use Page Object Model
+  - Add Allure annotations
+  - Link to XRay test case PROJ-123
+  - Handle error scenarios
+  ```
+
+  ### Example 3: API Test
+
+  ```markdown
+  **Agent Prompt:**
+
+  Write API tests for the order creation endpoint.
+
+  Context:
+  @~/.claude/contexts/test-automation/guides/API_TESTING_GUIDE.yaml
+  @~/.claude/contexts/test-automation/guides/TEST_PATTERNS.yaml
+
+  Requirements:
+  - Test happy path and error cases
+  - Use Service class pattern
+  - Verify response status and body
+  - Add proper assertions
+  ```
+
+  ## License
+
+  These context files are part of the Tradu Test Automation Framework project.
+
+  ---
+
+  **Last Updated**: 2026-01-13
+  **Maintained By**: Tradu QA Team
+  **Version**: 1.0.0

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-sdlc.io/schemas/v1alpha1/run-record.schema.json",
+  "title": "AI-SDLC RunRecord",
+  "description": "One record per task run through the pipeline (/ai-sdlc:execute), appended as JSONL. Consumed by measurement/outcome-metrics.js to compute Level-1 end-to-end outcome metrics (completion rate, regression rate, review loops, blast radius). Emitted by the pipeline/commands; the fields the metrics depend on are required, the rest are optional telemetry.",
+  "type": "object",
+  "required": ["taskId", "outcome"],
+  "properties": {
+    "runId": { "type": "string", "description": "Unique id for this pipeline run." },
+    "taskId": { "type": "string", "description": "Backlog task id, e.g. AISDLC-42." },
+    "timestamp": { "type": "string", "description": "ISO 8601 UTC start time." },
+    "leadTimeMs": { "type": "number", "description": "Task admitted -> PR opened, in ms." },
+    "gates": {
+      "type": "object",
+      "description": "Per-gate verdicts, for gate-efficacy analysis.",
+      "properties": {
+        "dor": { "type": "object", "properties": { "verdict": { "type": "string" }, "admitted": { "type": "boolean" } } },
+        "prd": { "type": "object", "properties": { "valid": { "type": "boolean" } } },
+        "clarify": { "type": "object", "properties": { "clear": { "type": "boolean" } } },
+        "analyze": { "type": "object", "properties": { "consistent": { "type": "boolean" } } }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "properties": {
+        "commitSha": { "type": "string" },
+        "filesChanged": { "type": "array", "items": { "type": "string" } },
+        "linesChanged": { "type": "number" }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "description": "Suite results before and after the change.",
+      "properties": {
+        "before": { "$ref": "#/$defs/testResult" },
+        "after": { "$ref": "#/$defs/testResult" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "cycles": { "type": "number", "description": "Informed-retry cycles before merge-ready." },
+        "verdict": { "type": "string" },
+        "findings": { "type": "array", "items": { "type": "object", "properties": { "severity": { "type": "string" } } } }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "description": "The load-bearing outcome fields.",
+      "properties": {
+        "mergedClean": { "type": "boolean", "description": "Merged without further edits." },
+        "buildPassed": { "type": "boolean" },
+        "humanCorrections": { "type": "number", "description": "Human edit cycles before merge (0 for a strict completion)." },
+        "regressionIntroduced": { "type": "boolean", "description": "A change outside scope broke something." },
+        "blastRadiusFiles": { "type": "number", "description": "Files touched outside the task's declared surfaces." }
+      }
+    }
+  },
+  "$defs": {
+    "testResult": {
+      "type": "object",
+      "properties": {
+        "passed": { "type": "number" },
+        "failed": { "type": "number" }
+      }
+    }
+  }
+}

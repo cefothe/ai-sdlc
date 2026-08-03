@@ -1,0 +1,22 @@
+# CODEOWNERS — puts a human in the loop on every PR.
+#
+# When branch protection requires review from Code Owners, the owners below are
+# automatically requested on any PR that touches these paths, and the PR cannot
+# be merged until one of them approves. This is the enforced downstream
+# counterpart to the PRD approval gate (DoR gate 8) upstream.
+#
+# Replace the placeholder handles with real GitHub users/teams before relying on
+# this. An unmatched path falls through to the catch-all owner.
+
+# Catch-all — every change needs a human approver.
+*                       @OWNER
+
+# Control-plane changes carry the most risk — require the framework owners.
+/decision-engine/       @OWNER
+/pipeline/              @OWNER
+/promise/               @OWNER
+/attestation/           @OWNER
+/.ai-sdlc/              @OWNER
+
+# Product artifacts — a human product owner signs off on PRDs.
+/docs/prd/              @OWNER

@@ -1,0 +1,24 @@
+# Example multi-repo workspace (ai-sdlc extension). Place the real file at
+# <parent>/.ai-sdlc/workspace.yaml. One parent folder, N repo subfolders, one
+# shared .ai-sdlc/ config + one backlog. Each task sets targetRepo to name the
+# repo it modifies; the orchestrator creates that task's worktree under the
+# repo's worktreeRoot. Schema: spec/schemas/workspace.v1.schema.json
+apiVersion: ai-sdlc.io/v1alpha1
+kind: Workspace
+metadata:
+  name: capitalinvest
+spec:
+  configScope: shared          # config + backlog live once at the parent
+  backlogRoot: ./backlog
+  repos:
+    - id: web
+      path: ./web
+      remote: git@github.com:org/web.git
+      defaultBranch: main
+      worktreeRoot: ./web/.worktrees
+    - id: api
+      path: ./api
+      remote: git@github.com:org/api.git
+      defaultBranch: main
+  crossRepo:
+    depGraphSpanning: true      # a task in web may depend on a task in api

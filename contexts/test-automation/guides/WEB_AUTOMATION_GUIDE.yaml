@@ -1,0 +1,1372 @@
+name: "WEB_AUTOMATION_GUIDE"
+type: "guide"
+version: "1.0.0"
+description: "Complete guide to web testing with the Tradu Test Automation Framework using Playwright adapter."
+last_updated: "2026-04-15"
+maintained_by: "Tradu QA Team"
+
+content: |
+  # Web Automation Guide
+  
+  > Complete guide to web testing with the Tradu Test Automation Framework using Playwright adapter.
+  
+  ## Table of Contents
+  
+  - [Overview](#overview)
+  - [WebDriver API](#webdriver-api)
+  - [Element Types](#element-types)
+  - [Locator Strategies](#locator-strategies)
+  - [Driver Management](#driver-management)
+  - [Page Object Model](#page-object-model)
+  - [Best Practices](#best-practices)
+  - [Common Patterns](#common-patterns)
+  - [Troubleshooting](#troubleshooting)
+  
+  ## Overview
+  
+  The framework uses the Playwright adapter for web automation while maintaining complete independence through the hexagonal architecture. Tests depend only on `test-automation-core` interfaces, never on Playwright directly.
+  
+  ### Key Benefits
+  
+  - **Browser Support**: Chromium, Firefox, WebKit
+  - **Auto-Wait**: Built-in smart waiting for elements
+  - **Screenshots**: Automatic capture on failure
+  - **Video Recording**: Full test session recording
+  - **Thread-Safe**: Parallel test execution support
+  
+  ## WebDriver API
+
+  ### Interface Methods
+
+  ```java
+  public interface WebDriver {
+      Element findElement(Locator locator);
+      List<Element> findElements(Locator locator);
+      void navigateTo(String url);
+      Object executeScript(String script, Object... args);
+      void close();
+      void takeScreenshot(Path destination);
+      void startVideoRecording();
+      byte[] stopVideoRecording();
+      void quit();
+  }
+  ```
+
+  ### Navigation
+
+  ```java
+  WebDriver driver = DriverManager.getDriver();
+
+  // Navigate to URL
+  driver.navigateTo("https://example.com");
+  ```
+
+  ### Finding Elements
+
+  ```java
+  // Find single element
+  Element button = driver.findElement(id("submit-btn"));
+
+  // Find multiple elements
+  List<Element> rows = driver.findElements(css("table tr"));
+  ```
+
+  ### Screenshots & Video
+
+  ```java
+  // Take screenshot
+  driver.takeScreenshot(Paths.get("screenshots/login.png"));
+
+  // Record video
+  driver.startVideoRecording();
+  // ... test actions ...
+  byte[] video = driver.stopVideoRecording();
+  ```
+
+  ### Cleanup
+
+  ```java
+  // Quit driver (done automatically when BaseWebTest is used)
+  driver.quit();
+  ```
+  
+  ## Element Types
+
+  ### Base Element Interface
+
+  All element types extend the base `Element` interface:
+
+  ```java
+  public interface Element {
+      // Actions
+      void click();
+      void forceClick();                      // skips actionability checks (see below)
+      void sendKeys(String text);
+
+      // Information
+      String getText();
+      String getAttribute(String name);
+      boolean isDisplayed();
+      boolean isEnabled();
+
+      // Waits
+      void waitUntilVisible(Duration timeout);
+      void waitUntilClickable(Duration timeout);
+  }
+  ```
+
+  **`click()` vs `forceClick()`**: always prefer `click()` — it waits for the element to be visible, enabled, stable, and receive events, then clicks. Use `forceClick()` **only** for rapidly-updating elements that fail Playwright's actionability checks by design: live price tickers, animated counters, elements behind a verified-safe transient overlay. `forceClick()` skips actionability and dispatches the click directly, so misuse hides real bugs (clicks on disabled or covered elements). `forceClick()` is a `default` method on `Element` — custom `Element` implementations must override it to compile against the new interface (binary compat is preserved, source compat requires an override).
+
+  ### Creating Typed Elements (via BasePage)
+
+  In page objects extending `BasePage`, use the inherited convenience methods to create typed elements. Each call re-finds the element (no stale references).
+
+  ```java
+  // In a class extending BasePage:
+  textBox(id("username")).enterText("user");
+  button(css("button[type='submit']")).click();
+  checkBox(id("terms-checkbox")).check();
+  radioButton(id("option-1")).select();
+  dropDown(id("country")).selectByText("US");
+  element(testId("header")).waitUntilVisible(Duration.ofSeconds(5));
+  driver().navigateTo("https://example.com");
+
+  // Custom elements (extending AbstractCustomElement):
+  custom(PriceCell.class, testId("bid-price")).getPrice();
+  ```
+
+  **Available methods from BasePage**: `textBox()`, `button()`, `checkBox()`, `radioButton()`, `dropDown()`, `textArea()`, `link()`, `label()`, `table()`, `fileInput()`, `image()`, `element()`, `custom()`, `driver()`
+
+  ### TextBox
+
+  For text input fields:
+
+  ```java
+  TextBox textBox = textBox(id("username"));
+
+  // Enter text (clears first)
+  textBox.enterText("testuser");
+
+  // Clear text
+  textBox.clear();
+
+  // Get current value
+  String value = textBox.getValue();
+
+  // Character-by-character typing (dispatches key events per character)
+  textBox.type("slow input");
+  ```
+
+  ### Button
+
+  For clickable buttons:
+
+  ```java
+  Button button = button(css("button[type='submit']"));
+
+  // Click
+  button.click();
+
+  // Check state
+  boolean clickable = button.isClickable();
+  ```
+
+  ### CheckBox
+
+  For checkbox inputs:
+
+  ```java
+  CheckBox checkBox = checkBox(id("terms-checkbox"));
+
+  // Check/uncheck
+  checkBox.check();
+  checkBox.uncheck();
+
+  // Get state
+  boolean checked = checkBox.isChecked();
+  ```
+
+  ### RadioButton
+
+  For radio button inputs:
+
+  ```java
+  RadioButton radioButton = radioButton(id("option-1"));
+
+  // Select
+  radioButton.select();
+
+  // Check if selected
+  boolean selected = radioButton.isSelected();
+  ```
+
+  ### DropDown
+
+  For select dropdowns:
+
+  ```java
+  DropDown dropDown = dropDown(id("country"));
+
+  // Select by text, value, or index
+  dropDown.selectByText("United States");
+  dropDown.selectByValue("us");
+  dropDown.selectByIndex(0);
+
+  // Get selected
+  String selected = dropDown.getSelectedValue();
+  String selectedText = dropDown.getSelectedText();
+  List<String> options = dropDown.getOptions();
+
+  // Multi-select (requires HTML multiple attribute)
+  boolean multi = dropDown.isMultiSelect();
+  dropDown.selectAllByText(List.of("Option A", "Option B"));
+  dropDown.selectAllByValue(List.of("a", "b"));
+  dropDown.deselectByText("Option A");
+  dropDown.deselectAll();
+  List<String> selectedTexts = dropDown.getSelectedTexts();
+  dropDown.selectByPartialText("United");
+  ```
+
+  ### TextArea
+
+  For multi-line text inputs:
+
+  ```java
+  TextArea notes = textArea(id("order-notes"));
+
+  notes.enterText("Urgent order");
+  notes.appendText("\nNeeds review");
+  notes.clear();
+  String value = notes.getValue();
+  int lines = notes.getLineCount();
+  ```
+
+  ### Link
+
+  For anchor/link elements:
+
+  ```java
+  Link helpLink = link(testId("help-link"));
+
+  helpLink.click();
+  String href = helpLink.getHref();
+  String target = helpLink.getTarget();
+  boolean newTab = helpLink.opensInNewTab();
+  ```
+
+  ### Label
+
+  For read-only text displays (prices, balances, status):
+
+  ```java
+  Label balance = label(testId("account-balance"));
+
+  String text = balance.getText();
+  boolean hasContent = balance.hasText();
+  String forAttr = balance.getFor();
+  ```
+
+  ### Custom Elements (AbstractCustomElement)
+
+  **When to use**: When the built-in element types (`TextBox`, `Button`, `DropDown`, etc.) don't capture the semantics of a UI component. Trading platforms, financial dashboards, and domain-specific UIs have components like price tickers, order books, charts, toggles, date pickers, and data grids that have behavior beyond what a generic `Element` offers. Instead of scattering `getAttribute("class").contains("positive")` checks across tests, encapsulate the domain logic in a custom element.
+
+  **How it works**: Extend `AbstractCustomElement` with a constructor that takes `Element`. All base `Element` methods (`click()`, `getText()`, `getAttribute()`, `isDisplayed()`, `sendKeys()`, `waitUntilVisible()`, `waitUntilClickable()`) are automatically delegated to the wrapped element. Your custom class only adds domain-specific methods. If the platform changes (e.g., Playwright to Selenium), custom element code needs **zero modifications**.
+
+  **Creating a custom element**:
+
+  ```java
+  import com.tradu.core.element.AbstractCustomElement;
+  import com.tradu.core.element.Element;
+
+  public class PriceCell extends AbstractCustomElement {
+      public PriceCell(Element delegate) {
+          super(delegate);
+      }
+
+      public String getPrice() {
+          return getText().trim();
+      }
+
+      public boolean isPositive() {
+          String cssClass = getAttribute("class");
+          return cssClass != null && cssClass.contains("positive");
+      }
+
+      public boolean isNegative() {
+          String cssClass = getAttribute("class");
+          return cssClass != null && cssClass.contains("negative");
+      }
+  }
+  ```
+
+  **Using in page objects** via `custom(Class, Locator)` from BasePage:
+
+  ```java
+  public final class WatchlistPage extends BasePage {
+      private static final Locator BID_PRICE = testId("bid-price");
+      private static final Locator ASK_PRICE = testId("ask-price");
+      private static final Locator SPREAD = testId("spread-value");
+
+      public String getBidPrice() {
+          return custom(PriceCell.class, BID_PRICE).getPrice();
+      }
+
+      public boolean isBidPositive() {
+          return custom(PriceCell.class, BID_PRICE).isPositive();
+      }
+
+      public String getSpread() {
+          return custom(PriceCell.class, SPREAD).getPrice();
+      }
+  }
+  ```
+
+  **More examples of custom elements**:
+
+  ```java
+  // Toggle switch (not a checkbox — different DOM structure)
+  public class ToggleSwitch extends AbstractCustomElement {
+      public ToggleSwitch(Element delegate) { super(delegate); }
+
+      public boolean isOn() {
+          return getAttribute("aria-checked").equals("true");
+      }
+
+      public void toggle() {
+          click();
+      }
+
+      public void turnOn() {
+          if (!isOn()) click();
+      }
+
+      public void turnOff() {
+          if (isOn()) click();
+      }
+  }
+
+  // Tooltip with hover-to-reveal content
+  public class Tooltip extends AbstractCustomElement {
+      public Tooltip(Element delegate) { super(delegate); }
+
+      public String getTooltipText() {
+          return getAttribute("title");
+      }
+
+      public boolean hasTooltip() {
+          String title = getAttribute("title");
+          return title != null && !title.isEmpty();
+      }
+  }
+  ```
+
+  **Key rules**:
+  - Constructor MUST accept `Element` (framework uses reflection to instantiate)
+  - Only add domain-specific methods — base `Element` methods are auto-delegated
+  - Custom elements are fully platform-independent (no Playwright imports)
+  - Use `custom(MyElement.class, locator)` from BasePage — **never** `new MyCustomElement(...)` directly (see ElementFactory injection below)
+
+  **ElementFactory injection (page-wide lookups)**:
+
+  When the framework creates a custom element via `ElementFactory.create()` / `createWith()` (what `BasePage.custom(...)` uses under the hood), it injects an `ElementFactory` into the custom element post-construction. This gives your custom class two protected accessors inherited from `AbstractCustomElement`:
+
+  - `element(Locator locator)` — look up any element **anywhere on the page**, not just inside the custom element's own DOM subtree. Essential for portaled UI like Radix dropdowns, date pickers, or modal panels whose option list is rendered at the document root, not under the trigger.
+  - `elementFactory()` — direct access to the factory when you need to construct typed elements (`textBox(...)`, `button(...)`, etc.) from inside the custom element.
+
+  ```java
+  public class RadixDropdown extends AbstractCustomElement {
+      private static final Locator PANEL = testId("radix-popover-panel");
+
+      public RadixDropdown(Element delegate) { super(delegate); }
+
+      public void selectOption(String optionText) {
+          click(); // open the dropdown trigger (the wrapped element)
+          // option panel is portaled to <body>, not inside the trigger —
+          // element(Locator) searches the whole page, not just the trigger's subtree
+          element(PANEL).element(text(optionText)).click();
+      }
+  }
+  ```
+
+  **Construction rule**: Direct `new MyCustomElement(delegate)` instantiation throws `IllegalStateException` at the first call that reaches for the injected factory — because the factory was never injected. Always go through `BasePage.custom(MyCustomElement.class, locator)` or `ElementFactory.create()` / `createWith()`.
+
+  ## Locator Strategies
+  
+  The framework provides 14 locator strategies (sealed interface):
+  
+  ### 1. ID Locator (Best)
+  
+  ```java
+  Locator locator = id("submit-button");
+  Element button = driver.findElement(locator);
+  ```
+  
+  **When to use**: Element has unique `id` attribute.
+  
+  ### 2. Test ID Locator (Best)
+  
+  ```java
+  Locator locator = testId("login-submit");
+  Element button = driver.findElement(locator);
+  ```
+  
+  **When to use**: Element has `data-testid` attribute (recommended for test-specific identifiers).
+  
+  ### 3. CSS Selector
+  
+  ```java
+  Locator locator = css("button.btn-primary");
+  Element button = driver.findElement(locator);
+  ```
+  
+  **When to use**: Modern CSS selectors, complex queries.
+  
+  ### 4. Class Name
+  
+  ```java
+  Locator locator = className("error-message");
+  Element error = driver.findElement(locator);
+  ```
+  
+  **When to use**: Shared styling classes.
+  
+  ### 5. XPath (Last Resort)
+  
+  ```java
+  Locator locator = xpath("//button[@type='submit']");
+  Element button = driver.findElement(locator);
+  ```
+  
+  **When to use**: Complex DOM traversal, last resort (brittle).
+  
+  ### 6. Partial ID
+  
+  ```java
+  Locator locator = partialId("submit");
+  Element button = driver.findElement(locator);
+  ```
+  
+  **When to use**: ID contains dynamic parts but has static substring.
+  
+  ### 7. Partial Text
+  
+  ```java
+  Locator locator = partialText("Click here");
+  Element link = driver.findElement(locator);
+  ```
+  
+  **When to use**: Finding by visible text content.
+  
+  ### 8. Partial Class
+  
+  ```java
+  Locator locator = partialClass("btn");
+  Element button = driver.findElement(locator);
+  ```
+  
+  **When to use**: Class name contains dynamic parts.
+  
+  ### 9. Regex
+  
+  ```java
+  Locator locator = regex("order-\\d+");
+  Element order = driver.findElement(locator);
+  ```
+  
+  **When to use**: Pattern matching for dynamic IDs.
+
+  ### 10. Name
+
+  ```java
+  Locator locator = name("username");
+  Element input = driver.findElement(locator);
+  ```
+
+  **When to use**: Element has `name` attribute (common in forms).
+
+  ### 11. Role (ARIA)
+
+  ```java
+  Locator locator = role("button");                    // Any button role
+  Locator locator = role("button", "Submit");           // Role with accessible name
+  Element submitBtn = driver.findElement(role("button", "Submit"));
+  ```
+
+  **When to use**: Accessibility-based selection. Supports ARIA roles like "button", "heading", "link", "textbox", etc. Second parameter matches accessible name.
+
+  ### 12. Label
+
+  ```java
+  Locator locator = label("Username");
+  Element input = driver.findElement(locator);
+  ```
+
+  **When to use**: Form inputs associated with `<label>` elements.
+
+  ### 13. Placeholder
+
+  ```java
+  Locator locator = placeholder("Enter your email");
+  Element input = driver.findElement(locator);
+  ```
+
+  **When to use**: Elements with placeholder text.
+
+  ### 14. Text
+
+  ```java
+  Locator locator = text("Submit");          // Exact text match
+  Locator locator = text("Submit", false);   // Substring match
+  Element btn = driver.findElement(text("Submit"));
+  ```
+
+  **When to use**: Finding by visible text content. Use `text(value, false)` for substring matching.
+
+  ### Locator Priority
+
+  **Best → Worst**:
+  1. `testId` - Explicit test identifiers
+  2. `id` - Unique identifiers
+  3. `role` / `label` / `placeholder` - Accessibility-based
+  4. `css` - Modern selectors
+  5. `className` - Shared styles
+  6. `name` - Form elements
+  7. `text` - Visible text
+  8. `xpath` - Last resort
+  
+  ## Driver Management
+  
+  ### DriverManager
+  
+  Thread-safe driver factory using ThreadLocal:
+  
+  ```java
+  // Initialize driver (done in BaseWebTest.setUp())
+  WebDriver driver = DriverManager.initializeDriver();
+  
+  // Get current thread's driver
+  WebDriver driver = DriverManager.getDriver();
+  
+  // Quit driver (done in BaseWebTest.tearDown())
+  DriverManager.quitDriver();
+  ```
+  
+  ### Driver Configuration
+  
+  ```java
+  // DriverConfig is an immutable record — use the builder
+  DriverConfig config = DriverConfig.builder()
+      .browser(Browser.CHROME)           // Browser enum: CHROME, FIREFOX, SAFARI, EDGE
+      .executionMode(ExecutionMode.LOCAL) // ExecutionMode: LOCAL, CONTAINER, BROWSERSTACK (planned)
+      .headless(true)                    // true = headless (default), false = headed/GUI
+      .recordVideo(true)                 // Enable video recording
+      .captureTrace(true)                // Enable Playwright trace capture
+      .captureDiagnostics(true)          // Enable page diagnostics (console, JS errors, network)
+      .downloadsPath("/tmp/downloads")   // Directory for downloaded files
+      .wsEndpoint("ws://localhost:3000/ws")  // WebSocket endpoint for CONTAINER mode
+      .build();
+
+  WebDriver driver = DriverManager.initializeDriver(config);
+  ```
+
+  **Browser enum**: CHROME→Chromium engine, FIREFOX→Firefox engine, SAFARI→WebKit engine, EDGE→Chromium engine.
+
+  **ExecutionMode**: LOCAL (host machine), CONTAINER (Docker via Testcontainers), BROWSERSTACK (planned, not yet implemented).
+
+  System property override: `-Dexecution.mode=CONTAINER` overrides config at runtime.
+  Slow motion for debugging: `-Dslow.motion.ms=100` adds delay before each action.
+  Element timeout: `-Delement.timeout.ms=15000` sets default element wait (default: 10000ms).
+  Viewport size at creation: `DriverConfig.builder().viewportWidth(1920).viewportHeight(1080)` — applied at BrowserContext creation time. `driver.setViewportSize(w, h)` changes it after initialization.
+
+  ### Branded browsers (Chrome / Edge)
+
+  The `browser.use.branded` property (default `true`, resolved via `ConfigurationManager` → system property → env `BROWSER_USE_BRANDED` → properties file → default) controls whether `Browser.CHROME` / `Browser.EDGE` launch with the **branded** binary (real Google Chrome / Microsoft Edge) or Playwright's bundled Chromium.
+
+  - LOCAL mode: the adapter sets the Playwright channel to `"chrome"` / `"msedge"` when `browser.use.branded=true`. When `false`, Playwright falls back to bundled Chromium.
+  - CONTAINER mode: the same property is passed to the Docker entrypoint as the `CHANNEL` env var. The framework's Docker image pre-installs both branded Chrome and Edge via `npx playwright-core install`, so either mode works out of the box.
+
+  **Rule for tests**: never hardcode `channel: "chrome"` or `channel: "msedge"` in test code, configuration helpers, or page objects. Always resolve through `ConfigurationManager.getBoolean("browser.use.branded", true)` and let the adapter map it. If a test needs bundled Chromium specifically (e.g. reproducing an issue), override at invocation time with `-Dbrowser.use.branded=false`.
+
+  **Headless note**: when running bundled Chromium in headless mode, the adapter auto-applies `--headless=new` so headless behavior matches the branded binary. This is transparent to tests — no test-side change is needed when toggling `browser.use.branded`.
+  
+  ### Configuration Properties
+  
+  ```properties
+  # Browser type
+  browser.type=chromium  # chromium, firefox, webkit
+  
+  # Headless mode
+  browser.headless=false
+  
+  # Video recording
+  browser.video.enabled=true
+  browser.video.path=target/videos/
+  
+  # Screenshots
+  browser.screenshot.enabled=true
+  browser.screenshot.path=target/screenshots/
+  
+  # Timeouts
+  browser.timeout.seconds=30
+  browser.navigation.timeout.seconds=60
+  ```
+  
+  ## Page Object Model
+  
+  ### Page Object Structure
+  
+  ```java
+  public final class LoginPage extends BasePage {
+      // Locators - static final constants using Locators static imports
+      private static final Locator USERNAME = id("username");
+      private static final Locator PASSWORD = id("password");
+      private static final Locator LOGIN_BUTTON = css("button[type='submit']");
+      private static final Locator ERROR_MESSAGE = className("alert-danger");
+
+      // Zero-arg constructor — BasePage resolves driver via ServiceLoader
+      // No stored element fields — call textBox()/button() inline (re-finds each time, no stale refs)
+
+      public DashboardPage login(String username, String password) {
+          textBox(USERNAME).enterText(username);
+          textBox(PASSWORD).enterText(password);
+          button(LOGIN_BUTTON).click();
+          return new DashboardPage();
+      }
+
+      public void loginExpectingError(String username, String password) {
+          textBox(USERNAME).enterText(username);
+          textBox(PASSWORD).enterText(password);
+          button(LOGIN_BUTTON).click();
+      }
+  
+      // Queries
+      // Note: try-catch is acceptable in Page Object query methods for element existence checks.
+      // This is different from Service Classes where try-catch is FORBIDDEN (see TEST_PATTERNS.yaml).
+      public boolean isErrorDisplayed() {
+          try {
+              return element(ERROR_MESSAGE).isDisplayed();
+          } catch (ElementNotFoundException e) {
+              return false;
+          }
+      }
+
+      public String getErrorMessage() {
+          return element(ERROR_MESSAGE).getText();
+      }
+  }
+  ```
+  
+  ### Page Object Best Practices
+  
+  1. **Locators are static final** - Immutable, defined once
+  2. **No stored element fields** - Call `textBox()`, `button()`, etc. inline (re-finds each time, no stale refs)
+  3. **Methods return next page** - login() returns DashboardPage
+  4. **Separate actions from queries** - login() vs isErrorDisplayed()
+  5. **Use logger** - Inherit from BasePage
+  6. **No assertions in page objects** - Return data, let tests assert
+  
+  ### Example Usage
+  
+  ```java
+  @Test
+  @WebTest
+  void test_login_validCredentials_showsDashboard() {
+      LoginPage loginPage = new LoginPage();
+  
+      DashboardPage dashboard = loginPage.login("testuser", "password123");
+  
+      assertThat(dashboard.isWelcomeMessageDisplayed()).isTrue();
+      assertThat(dashboard.getUsername()).isEqualTo("testuser");
+  }
+  
+  @Test
+  @WebTest
+  void test_login_invalidCredentials_showsError() {
+      LoginPage loginPage = new LoginPage();
+  
+      loginPage.loginExpectingError("baduser", "wrongpass");
+  
+      assertThat(loginPage.isErrorDisplayed()).isTrue();
+      assertThat(loginPage.getErrorMessage()).contains("Invalid credentials");
+  }
+  ```
+  
+  ## Best Practices
+  
+  ### 1. Use BaseWebTest for UI tests (target design)
+
+  ```java
+  public final class MyTest extends BaseWebTest {
+      // Driver automatically initialized and cleaned up
+
+      @Test
+      @WebTest  // METHOD-level: browser=CHROME (default), mode=LOCAL (default)
+      void test_feature_scenario_expectedBehavior() {
+          WebDriver driver = DriverManager.getDriver();
+          driver.navigateTo("https://example.com");
+      }
+  }
+  ```
+  
+  ### 2. Explicit Waits
+  
+  ```java
+  // ✅ GOOD - Explicit wait
+  Element button = driver.findElement(id("submit"));
+  button.waitUntilClickable(Duration.ofSeconds(10));
+  button.click();
+  
+  // ❌ BAD - Sleep
+  Thread.sleep(5000);
+  button.click();
+  ```
+  
+  ### 3. Use Appropriate Locators
+  
+  ```java
+  // ✅ BEST - Test ID
+  testId("submit-order-btn")
+  
+  // ✅ GOOD - Unique ID
+  id("submit-button")
+  
+  // ✅ OK - CSS
+  css("button.btn-primary")
+  
+  // ⚠️ AVOID - XPath
+  xpath("//div[@class='container']/button[2]")
+  ```
+  
+  ### 4. Handle Stale Elements
+  
+  ```java
+  // ✅ GOOD - Refetch element if it might be stale
+  public void clickButton() {
+      Element button = getDriver().findElement(BUTTON_LOCATOR);
+      button.click();
+  }
+  
+  // ❌ BAD - Storing element reference
+  private Element button;  // Can become stale!
+  
+  public void clickButton() {
+      button.click();  // May throw StaleElementException
+  }
+  ```
+  
+  ### 5. Use Service Classes for Setup
+  
+  ```java
+  // ✅ GOOD - Fast API setup
+  @Test
+  @WebTest
+  void test_order_displayInUI_showsCorrectStatus() {
+      // Setup via API (2 seconds)
+      ApiResponse response = OrderService.createOrder(traderToken, request);
+      OrderResponse order = response.as(OrderResponse.class);
+
+      // Verify in UI
+      OrderPage page = new OrderPage();
+      page.navigateToOrder(order.id());
+      assertThat(page.getDisplayedStatus()).isEqualTo("NEW");
+  }
+
+  // ❌ BAD - Slow UI setup
+  @Test
+  @WebTest
+  void test_order_displayInUI_slow() {
+      LoginPage login = new LoginPage();
+      login.login("user", "pass");  // 10 seconds
+      OrderPage page = new OrderPage();
+      page.createOrderThroughUI(...);  // 20 seconds
+  }
+  ```
+  
+  ## Common Patterns
+  
+  ### Pattern 1: Navigation with Waits
+  
+  ```java
+  public DashboardPage navigateToDashboard() {
+      driver.navigateTo("https://example.com/dashboard");
+  
+      Element header = driver.findElement(id("dashboard-header"));
+      header.waitUntilVisible(Duration.ofSeconds(10));
+  
+      return new DashboardPage();
+  }
+  ```
+  
+  ### Pattern 2: Form Filling
+  
+  ```java
+  public void fillOrderForm(OrderRequest order) {
+      textBox(id("symbol"))
+          .enterText(order.symbol());
+
+      textBox(id("quantity"))
+          .enterText(String.valueOf(order.quantity()));
+
+      textBox(id("price"))
+          .enterText(String.valueOf(order.price()));
+
+      dropDown(css("select#side"))
+          .selectByValue(order.side().toString());
+  }
+  ```
+  
+  ### Pattern 3: Table Interaction
+  
+  ```java
+  public List<OrderData> getOrdersFromTable() {
+      List<Element> rows = driver.findElements(css("table#orders tbody tr"));
+  
+      return rows.stream()
+          .map(row -> {
+              List<Element> cells = row.findElements(css("td"));
+              return new OrderData(
+                  cells.get(0).getText(),  // ID
+                  cells.get(1).getText(),  // Symbol
+                  cells.get(2).getText()   // Status
+              );
+          })
+          .toList();
+  }
+  ```
+  
+  ### Pattern 4: Modal Dialogs
+  
+  ```java
+  public void acceptConfirmationDialog() {
+      Element dialog = driver.findElement(className("modal"));
+      dialog.waitUntilVisible(Duration.ofSeconds(5));
+  
+      Element confirmButton = dialog.findElement(testId("confirm-button"));
+      confirmButton.click();
+  
+      dialog.waitUntilHidden(Duration.ofSeconds(5));
+  }
+  ```
+  
+  ### Pattern 5: Dynamic Content
+  
+  ```java
+  public void waitForOrderToComplete(String orderId) {
+      Element statusElement = driver.findElement(id("order-status-" + orderId));
+  
+      await().atMost(30, SECONDS)
+          .pollInterval(1, SECONDS)
+          .until(() -> statusElement.getText().equals("COMPLETED"));
+  }
+  ```
+  
+  ## Troubleshooting
+  
+  ### Issue: ElementNotFoundException
+  
+  **Cause**: Element not found or not loaded yet.
+  
+  **Solution**:
+  ```java
+  // Add explicit wait
+  Element button = driver.findElement(id("submit"));
+  button.waitUntilVisible(Duration.ofSeconds(10));
+  
+  // Or use Awaitility
+  await().atMost(10, SECONDS)
+      .until(() -> {
+          try {
+              return driver.findElement(id("submit")).isDisplayed();
+          } catch (ElementNotFoundException e) {
+              return false;
+          }
+      });
+  ```
+  
+  ### Issue: Element Not Clickable
+  
+  **Cause**: Element covered by another element or not ready.
+  
+  **Solution**:
+  ```java
+  // Wait until clickable
+  Element button = driver.findElement(id("submit"));
+  button.waitUntilClickable(Duration.ofSeconds(10));
+  button.click();
+  
+  // Or scroll into view first
+  driver.executeScript("arguments[0].scrollIntoView(true);", button);
+  button.click();
+  ```
+  
+  ### Issue: Stale Element
+  
+  **Cause**: Element reference became invalid after DOM update.
+  
+  **Solution**:
+  ```java
+  // ✅ GOOD - Refetch element
+  public void clickButton() {
+      Element button = getDriver().findElement(BUTTON_LOCATOR);
+      button.click();
+  }
+  
+  // ❌ BAD - Reusing old reference
+  private Element button = getDriver().findElement(BUTTON_LOCATOR);
+  button.click();  // May be stale
+  ```
+  
+  ### Issue: Tests Pass Locally, Fail in CI
+  
+  **Cause**: Timing differences, headless mode issues.
+  
+  **Solution**:
+  ```properties
+  # Use same headless mode
+  browser.headless=true
+  
+  # Increase timeouts
+  browser.timeout.seconds=30
+  
+  # Set viewport size
+  browser.viewport.width=1920
+  browser.viewport.height=1080
+  ```
+  
+  ### Issue: Slow Tests
+  
+  **Solution**:
+  1. Use service classes for setup (not UI)
+  2. Run tests in parallel
+  3. Reduce unnecessary waits
+  4. Use API tests instead of UI where possible
+  
+  ```bash
+  # Parallel execution
+  mvn test -Dparallel=all -DthreadCount=4
+  ```
+
+  ## MCP-Assisted Development
+
+  When Playwright MCP is available, use it for development assistance:
+
+  ### Locator Discovery Workflow
+
+  ```
+  # 1. Navigate to page
+  mcp__playwright__browser_navigate url="https://app.example.com/login"
+
+  # 2. Get accessibility snapshot
+  mcp__playwright__browser_snapshot
+  # Returns: element tree with data-testid, aria-label, etc.
+
+  # 3. Implement in Page Object (using Framework)
+  private static final Locator USERNAME = testId("login-username");
+  ```
+
+  ### Scenario Validation
+
+  Before implementing complex flows:
+  1. Use MCP to walk through the flow
+  2. Capture screenshots at key states
+  3. Document expected behavior
+  4. Implement using framework interfaces
+
+  ### Monorepo: Adding Missing data-testid
+
+  When MCP snapshot shows elements without `data-testid`:
+
+  **Frontend Component Locations:**
+  These paths are project-specific. Check your project's `.claude/PROJECT_TEST_CONTEXT.yaml` for the `frontend_component_paths` section, or ask the user for the correct paths. See `templates/PROJECT_CONTEXT_TEMPLATE.yaml` for the template.
+
+  **Workflow:**
+  1. Use `browser_snapshot` → Element lacks data-testid
+  2. Search for the element text or class in the frontend component paths provided by the project context
+  3. Add `data-testid="feature-element-type"` to component
+  4. Verify with `browser_snapshot`
+  5. Implement with `testId()`
+
+  ### MCP Tool Quick Reference
+
+  | MCP Tool | Framework Equivalent | When to Use |
+  |----------|---------------------|-------------|
+  | `browser_navigate` | `driver.navigateTo()` | Development exploration |
+  | `browser_click` | `element.click()` | Scenario validation |
+  | `browser_fill_form` | `textBox.enterText()` | Form testing exploration |
+  | `browser_snapshot` | (none) | Locator discovery |
+  | `browser_take_screenshot` | `driver.takeScreenshot()` | Visual documentation |
+
+  ### Framework Locator Strategies (Priority Order)
+
+  Map MCP snapshot attributes to Framework Locators:
+
+  | Priority | Snapshot Attribute | Framework Locator | Example |
+  |----------|-------------------|-------------------|---------|
+  | 1 (Best) | data-testid | `testId()` | `testId("login-button")` |
+  | 2 | id | `id()` | `id("submit-button")` |
+  | 3 | class | `className()` | `className("btn-primary")` |
+  | 4 | CSS selector | `css()` | `css("button[type='submit']")` |
+  | 5 | partial id | `partialId()` | `partialId("submit")` |
+  | 6 | partial text | `partialText()` | `partialText("Click")` |
+  | 7 | partial class | `partialClass()` | `partialClass("btn")` |
+  | 8 | regex pattern | `regex()` | `regex("button-\\d+")` |
+  | 9 | name attribute | `name()` | `name("username")` |
+  | 10 | ARIA role | `role()` | `role("button", "Submit")` |
+  | 11 | label text | `label()` | `label("Username")` |
+  | 12 | placeholder | `placeholder()` | `placeholder("Enter email")` |
+  | 13 | text content | `text()` | `text("Submit")` |
+  | 14 (Last) | XPath | `xpath()` | `xpath("//button")` |
+
+  **Important**: MCP tools are for exploration. Test code MUST use framework interfaces.
+
+  See: `MCP_USAGE_GUIDE.yaml` for complete reference.
+
+  ## Additional Element Types
+
+  ### Table
+
+  ```java
+  Table ordersTable = table(testId("orders-table"));
+  int rowCount = ordersTable.getRowCount();                   // Data rows only (excludes header)
+  String cell = ordersTable.getCellValue(2, 3);               // 0-based row, col
+  List<String> col = ordersTable.getColumnValues("Status");   // By header text
+  List<String> colIdx = ordersTable.getColumnValues(0);       // By index
+  Element row = ordersTable.getRow(1);                        // Get row element
+  Element found = ordersTable.findRowByText("EURUSD");        // First row containing text
+  List<String> headers = ordersTable.getHeaders();            // Column headers
+  int colCount = ordersTable.getColumnCount();
+  ```
+
+  ### FileInput
+
+  ```java
+  FileInput upload = fileInput(testId("document-upload"));
+  upload.setFile(Path.of("/path/to/file.pdf"));               // Single file
+  upload.setFiles(List.of(path1, path2));                     // Multiple (requires HTML multiple attr)
+  ```
+
+  ### Image
+
+  ```java
+  Image logo = image(testId("company-logo"));
+  String src = logo.getSrc();           // src attribute
+  String alt = logo.getAlt();           // alt attribute (empty string if not set)
+  boolean loaded = logo.isLoaded();     // Checks naturalHeight > 0
+  ```
+
+  ## Element Base Interface — Full API
+
+  All element types inherit these methods from the `Element` interface:
+
+  ```java
+  // Core interactions
+  element.click();
+  element.doubleClick();
+  element.rightClick();
+  element.hover();
+  element.sendKeys("text");
+  element.pressKey("Enter");            // Named keys: "Enter", "Tab", "Escape", "Control+A"
+  element.scrollIntoView();
+  element.focus();
+  element.blur();
+  element.dragTo(targetElement);        // Drag and drop
+
+  // Queries
+  String text = element.getText();
+  String attr = element.getAttribute("href");
+  String css = element.getCssValue("color");
+  String inner = element.getInnerHtml();
+  String outer = element.getOuterHtml();
+  boolean visible = element.isDisplayed();
+  boolean enabled = element.isEnabled();
+
+  // Waits
+  element.waitUntilVisible(Duration.ofSeconds(10));
+  element.waitUntilClickable(Duration.ofSeconds(10));
+  element.waitUntilHidden(Duration.ofSeconds(5));
+  element.waitForText("Expected", Duration.ofSeconds(5));
+  element.waitForAttribute("class", "active", Duration.ofSeconds(5));
+
+  // Multiple elements
+  List<? extends Element> all = element.all();   // All matching as typed list
+  List<Button> buttons = button(css(".btn")).all(); // Narrowed type
+  ```
+
+  ## Additional BasePage Methods
+
+  ```java
+  // Element queries
+  List<Element> items = elements(css(".item"));           // All matching elements
+  int count = countElements(css(".notification"));        // Count matches
+
+  // Wait for element presence/absence
+  waitForElement(testId("loading-done"), Duration.ofSeconds(10));
+  waitForElementAbsent(testId("spinner"), Duration.ofSeconds(10));
+
+  // Dialog handling
+  acceptNextDialog();                    // Auto-accept next JS dialog
+  dismissNextDialog();                   // Auto-dismiss next JS dialog
+  acceptNextDialog("prompt text");       // Accept prompt() with text
+
+  // Frame management (FrameSwitcher interface — see "Iframe handling" below)
+  switchToFrame("iframe-name");          // By CSS selector / name / id string
+  switchToFrame(testId("content-frame")); // By framework Locator
+  switchToParentFrame();                 // Pop one frame level
+  switchToDefaultContent();              // Back to main content (clears frame stack)
+
+  // Screenshots
+  takeScreenshot(Path.of("screenshot.png"));
+  ```
+
+  ## Iframe Handling (FrameSwitcher)
+
+  Iframe switching is defined on the `FrameSwitcher` interface in `com.tradu.core.driver`. `WebDriver` extends `Driver, FrameSwitcher`, and `BasePage` exposes the same four methods directly — so page objects and tests can switch frames without going through `driver()`.
+
+  ```java
+  // On BasePage (and therefore any page object):
+  switchToFrame(String selectorOrName);  // CSS selector, frame name, or frame id
+  switchToFrame(Locator locator);        // Framework Locator (testId, css, xpath, ...)
+  switchToParentFrame();                 // Pop one frame level off the internal stack
+  switchToDefaultContent();              // Clear the whole stack — back to top-level page
+  ```
+
+  **Scoped context** — once a frame is active, the framework automatically scopes to that frame for:
+  - Element lookup (`element(...)`, `button(...)`, `textBox(...)`, etc.)
+  - JavaScript execution (`JavaScriptExecutor.execute(...)`)
+  - Web storage (`LocalStorage` / `SessionStorage`)
+
+  You do not need to pass a frame reference around — just switch in, work, switch out. Nested frames are supported via an internal deque.
+
+  **Nested frame example**:
+
+  ```java
+  public final class CheckoutPage extends BasePage {
+      private static final Locator PAYMENT_FRAME = testId("payment-iframe");
+      private static final Locator THREE_DS_FRAME = css("iframe[title='3D Secure']");
+      private static final Locator CARD_NUMBER = id("card-number");
+      private static final Locator OTP_INPUT = id("otp");
+
+      public void enterCardAndConfirmOtp(String pan, String otp) {
+          switchToFrame(PAYMENT_FRAME);          // enter payment iframe
+          textBox(CARD_NUMBER).enterText(pan);
+          switchToFrame(THREE_DS_FRAME);         // enter nested 3DS iframe
+          textBox(OTP_INPUT).enterText(otp);
+          button(id("submit")).click();
+          switchToDefaultContent();              // back to main page
+      }
+  }
+  ```
+
+  **Rules**:
+  - Always encapsulate frame switching **inside the page object that owns the iframe** — never leak `switchToFrame(...)` calls into test code. Tests call domain methods like `enterCardAndConfirmOtp(...)` and stay unaware of the DOM nesting.
+  - Tab switches and `driver().navigateTo(...)` automatically reset the frame stack — no manual `switchToDefaultContent()` needed before navigation.
+  - `switchToFrame(String)` accepts blank strings as an error (rejected with a clear message, not silent fallback); backslashes in the string are safely escaped to prevent CSS selector breakout.
+  - Prefer the `Locator` overload when the iframe has a `data-testid` — it's typo-safe and consistent with the rest of the page object.
+  - Never import `com.microsoft.playwright.Frame` in core/tests — that would leak the adapter type across the hexagonal boundary. If you catch yourself wanting to, you need `switchToFrame(...)` instead.
+
+  ## WebDriver Advanced Features
+
+  ### Tab/Window Management
+
+  ```java
+  int newTabIndex = driver().newTab();           // Open and switch to new tab
+  driver().switchToTab(1);                       // Switch by 0-based index
+  driver().closeTab(1);                          // Close tab (throws if last)
+  int count = driver().getTabCount();
+  int current = driver().getCurrentTabIndex();
+  int popupIdx = driver().waitForPopup(() -> link.click()); // Wait for popup from action
+  ```
+
+  ### Request Interception
+
+  ```java
+  driver().mockResponses("**/api/orders", mockResponse);      // Return mock for URL pattern
+  driver().modifyRequests("**/api/**", requestOverride);       // Modify request before sending
+  driver().modifyResponses("**/api/**", responseTransformer);  // Transform real response
+  driver().blockRequests("**/analytics/**");                   // Block matching requests
+  driver().removeRoute("**/api/orders");                       // Remove specific route
+  driver().removeAllRoutes();                                  // Clear all (call in @AfterEach)
+  ```
+
+  ### Download Handling
+
+  ```java
+  driver().saveDownload(() -> downloadBtn.click(),
+      Path.of("downloads/report.pdf"), Duration.ofSeconds(30));
+  ```
+
+  ### Load State Waits
+
+  ```java
+  driver().waitForUrl("**/dashboard", Duration.ofSeconds(10));           // Glob pattern
+  driver().waitForLoadState("networkidle", Duration.ofSeconds(10));      // "load", "domcontentloaded", "networkidle"
+  driver().waitForNetworkIdle(Duration.ofSeconds(5));                    // No network for 500ms
+  ```
+
+  ### Tracing
+
+  ```java
+  driver().startTracing();
+  // ... test actions ...
+  driver().stopTracing(Path.of("trace.zip"));   // View: npx playwright show-trace trace.zip
+  ```
+
+  ### Viewport and Diagnostics
+
+  ```java
+  driver().setViewportSize(1920, 1080);
+  driver().startGroup("Login flow");             // Action grouping for trace viewer
+  // ... login actions ...
+  driver().endGroup();
+
+  PageDiagnostics diagnostics = driver().getPageDiagnostics();
+  // diagnostics.consoleMessages() — console.log output
+  // diagnostics.pageErrors() — uncaught JS errors
+  // diagnostics.requestUrls() — network request URLs
+  ```
+
+  ## Cookie Management
+
+  ```java
+  import com.tradu.core.cookie.CookieManager;
+  import com.tradu.core.cookie.Cookie;
+
+  List<Cookie> all = CookieManager.getCookies();
+  Optional<Cookie> auth = CookieManager.getCookie("auth_token");
+  CookieManager.addCookie(new Cookie("session", "abc123", ".example.com"));
+  // Full: new Cookie(name, value, domain, path, secure, httpOnly, sameSite)
+  // Convenience: new Cookie(name, value, domain) — defaults: path="/", secure=false, httpOnly=false
+  CookieManager.deleteCookie("session");
+  CookieManager.clearCookies();
+  ```
+
+  ## JavaScript Execution
+
+  ```java
+  import com.tradu.core.javascript.JavaScriptExecutor;
+
+  JavaScriptExecutor.execute("window.scrollTo(0, document.body.scrollHeight)");
+  String title = (String) JavaScriptExecutor.executeWithResult("return document.title");
+  Long count = (Long) JavaScriptExecutor.executeWithResult("return document.querySelectorAll('.item').length");
+  // Return types: String, Number (Integer/Double), Boolean, List, Map, null
+  ```
+
+  ## Browser Storage
+
+  ```java
+  import com.tradu.core.storage.LocalStorage;
+  import com.tradu.core.storage.SessionStorage;
+
+  // Both have identical API
+  LocalStorage.setItem("key", "value");
+  String val = LocalStorage.getItem("key");       // null if not exists
+  LocalStorage.removeItem("key");
+  LocalStorage.clear();
+  int size = LocalStorage.getLength();
+  List<String> keys = LocalStorage.getKeys();
+  boolean exists = LocalStorage.hasItem("key");
+  LocalStorage.setItems(Map.of("k1", "v1", "k2", "v2"));   // Batch set
+  LocalStorage.removeItems(List.of("k1", "k2"));             // Batch remove
+  ```
+
+  ## Container Execution (Testcontainers)
+
+  **Use the tool-agnostic `DriverContainer` API** from `test-automation-core` — never instantiate `PlaywrightContainer` directly from test code. `DriverContainer.create()` / `DriverContainer.getOrStart()` are SPI-discovered via `DriverContainerProvider`, so tests stay decoupled from the adapter. Switching from Playwright to another adapter becomes a Maven dependency swap with zero test code changes.
+
+  ```java
+  import com.tradu.core.driver.DriverContainer;
+
+  // Create and configure — no Playwright-specific imports needed
+  DriverContainer<?> container = DriverContainer.create()
+      .withBrowser(Browser.FIREFOX)
+      .withTestFileFromClasspath("/test-page.html", "test-page.html");
+  container.start();
+
+  // Connect with matching browser
+  DriverConfig config = DriverConfig.builder()
+      .browser(Browser.FIREFOX)
+      .executionMode(ExecutionMode.CONTAINER)
+      .wsEndpoint(container.getWsEndpoint())
+      .build();
+  WebDriver driver = DriverManager.initializeDriver(config);
+  ```
+
+  ### Extra exposed ports
+
+  `DriverContainer.withAdditionalExposedPorts(int...)` exposes extra container ports **without** replacing framework defaults (browser WS on 3000, file server on 8080). Useful when the containerized browser needs to reach a sidecar service launched inside the same container, or when debug tooling needs a port mapped back to the host.
+
+  ```java
+  DriverContainer<?> container = DriverContainer.create()
+      .withBrowser(Browser.CHROME)
+      .withAdditionalExposedPorts(9222, 9000)   // debug + metrics endpoints
+      .withTestFileFromClasspath("/test-page.html", "test-page.html");
+  container.start();
+
+  int debugHostPort = container.getMappedPort(9222);
+  ```
+
+  ### Shared container across test classes (SharedContainerFixture)
+
+  `DriverContainer.getOrStart()` returns a process-wide singleton with a JVM shutdown hook — one-time startup, reused across every test class that touches it. Replaces the per-class `@Container` field pattern and cuts container startup from N-per-class to 1-per-process.
+
+  `getOrStart(UnaryOperator<DriverContainer<?>> configurator)` applies one-time configuration on the **first** call (browser choice, extra ports, mounted test files). Subsequent calls return the existing singleton and ignore their configurator argument.
+
+  ```java
+  // src/test/java/.../SharedContainerFixture.java
+  public final class SharedContainerFixture {
+      private SharedContainerFixture() {}
+
+      public static DriverContainer<?> get() {
+          return DriverContainer.getOrStart(c -> c
+              .withBrowser(Browser.valueOf(
+                  ConfigurationManager.getProperty("browser", "CHROME").toUpperCase()))
+              .withTestFileFromClasspath("/fixtures/test-page.html", "test-page.html"));
+      }
+  }
+
+  // In any test class — no per-class @Container field, no manual start/stop
+  class OrderFlowContainerTest extends BaseWebTest {
+      @BeforeAll
+      static void setUp() {
+          DriverContainer<?> container = SharedContainerFixture.get();
+          DriverManager.initializeDriver(DriverConfig.builder()
+              .browser(Browser.CHROME)
+              .executionMode(ExecutionMode.CONTAINER)
+              .wsEndpoint(container.getWsEndpoint())
+              .build());
+      }
+  }
+  ```
+
+  Docker image build: `docker build -t playwright-server:${PW_VERSION} test-automation-web-playwright/src/main/resources/docker/`
+  Runtime: `mvn test -Dexecution.mode=CONTAINER`
+
+  ## @WebTest Annotation
+
+  Metadata-only annotation on test methods — NOT auto-processed by any JUnit extension. Tests must manually init drivers via `DriverManager.initializeDriver()`.
+
+  ```java
+  @Test
+  @WebTest(browser = Browser.CHROME, mode = ExecutionMode.LOCAL, headless = true)
+  void testFeature() {
+      // @WebTest is metadata — driver init is manual
+      DriverManager.initializeDriver(DriverConfig.builder()
+          .browser(Browser.CHROME).headless(true).build());
+      // ... test code ...
+  }
+  ```
+
+  ## Driver Lifecycle SPI
+
+  ```java
+  public interface DriverLifecycleListener {
+      default void onDriverCreated(WebDriver driver) {}      // After driver registered
+      default void onBeforeDriverQuit(WebDriver driver) {}   // Before driver destroyed
+  }
+  // Register: META-INF/services/com.tradu.core.driver.DriverLifecycleListener
+  // Built-in: AllureDriverLifecycleListener (auto-captures artifacts before quit)
+  ```
+
+  ---
+
+  **Next**: Read `API_TESTING_GUIDE.yaml` for service class patterns and API testing.

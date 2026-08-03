@@ -1,0 +1,8 @@
+# Backlog configuration. The single shared backlog for this project (or
+# workspace parent). Task files live in backlog/tasks/ and move to
+# backlog/completed/ on finalize (pipeline Step 10).
+statuses:
+  - To Do
+  - In Progress
+  - Done
+idPrefix: AISDLC

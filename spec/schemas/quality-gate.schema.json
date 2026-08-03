@@ -1,0 +1,478 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-sdlc.io/schemas/v1alpha1/quality-gate.schema.json",
+  "title": "AI-SDLC QualityGate",
+  "description": "Defines policy rules with graduated enforcement levels.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "$ref": "common.schema.json#/$defs/apiVersion"
+    },
+    "kind": {
+      "type": "string",
+      "const": "QualityGate"
+    },
+    "metadata": {
+      "$ref": "common.schema.json#/$defs/metadata"
+    },
+    "spec": {
+      "type": "object",
+      "required": ["gates"],
+      "properties": {
+        "soulScope": {
+          "type": "string",
+          "description": "Soul DID URI per RFC-0009 §8.4. When present, the gate applies only to work targeting this soul (e.g., a soul-specific voice-coherence gate). Omission preserves single-DID behavior (platform-wide gate applying to all souls)."
+        },
+        "scope": {
+          "type": "object",
+          "description": "Targeting criteria for the gate.",
+          "properties": {
+            "repositories": {
+              "type": "array",
+              "description": "Repository patterns to match (glob).",
+              "items": { "type": "string" }
+            },
+            "authorTypes": {
+              "type": "array",
+              "description": "Author types to target (e.g., ai-agent, human).",
+              "items": {
+                "type": "string",
+                "enum": ["ai-agent", "human", "bot", "service-account"]
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "gates": {
+          "type": "array",
+          "description": "Individual gate rules.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name", "enforcement", "rule"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Unique gate name within the QualityGate."
+              },
+              "enforcement": {
+                "type": "string",
+                "enum": ["advisory", "soft-mandatory", "hard-mandatory"],
+                "description": "The enforcement level."
+              },
+              "rule": {
+                "description": "The evaluation rule. One of: metric-based, tool-based, reviewer-based, documentation-based, provenance-based, or cost-based.",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "title": "Metric-based rule",
+                    "required": ["metric", "operator", "threshold"],
+                    "properties": {
+                      "metric": {
+                        "type": "string",
+                        "description": "The metric to evaluate."
+                      },
+                      "operator": {
+                        "type": "string",
+                        "enum": [">=", "<=", "==", "!=", ">", "<"],
+                        "description": "Comparison operator."
+                      },
+                      "threshold": {
+                        "type": "number",
+                        "description": "The threshold value."
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "title": "Tool-based rule",
+                    "required": ["tool"],
+                    "properties": {
+                      "tool": {
+                        "type": "string",
+                        "description": "The analysis tool to run."
+                      },
+                      "maxSeverity": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high", "critical"],
+                        "description": "Maximum allowed finding severity."
+                      },
+                      "rulesets": {
+                        "type": "array",
+                        "description": "Rulesets to enable.",
+                        "items": { "type": "string" }
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "title": "Reviewer-based rule",
+                    "required": ["minimumReviewers"],
+                    "properties": {
+                      "minimumReviewers": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Minimum number of required reviewers."
+                      },
+                      "aiAuthorRequiresExtraReviewer": {
+                        "type": "boolean",
+                        "description": "Whether AI-authored code requires an additional reviewer."
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "title": "Documentation-based rule",
+                    "required": ["changedFilesRequireDocUpdate"],
+                    "properties": {
+                      "changedFilesRequireDocUpdate": {
+                        "type": "boolean",
+                        "description": "Whether changed files require documentation updates."
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "title": "Provenance-based rule",
+                    "required": ["requireAttribution"],
+                    "properties": {
+                      "requireAttribution": {
+                        "type": "boolean",
+                        "description": "Whether AI-generated code requires provenance attribution."
+                      },
+                      "requireHumanReview": {
+                        "type": "boolean",
+                        "description": "Whether a human review record is required."
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "title": "Cost-based rule",
+                    "required": ["cost"],
+                    "properties": {
+                      "cost": {
+                        "type": "object",
+                        "required": ["metric", "operator", "threshold"],
+                        "properties": {
+                          "metric": {
+                            "type": "string",
+                            "enum": [
+                              "total-execution-cost",
+                              "token-cost",
+                              "cost-per-line",
+                              "cost-per-file",
+                              "budget-remaining-percent",
+                              "cost-vs-estimate",
+                              "attribution-complete",
+                              "retry-cost-ratio"
+                            ],
+                            "description": "The cost metric to evaluate."
+                          },
+                          "operator": {
+                            "type": "string",
+                            "enum": [">=", "<=", "==", "!=", ">", "<"],
+                            "description": "Comparison operator."
+                          },
+                          "threshold": {
+                            "type": "number",
+                            "description": "The threshold value."
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "title": "Design token compliance rule (RFC-0006 §8.1)",
+                    "required": ["designTokenCompliance", "designSystem"],
+                    "properties": {
+                      "designTokenCompliance": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "designSystem": {
+                        "type": "string",
+                        "description": "Reference to a DesignSystemBinding by name."
+                      },
+                      "category": {
+                        "type": "string",
+                        "description": "Token category to check (e.g., color, spacing, typography)."
+                      },
+                      "maxViolations": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Maximum allowed hardcoded value violations."
+                      },
+                      "coverageMetric": {
+                        "type": "object",
+                        "description": "Evaluate token coverage as a metric.",
+                        "required": ["operator", "threshold"],
+                        "properties": {
+                          "operator": {
+                            "type": "string",
+                            "enum": [">=", "<=", "==", "!=", ">", "<"]
+                          },
+                          "threshold": {
+                            "type": "number"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "title": "Visual regression rule (RFC-0006 §8.2)",
+                    "required": ["visualRegression", "designSystem"],
+                    "properties": {
+                      "visualRegression": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "designSystem": {
+                        "type": "string",
+                        "description": "Reference to a DesignSystemBinding by name."
+                      },
+                      "config": {
+                        "type": "object",
+                        "required": ["diffThreshold"],
+                        "properties": {
+                          "diffThreshold": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "description": "Maximum pixel diff percentage (0.0-1.0)."
+                          },
+                          "failOnNewStory": {
+                            "type": "boolean",
+                            "description": "Whether new stories without baselines fail."
+                          },
+                          "requireBaseline": {
+                            "type": "boolean",
+                            "description": "Whether a baseline must exist."
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "override": {
+                        "type": "object",
+                        "properties": {
+                          "approvers": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Principals who may approve visual diffs."
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "title": "Story completeness rule (RFC-0006 §8.3)",
+                    "required": ["storyCompleteness"],
+                    "properties": {
+                      "storyCompleteness": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "config": {
+                        "type": "object",
+                        "properties": {
+                          "requireDefaultStory": {
+                            "type": "boolean",
+                            "description": "Require a default/primary story."
+                          },
+                          "requireStateStories": {
+                            "type": "boolean",
+                            "description": "Require stories for interactive states."
+                          },
+                          "requireA11yStory": {
+                            "type": "boolean",
+                            "description": "Require an accessibility-focused story."
+                          },
+                          "minStories": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Minimum number of stories per component."
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "title": "Design review rule (RFC-0006 §8.5)",
+                    "required": ["designReview", "designSystem", "reviewers"],
+                    "properties": {
+                      "designReview": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "designSystem": {
+                        "type": "string",
+                        "description": "Reference to a DesignSystemBinding by name."
+                      },
+                      "reviewers": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Principals qualified to perform design review."
+                      },
+                      "minimumReviewers": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 1
+                      },
+                      "timeout": {
+                        "type": "string",
+                        "description": "ISO 8601 duration for review timeout."
+                      },
+                      "onTimeout": {
+                        "type": "string",
+                        "enum": ["pause", "fail"]
+                      },
+                      "triggerConditions": {
+                        "type": "object",
+                        "properties": {
+                          "always": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": ["new-component", "token-schema-change"]
+                            }
+                          },
+                          "conditional": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": ["condition", "threshold"],
+                              "properties": {
+                                "condition": {
+                                  "type": "string",
+                                  "enum": ["semantic-token-cascade", "visual-regression-diff", "complexity-score"]
+                                },
+                                "threshold": { "type": "number" }
+                              },
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "feedback": {
+                        "type": "object",
+                        "properties": {
+                          "structured": { "type": "boolean" },
+                          "categories": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": ["visual-quality", "contextual-fit", "interaction-design", "accessibility-intent", "design-language-consistency"]
+                            }
+                          },
+                          "actionOnReject": {
+                            "type": "string",
+                            "enum": ["return-to-agent", "escalate"]
+                          },
+                          "maxRejections": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "override": {
+                "type": "object",
+                "description": "Override configuration. Only valid for soft-mandatory enforcement.",
+                "required": ["requiredRole"],
+                "properties": {
+                  "requiredRole": {
+                    "type": "string",
+                    "description": "The role authorized to override."
+                  },
+                  "requiresJustification": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether a justification text is required."
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "evaluation": {
+          "type": "object",
+          "description": "When and how to evaluate.",
+          "properties": {
+            "pipeline": {
+              "type": "string",
+              "enum": ["pre-merge", "post-merge", "continuous"],
+              "description": "When to evaluate."
+            },
+            "timeout": {
+              "type": "string",
+              "description": "Maximum evaluation duration.",
+              "pattern": "^\\d+[smhdw]$"
+            },
+            "retryPolicy": {
+              "type": "object",
+              "description": "Retry configuration for failed evaluations.",
+              "properties": {
+                "maxRetries": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Maximum number of retries."
+                },
+                "backoff": {
+                  "type": "string",
+                  "enum": ["linear", "exponential"],
+                  "description": "Backoff strategy."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "compliant": {
+          "type": "boolean",
+          "description": "Whether all gates are currently passing."
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/condition"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

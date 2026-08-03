@@ -1,0 +1,92 @@
+{
+  "iteration": 0,
+  "status": "pending",
+  "captured_at": null,
+  "skill_version": "1.1.0",
+  "rule_under_test": "deserialize-for-assertions + parameterize-repetitive-tests",
+  "branch": "feat/qa-deserialize-only-api-assertions",
+  "model": {
+    "id": "claude-opus-4-7",
+    "temperature": 0.0,
+    "max_tokens": 16384,
+    "note": "Update to match the actual model used when populating."
+  },
+  "configurations": {
+    "without_skill": {
+      "description": "Baseline: rule statements for deserialize-for-assertions and parameterize-repetitive-tests are removed from agents, references, and context files. CLAUDE.md and all other framework rules remain. Measures the incremental value of these two rules, not total agent capability.",
+      "reverted_files": [
+        "agents/qa-automation-architect.md",
+        "agents/qa-code-reviewer.md",
+        "commands/qa/automate-functional-tests.md",
+        "commands/qa/automate-functional-tests/references/automation-prompt.md",
+        "commands/qa/automate-functional-tests/references/review-prompt.md",
+        "commands/qa/automate-functional-tests/references/fix-prompt.md",
+        "contexts/test-automation/FRAMEWORK_CONTEXT.yaml",
+        "contexts/test-automation/guides/API_TESTING_GUIDE.yaml",
+        "contexts/test-automation/guides/TEST_PATTERNS.yaml",
+        "contexts/test-automation/reference/API_QUICK_REFERENCE.yaml"
+      ],
+      "reverted_to_commit": "main"
+    },
+    "with_skill": {
+      "description": "Current state of branch feat/qa-deserialize-only-api-assertions — all rule statements present.",
+      "reverted_files": [],
+      "reverted_to_commit": "HEAD"
+    }
+  },
+  "n_per_config": 3,
+  "evals": [
+    {
+      "eval_id": 1,
+      "eval_name": "small-api-only",
+      "discriminating_for": ["deserialize-for-assertions"],
+      "without_skill": { "n_runs": 0, "per_assertion_pass": null, "overall_pass_rate": null, "tokens_avg": null },
+      "with_skill":    { "n_runs": 0, "per_assertion_pass": null, "overall_pass_rate": null, "tokens_avg": null },
+      "delta": null
+    },
+    {
+      "eval_id": 13,
+      "eval_name": "repetitive-tests-parameterization",
+      "discriminating_for": ["parameterize-repetitive-tests"],
+      "without_skill": { "n_runs": 0, "per_assertion_pass": null, "overall_pass_rate": null, "tokens_avg": null },
+      "with_skill":    { "n_runs": 0, "per_assertion_pass": null, "overall_pass_rate": null, "tokens_avg": null },
+      "delta": null
+    },
+    {
+      "eval_id": 14,
+      "eval_name": "parameterize-carve-out-distinct-scenarios",
+      "discriminating_for": ["parameterize-repetitive-tests-carve-out"],
+      "without_skill": { "n_runs": 0, "per_assertion_pass": null, "overall_pass_rate": null, "tokens_avg": null },
+      "with_skill":    { "n_runs": 0, "per_assertion_pass": null, "overall_pass_rate": null, "tokens_avg": null },
+      "delta": null
+    },
+    {
+      "eval_id": 9,
+      "eval_name": "negative-empty-file",
+      "discriminating_for": [],
+      "control_group": true,
+      "without_skill": { "n_runs": 0, "per_assertion_pass": null, "overall_pass_rate": null, "tokens_avg": null },
+      "with_skill":    { "n_runs": 0, "per_assertion_pass": null, "overall_pass_rate": null, "tokens_avg": null },
+      "delta": null,
+      "expected_delta": 0.0
+    },
+    {
+      "eval_id": 10,
+      "eval_name": "negative-file-not-found",
+      "discriminating_for": [],
+      "control_group": true,
+      "without_skill": { "n_runs": 0, "per_assertion_pass": null, "overall_pass_rate": null, "tokens_avg": null },
+      "with_skill":    { "n_runs": 0, "per_assertion_pass": null, "overall_pass_rate": null, "tokens_avg": null },
+      "delta": null,
+      "expected_delta": 0.0
+    }
+  ],
+  "summary": {
+    "rules_validated": [],
+    "discriminating_evals": [],
+    "non_discriminating_evals": [],
+    "regressions": [],
+    "cost_delta_pct": null,
+    "conclusion": "TO BE POPULATED after run.sh execution. Until then, treat the new rules as empirically unvalidated — they are technically sound and well-integrated, but no measured pass-rate delta has been recorded yet."
+  }
+}

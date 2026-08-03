@@ -1,0 +1,947 @@
+name: "CONFIGURATION_GUIDE"
+type: "guide"
+version: "1.0.0"
+description: "Complete guide to configuring the Tradu Test Automation Framework for different environments and integrations."
+last_updated: "2026-04-15"
+maintained_by: "Tradu QA Team"
+
+content: |
+  # Configuration Guide
+  
+  > Complete guide to configuring the Tradu Test Automation Framework for different environments and integrations.
+  
+  ## Table of Contents
+  
+  - [Overview](#overview)
+  - [Environment Profiles](#environment-profiles)
+  - [Core Properties](#core-properties)
+  - [Web Browser Configuration](#web-browser-configuration)
+  - [API Configuration](#api-configuration)
+  - [BrowserStack Integration](#browserstack-integration)
+  - [XRay Integration](#xray-integration)
+  - [Teams Notifications](#teams-notifications)
+  - [Redis Configuration](#redis-configuration)
+  - [Security Best Practices](#security-best-practices)
+  - [Complete Examples](#complete-examples)
+  
+  ## Overview
+  
+  The framework uses Spring-style property files for configuration:
+  
+  ```
+  src/test/resources/
+  ├── application.properties          # Default properties
+  ├── application-dev.properties      # Development environment
+  ├── application-staging.properties  # Staging environment
+  └── application-prod.properties     # Production environment
+  ```
+  
+  **Select environment**:
+  ```bash
+  # Via Maven
+  mvn test -Dtest.env=staging
+  
+  # Via system property
+  -Dtest.env=prod
+  
+  # Default: dev
+  ```
+  
+  ## Environment Profiles
+  
+  ### Dev Profile (application-dev.properties)
+  
+  ```properties
+  # API Configuration
+  api.base.url=http://localhost:8080
+  api.timeout.seconds=30
+  api.retry.attempts=3
+  
+  # Browser Configuration
+  browser.type=chromium
+  browser.headless=false
+  browser.video.enabled=false
+  browser.screenshot.enabled=true
+  
+  # Database (optional)
+  db.url=jdbc:postgresql://localhost:5432/testdb
+  db.username=testuser
+  db.password=testpass
+  
+  # Integrations
+  xray.enabled=false
+  teams.enabled=false
+  redis.enabled=false
+  ```
+  
+  ### Staging Profile (application-staging.properties)
+  
+  ```properties
+  # API Configuration
+  api.base.url=https://staging-api.example.com
+  api.timeout.seconds=60
+  api.retry.attempts=5
+  
+  # Browser Configuration
+  browser.type=chromium
+  browser.headless=true
+  browser.video.enabled=true
+  browser.screenshot.enabled=true
+  
+  # BrowserStack (optional)
+  browserstack.enabled=true
+  browserstack.username=${BROWSERSTACK_USERNAME}
+  browserstack.accessKey=${BROWSERSTACK_ACCESS_KEY}
+  
+  # Database
+  db.url=jdbc:postgresql://staging-db.example.com:5432/testdb
+  db.username=${DB_USERNAME}
+  db.password=${DB_PASSWORD}
+  
+  # Integrations
+  xray.enabled=true
+  xray.clientId=${XRAY_CLIENT_ID}
+  xray.clientSecret=${XRAY_CLIENT_SECRET}
+  
+  teams.enabled=true
+  teams.webhookUrl=${TEAMS_WEBHOOK_URL}
+  
+  redis.enabled=true
+  redis.host=staging-redis.example.com
+  ```
+  
+  ### Prod Profile (application-prod.properties)
+  
+  ```properties
+  # API Configuration
+  api.base.url=https://api.example.com
+  api.timeout.seconds=120
+  api.retry.attempts=10
+  
+  # Browser Configuration
+  browser.type=chromium
+  browser.headless=true
+  browser.video.enabled=true
+  browser.screenshot.enabled=true
+  
+  # BrowserStack
+  browserstack.enabled=true
+  browserstack.username=${BROWSERSTACK_USERNAME}
+  browserstack.accessKey=${BROWSERSTACK_ACCESS_KEY}
+  
+  # Database
+  db.url=jdbc:postgresql://prod-db.example.com:5432/testdb
+  db.username=${DB_USERNAME}
+  db.password=${DB_PASSWORD}
+  
+  # Integrations
+  xray.enabled=true
+  xray.clientId=${XRAY_CLIENT_ID}
+  xray.clientSecret=${XRAY_CLIENT_SECRET}
+  
+  teams.enabled=true
+  teams.webhookUrl=${TEAMS_WEBHOOK_URL}
+  
+  redis.enabled=true
+  redis.host=prod-redis.example.com
+  redis.password=${REDIS_PASSWORD}
+  ```
+  
+  ## Core Properties
+  
+  ### API Configuration
+  
+  ```properties
+  # Base URL for REST API tests
+  api.base.url=https://api.example.com
+  
+  # Default timeout for API requests (seconds)
+  api.timeout.seconds=30
+  
+  # Retry attempts for failed requests
+  api.retry.attempts=3
+  
+  # Delay between retries (milliseconds)
+  api.retry.delay.ms=1000
+  
+  # Connection pool size
+  api.connection.pool.size=10
+  
+  # Enable request/response logging
+  api.logging.enabled=true
+  ```
+  
+  **Usage in code**:
+  ```java
+  String baseUrl = ConfigurationManager.getProperty("api.base.url");
+  int timeout = Integer.parseInt(ConfigurationManager.getProperty("api.timeout.seconds", "30"));
+  ```
+  
+  ### Timeout Configuration
+  
+  ```properties
+  # Element wait timeout (seconds)
+  element.timeout.seconds=10
+  
+  # Page load timeout (seconds)
+  page.load.timeout.seconds=30
+  
+  # Script execution timeout (seconds)
+  script.timeout.seconds=30
+  
+  # Implicit wait (seconds) - NOT RECOMMENDED
+  implicit.wait.seconds=0
+  ```
+  
+  ## Web Browser Configuration
+  
+  ### Basic Browser Settings
+  
+  ```properties
+  # Browser type: chromium, firefox, webkit
+  browser.type=chromium
+  
+  # Headless mode
+  browser.headless=false
+  
+  # Slow motion (milliseconds between actions)
+  browser.slowmo.ms=0
+  
+  # Browser timeout (milliseconds)
+  browser.timeout.seconds=30
+  
+  # Navigation timeout (milliseconds)
+  browser.navigation.timeout.seconds=60
+  ```
+  
+  ### Video Recording
+  
+  ```properties
+  # Enable video recording
+  browser.video.enabled=true
+  
+  # Video output directory
+  browser.video.path=target/videos/
+  
+  # Video size (width x height)
+  browser.video.size=1280x720
+  
+  # Video quality (0-100)
+  browser.video.quality=80
+  ```
+  
+  ### Screenshots
+  
+  ```properties
+  # Enable screenshots on failure
+  browser.screenshot.enabled=true
+  
+  # Screenshot output directory
+  browser.screenshot.path=target/screenshots/
+  
+  # Screenshot format: png, jpeg
+  browser.screenshot.format=png
+  
+  # Full page screenshots
+  browser.screenshot.fullpage=true
+  ```
+  
+  ### Viewport Configuration
+
+  ```properties
+  # Viewport width — maps to DriverConfig.builder().viewportWidth(int)
+  browser.viewport.width=1920
+
+  # Viewport height — maps to DriverConfig.builder().viewportHeight(int)
+  browser.viewport.height=1080
+
+  # Device scale factor
+  browser.viewport.deviceScaleFactor=1
+  ```
+
+  These properties map directly to the `viewportWidth(int)` / `viewportHeight(int)` builder methods on `DriverConfig` — viewport is applied at BrowserContext creation time. If a test needs to resize mid-run, use `driver().setViewportSize(w, h)` instead; reserve `setViewportSize` for runtime changes and use the builder fields for the initial size.
+
+  ### Branded Browser Channel
+
+  ```properties
+  # Use branded Chrome / Edge (default true) vs Playwright bundled Chromium (false)
+  browser.use.branded=true
+  ```
+
+  Resolved via `ConfigurationManager` with the standard order: system property `-Dbrowser.use.branded=false` → env var `BROWSER_USE_BRANDED` → properties file → default `true`.
+
+  - `true` + `browser=CHROME` → Playwright channel `"chrome"` (real Google Chrome binary, requires branded install on LOCAL machines; the framework Docker image pre-installs it for CONTAINER mode)
+  - `true` + `browser=EDGE` → Playwright channel `"msedge"` (real Microsoft Edge binary)
+  - `false` → Playwright bundled Chromium (no branded install needed; headless mode auto-applies `--headless=new` to match branded behavior)
+
+  **Rule**: never hardcode the Playwright channel string in test code, page objects, or fixtures. Always read `browser.use.branded` via `ConfigurationManager.getBoolean("browser.use.branded", true)` and let the adapter map it — this keeps tests portable across local dev machines, CI matrix legs, and the containerized browser image.
+
+  ### Browser Arguments (Chromium)
+  
+  ```properties
+  # Chromium launch arguments (comma-separated)
+  browser.chromium.args=--disable-dev-shm-usage,--no-sandbox,--disable-gpu
+  
+  # Additional preferences
+  browser.chromium.prefs.download.default_directory=/tmp/downloads
+  ```
+  
+  ## API Configuration
+  
+  ### HTTP Client Settings
+  
+  ```properties
+  # Connection timeout (milliseconds)
+  http.connection.timeout.ms=10000
+  
+  # Read timeout (milliseconds)
+  http.read.timeout.ms=30000
+  
+  # Follow redirects
+  http.follow.redirects=true
+  
+  # Maximum redirects
+  http.max.redirects=5
+  
+  # Enable cookies
+  http.cookies.enabled=true
+  
+  # User agent
+  http.user.agent=TraduTestFramework/1.0
+  ```
+  
+  ### Authentication
+  
+  ```properties
+  # Basic authentication
+  api.auth.type=basic
+  api.auth.username=${API_USERNAME}
+  api.auth.password=${API_PASSWORD}
+  
+  # Bearer token
+  api.auth.type=bearer
+  api.auth.token=${API_TOKEN}
+  
+  # OAuth2
+  api.auth.type=oauth2
+  api.oauth.client.id=${OAUTH_CLIENT_ID}
+  api.oauth.client.secret=${OAUTH_CLIENT_SECRET}
+  api.oauth.token.url=https://auth.example.com/oauth/token
+  ```
+  
+  ### WebSocket Configuration
+  
+  ```properties
+  # WebSocket connection timeout (milliseconds)
+  websocket.connection.timeout.ms=10000
+  
+  # Message receive timeout (milliseconds)
+  websocket.receive.timeout.ms=5000
+  
+  # Keep-alive interval (milliseconds)
+  websocket.keepalive.interval.ms=30000
+  
+  # Auto-reconnect on disconnect
+  websocket.auto.reconnect=true
+  
+  # Max reconnect attempts
+  websocket.max.reconnect.attempts=3
+  ```
+  
+  ### FIX Protocol Configuration
+  
+  ```properties
+  # FIX version
+  fix.version=FIX.4.4
+  
+  # Session settings
+  fix.sender.comp.id=SENDER
+  fix.target.comp.id=TARGET
+  fix.begin.string=FIX.4.4
+  
+  # Connection
+  fix.socket.connect.host=localhost
+  fix.socket.connect.port=9876
+  
+  # Heartbeat interval (seconds)
+  fix.heartbeat.interval=30
+  
+  # Reconnect interval (seconds)
+  fix.reconnect.interval=5
+  ```
+  
+  ## BrowserStack Integration
+  
+  ### Basic Configuration
+  
+  ```properties
+  # Enable BrowserStack
+  browserstack.enabled=true
+  
+  # Credentials
+  browserstack.username=${BROWSERSTACK_USERNAME}
+  browserstack.accessKey=${BROWSERSTACK_ACCESS_KEY}
+  
+  # BrowserStack URL
+  browserstack.url=https://hub-cloud.browserstack.com/wd/hub
+  ```
+  
+  ### Browser Capabilities
+  
+  ```properties
+  # Browser name
+  browserstack.browser=Chrome
+  
+  # Browser version
+  browserstack.browser.version=latest
+  
+  # OS
+  browserstack.os=Windows
+  
+  # OS version
+  browserstack.os.version=10
+  
+  # Resolution
+  browserstack.resolution=1920x1080
+  ```
+  
+  ### BrowserStack Options
+  
+  ```properties
+  # Project name
+  browserstack.project=Tradu Test Suite
+  
+  # Build name (dynamic recommended)
+  browserstack.build=Build-${BUILD_NUMBER}
+  
+  # Session name
+  browserstack.session=Test Session
+  
+  # Enable local testing
+  browserstack.local=false
+  
+  # Enable video recording
+  browserstack.video=true
+  
+  # Enable console logs
+  browserstack.consoleLogs=verbose
+  
+  # Enable network logs
+  browserstack.networkLogs=true
+  
+  # Debug mode
+  browserstack.debug=true
+  ```
+  
+  ### Usage Example
+  
+  ```java
+  @Test
+  @WebTest
+  void test_browserStack_login_succeeds() {
+      boolean bsEnabled = Boolean.parseBoolean(
+          ConfigurationManager.getProperty("browserstack.enabled", "false"));
+  
+      if (bsEnabled) {
+          // Test runs on BrowserStack
+          WebDriver driver = DriverManager.getDriver();
+          driver.navigateTo("https://example.com");
+      }
+  }
+  ```
+  
+  ## XRay Integration
+  
+  ### Basic Configuration
+  
+  ```properties
+  # Enable XRay integration
+  xray.enabled=true
+  
+  # Jira base URL
+  xray.jira.url=https://yourcompany.atlassian.net
+  
+  # XRay Cloud credentials
+  xray.clientId=${XRAY_CLIENT_ID}
+  xray.clientSecret=${XRAY_CLIENT_SECRET}
+  
+  # Or Jira credentials (server/data center)
+  xray.jira.username=${JIRA_USERNAME}
+  xray.jira.password=${JIRA_PASSWORD}
+  ```
+  
+  ### Project Configuration
+  
+  ```properties
+  # Jira project key
+  xray.project.key=PROJ
+  
+  # Test execution prefix
+  xray.test.execution.prefix=PROJ-TE-
+  
+  # Test plan key (optional)
+  xray.test.plan.key=PROJ-123
+  
+  # Revision (optional)
+  xray.revision=${GIT_COMMIT}
+  ```
+  
+  ### Test Linking
+  
+  Use `@XRayTest` annotation in tests:
+  
+  ```java
+  @Test
+  @XRayTest(testId = "PROJ-456")
+  void test_user_login_succeeds() {
+      // Test implementation
+  }
+  ```
+  
+  ### Execution Configuration
+  
+  ```properties
+  # Auto-create test execution
+  xray.auto.create.execution=true
+  
+  # Include environment info
+  xray.include.environment=true
+  
+  # Environment name
+  xray.environment=staging
+  
+  # Upload screenshots
+  xray.upload.screenshots=true
+  
+  # Upload videos
+  xray.upload.videos=true
+  ```
+  
+  ## Teams Notifications
+  
+  ### Basic Configuration
+  
+  ```properties
+  # Enable Teams notifications
+  teams.enabled=true
+  
+  # Webhook URL
+  teams.webhookUrl=${TEAMS_WEBHOOK_URL}
+  
+  # Notification title
+  teams.notification.title=Test Execution Report
+  
+  # Notify on success
+  teams.notify.on.success=false
+  
+  # Notify on failure
+  teams.notify.on.failure=true
+  
+  # Include test details
+  teams.include.test.details=true
+  
+  # Include stack traces
+  teams.include.stack.traces=true
+  ```
+  
+  ### Adaptive Card Configuration
+  
+  ```properties
+  # Card theme color
+  teams.card.theme.color=0078D4
+  
+  # Include execution summary
+  teams.include.summary=true
+  
+  # Include failed tests
+  teams.include.failed.tests=true
+  
+  # Max failed tests to show
+  teams.max.failed.tests=10
+  
+  # Include screenshots
+  teams.include.screenshots=true
+  
+  # Max screenshots to attach
+  teams.max.screenshots=3
+  ```
+  
+  ### Usage
+  
+  Notifications are sent automatically after test execution. Manual sending:
+  
+  ```java
+  TeamsNotifier notifier = new TeamsNotifier();
+  notifier.sendTestCompletionNotification(testResults);
+  ```
+  
+  ## Redis Configuration
+  
+  ### Basic Configuration
+  
+  ```properties
+  # Enable Redis
+  redis.enabled=true
+  
+  # Redis host
+  redis.host=localhost
+  
+  # Redis port
+  redis.port=6379
+  
+  # Redis password (optional)
+  redis.password=${REDIS_PASSWORD}
+  
+  # Redis database index
+  redis.database=0
+  
+  # Connection timeout (milliseconds)
+  redis.connection.timeout.ms=2000
+  ```
+  
+  ### Test User Caching
+  
+  ```properties
+  # Enable user caching
+  redis.cache.users.enabled=true
+  
+  # User cache TTL (seconds)
+  redis.cache.users.ttl=86400
+  
+  # Cache key prefix
+  redis.cache.users.prefix=test:users:
+  
+  # User pool size
+  redis.user.pool.size=100
+  ```
+  
+  ### Usage Example
+  
+  ```java
+  // Get or create a test user (cached in Redis for 24h)
+  User trader = UserCache.getOrCreateUser("trader");
+
+  // Store a specific user for reuse
+  User admin = new User("admin_user", "Admin@123", "admin@test.com", "admin");
+  UserCache.storeUser("admin", admin);
+
+  // Check / remove
+  boolean exists = UserCache.userExists("trader");
+  UserCache.removeUser("trader");
+  UserCache.clearCache();  // Clear all cached users
+  ```
+  
+  ### Connection Pool
+  
+  ```properties
+  # Max connections
+  redis.pool.max.total=10
+  
+  # Max idle connections
+  redis.pool.max.idle=5
+  
+  # Min idle connections
+  redis.pool.min.idle=1
+  
+  # Wait time for connection (milliseconds)
+  redis.pool.max.wait.ms=3000
+  ```
+  
+  ## Security Best Practices
+  
+  ### Environment Variables
+  
+  **NEVER hardcode credentials**. Use environment variables:
+  
+  ```properties
+  # ❌ WRONG - Hardcoded credentials
+  api.username=admin
+  api.password=secretpassword123
+  
+  # ✅ CORRECT - Environment variable reference
+  api.username=${API_USERNAME}
+  api.password=${API_PASSWORD}
+  ```
+  
+  ### CI/CD Integration
+  
+  **GitHub Actions**:
+  ```yaml
+  - name: Run tests
+    env:
+      API_USERNAME: ${{ secrets.API_USERNAME }}
+      API_PASSWORD: ${{ secrets.API_PASSWORD }}
+      XRAY_CLIENT_ID: ${{ secrets.XRAY_CLIENT_ID }}
+      XRAY_CLIENT_SECRET: ${{ secrets.XRAY_CLIENT_SECRET }}
+    run: mvn test -Dtest.env=staging
+  ```
+  
+  **Jenkins**:
+  ```groovy
+  withCredentials([
+      string(credentialsId: 'api-username', variable: 'API_USERNAME'),
+      string(credentialsId: 'api-password', variable: 'API_PASSWORD')
+  ]) {
+      sh 'mvn test -Dtest.env=staging'
+  }
+  ```
+  
+  ### Sensitive Data Handling
+  
+  ```properties
+  # Use credential management systems
+  api.password=${env:API_PASSWORD}
+  db.password=${vault:database/prod/password}
+  
+  # Or external property sources
+  spring.config.import=vault://secret/application
+  ```
+  
+  ### Git Security
+  
+  Add to `.gitignore`:
+  ```
+  # Never commit these files
+  **/application-local.properties
+  **/credentials.properties
+  **/.env
+  **/*.key
+  **/*.pem
+  ```
+  
+  ## Complete Examples
+  
+  ### Local Development
+  
+  **application-dev.properties**:
+  ```properties
+  # API
+  api.base.url=http://localhost:8080
+  api.timeout.seconds=30
+  
+  # Browser
+  browser.type=chromium
+  browser.headless=false
+  browser.video.enabled=false
+  browser.screenshot.enabled=true
+  browser.screenshot.path=target/screenshots/
+  
+  # No integrations needed for local dev
+  xray.enabled=false
+  teams.enabled=false
+  redis.enabled=false
+  browserstack.enabled=false
+  ```
+  
+  ### CI/CD Pipeline
+  
+  **application-ci.properties**:
+  ```properties
+  # API
+  api.base.url=https://ci-api.example.com
+  api.timeout.seconds=60
+  api.username=${API_USERNAME}
+  api.password=${API_PASSWORD}
+  
+  # Browser
+  browser.type=chromium
+  browser.headless=true
+  browser.video.enabled=true
+  browser.video.path=target/videos/
+  browser.screenshot.enabled=true
+  browser.screenshot.path=target/screenshots/
+  
+  # BrowserStack for cross-browser tests
+  browserstack.enabled=true
+  browserstack.username=${BROWSERSTACK_USERNAME}
+  browserstack.accessKey=${BROWSERSTACK_ACCESS_KEY}
+  browserstack.project=Tradu CI Tests
+  browserstack.build=Build-${BUILD_NUMBER}
+  
+  # XRay integration
+  xray.enabled=true
+  xray.clientId=${XRAY_CLIENT_ID}
+  xray.clientSecret=${XRAY_CLIENT_SECRET}
+  xray.project.key=PROJ
+  xray.revision=${GIT_COMMIT}
+  
+  # Teams notifications
+  teams.enabled=true
+  teams.webhookUrl=${TEAMS_WEBHOOK_URL}
+  teams.notify.on.failure=true
+  teams.include.test.details=true
+  
+  # Redis for user caching
+  redis.enabled=true
+  redis.host=ci-redis.example.com
+  redis.password=${REDIS_PASSWORD}
+  redis.cache.users.enabled=true
+  ```
+  
+  ### Production Testing
+  
+  **application-prod.properties**:
+  ```properties
+  # API
+  api.base.url=https://api.example.com
+  api.timeout.seconds=120
+  api.retry.attempts=10
+  api.username=${API_USERNAME}
+  api.password=${API_PASSWORD}
+  
+  # Browser (headless only in prod)
+  browser.type=chromium
+  browser.headless=true
+  browser.video.enabled=true
+  browser.video.path=/var/test-results/videos/
+  browser.screenshot.enabled=true
+  browser.screenshot.path=/var/test-results/screenshots/
+  
+  # BrowserStack
+  browserstack.enabled=true
+  browserstack.username=${BROWSERSTACK_USERNAME}
+  browserstack.accessKey=${BROWSERSTACK_ACCESS_KEY}
+  browserstack.project=Tradu Production Tests
+  browserstack.build=Prod-${BUILD_NUMBER}
+  browserstack.local=false
+  
+  # XRay
+  xray.enabled=true
+  xray.clientId=${XRAY_CLIENT_ID}
+  xray.clientSecret=${XRAY_CLIENT_SECRET}
+  xray.project.key=PROD
+  xray.environment=production
+  
+  # Teams (always notify in prod)
+  teams.enabled=true
+  teams.webhookUrl=${TEAMS_WEBHOOK_URL}
+  teams.notify.on.success=true
+  teams.notify.on.failure=true
+  
+  # Redis
+  redis.enabled=true
+  redis.host=prod-redis.example.com
+  redis.port=6379
+  redis.password=${REDIS_PASSWORD}
+  redis.database=1
+  ```
+  
+  ## Property Precedence
+
+  All configuration reads go through `ConfigurationManager`, which resolves values in this order (first non-blank value wins):
+
+  1. **System property** — `-Dkey=value` on the JVM command line
+  2. **Environment variable** — key uppercased, `.` and `-` replaced with `_` (e.g., `xray.password` → `XRAY_PASSWORD`)
+  3. **Properties file** — `application-{env}.properties` on classpath (optional — missing file is not an error)
+  4. **Default value** — supplied by the caller
+
+  **Example**:
+  ```properties
+  # application-prod.properties
+  api.timeout.seconds=120
+
+  # System property override
+  -Dapi.timeout.seconds=60
+  ```
+
+  Result: `60` (system property wins — highest priority)
+  
+  ## Accessing Configuration in Code
+  
+  ### ConfigurationManager
+  
+  ```java
+  // Static methods — no getInstance() needed
+  String baseUrl = ConfigurationManager.getProperty("api.base.url");
+  String browserType = ConfigurationManager.getProperty("browser.type", "chromium");
+
+  // Typed accessors (parse and return default on missing/invalid)
+  int timeout = ConfigurationManager.getInt("api.timeout.seconds", 30);
+  long delayMs = ConfigurationManager.getLong("http.retry.initial.delay.ms", 500L);
+  boolean headless = ConfigurationManager.getBoolean("browser.headless", true);
+  double multiplier = ConfigurationManager.getDouble("http.retry.backoff.multiplier", 2.0);
+
+  // Check existence (searches system property, env var, and properties file)
+  boolean hasRedis = ConfigurationManager.hasProperty("redis.host");
+
+  // Current environment
+  String env = ConfigurationManager.getEnvironment();  // "dev", "staging", "prod"
+  ```
+
+  **Resolution order** (first non-blank value wins): system property (`-Dkey=value`) → environment variable (key uppercased, `.`/`-` → `_`) → properties file (`application-{env}.properties`) → caller default. The properties file is optional — when absent, resolution falls through without error.
+
+  **Error handling**: `getProperty(key)` without default throws `ConfigurationException` if key not found in any source. Use `getProperty(key, default)` for optional properties. Typed accessors (`getInt`, `getLong`, `getDouble`) log a warning and return the default on parse failure.
+
+  ### Type-Safe Configuration
+
+  Create configuration classes for complex settings using typed accessors:
+
+  ```java
+  public class BrowserConfig {
+      private final String type;
+      private final boolean headless;
+      private final boolean videoEnabled;
+
+      public BrowserConfig() {
+          this.type = ConfigurationManager.getProperty("browser.type", "chromium");
+          this.headless = ConfigurationManager.getBoolean("browser.headless", false);
+          this.videoEnabled = ConfigurationManager.getBoolean("browser.video.enabled", false);
+      }
+
+      public String getType() { return type; }
+      public boolean isHeadless() { return headless; }
+      public boolean isVideoEnabled() { return videoEnabled; }
+  }
+  ```
+  
+  ## Configuration Reference
+
+  All properties are resolved through `ConfigurationManager` with the unified resolution order (system property → env var → properties file → default). Any property can be set via `-Dkey=value`, its corresponding env var, or in `application-{env}.properties`.
+
+  | Property Key | Env Var | Default | Module | Description |
+  |-------------|---------|---------|--------|-------------|
+  | `test.env` | `TEST_ENV` | `dev` | utils | Active environment profile |
+  | `execution.mode` | `EXECUTION_MODE` | from `DriverConfig` | playwright | Driver execution mode (`LOCAL`, `CONTAINER`, `BROWSERSTACK`) |
+  | `element.timeout.ms` | `ELEMENT_TIMEOUT_MS` | `10000` | playwright | Element wait timeout in milliseconds |
+  | `slow.motion.ms` | `SLOW_MOTION_MS` | `0` | playwright | Delay between Playwright actions for debugging |
+  | `playwright.container.image` | `PLAYWRIGHT_CONTAINER_IMAGE` | `playwright-server:1.58.0` | playwright | Docker image for containerized browsers |
+  | `allure.attach.logs` | `ALLURE_ATTACH_LOGS` | `true` | reporting | Attach test logs to Allure reports |
+  | `xray.testrun.id` | `XRAY_TESTRUN_ID` | `AUTOMATED-RUN` | reporting | XRay test plan ID for batch reporting |
+  | `xray.enabled` | `XRAY_ENABLED` | `false` | reporting | Enable XRay integration |
+  | `xray.baseUrl` | `XRAY_BASEURL` | _(empty)_ | reporting | XRay API base URL |
+  | `xray.username` | `XRAY_USERNAME` | _(empty)_ | reporting | XRay username |
+  | `xray.password` | `XRAY_PASSWORD` | _(empty)_ | reporting | XRay password (typically set via env var) |
+  | `account.name.prefix` | `ACCOUNT_NAME_PREFIX` | `LIVE-` | utils | Prefix for generated account names |
+  | `redis.host` | `REDIS_HOST` | `localhost` | utils | Redis server hostname |
+  | `redis.port` | `REDIS_PORT` | `6379` | utils | Redis server port |
+  | `redis.password` | `REDIS_PASSWORD` | _(none)_ | utils | Redis password |
+  | `redis.ssl` | `REDIS_SSL` | `false` | utils | Enable Redis SSL |
+  | `http.retry.max.attempts` | `HTTP_RETRY_MAX_ATTEMPTS` | `3` | protocols | Max HTTP retry attempts |
+  | `http.retry.initial.delay.ms` | `HTTP_RETRY_INITIAL_DELAY_MS` | `500` | protocols | Initial retry delay in ms |
+  | `http.retry.backoff.multiplier` | `HTTP_RETRY_BACKOFF_MULTIPLIER` | `2.0` | protocols | Retry backoff multiplier |
+  | `http.retry.max.delay.ms` | `HTTP_RETRY_MAX_DELAY_MS` | `10000` | protocols | Max retry delay in ms |
+  | `http.retry.honor.retry.after` | `HTTP_RETRY_HONOR_RETRY_AFTER` | `true` | protocols | Honor Retry-After header |
+
+  ## JUnit Platform Configuration
+
+  Required in `src/test/resources/junit-platform.properties`:
+  ```properties
+  junit.jupiter.extensions.autodetection.enabled=true
+  ```
+  Enables auto-registration of AllureTestWatcher and XRayExtension via ServiceLoader.
+
+  ## Maven CLI Examples
+
+  ```bash
+  mvn test -Dtest.env=staging                    # Environment selection
+  mvn test -Dexecution.mode=CONTAINER            # Container execution
+  mvn test -Dslow.motion.ms=100                  # Slow motion debugging
+  mvn test -Delement.timeout.ms=15000            # Longer element waits
+  mvn test -Dxray.testrun.id=TR-123              # XRay test run
+  mvn test -Dparallel=all -DthreadCount=8        # Parallel execution
+  mvn test -Dallure.attach.logs=false            # Disable log capture
+  ```
+
+  ---
+
+  **Next**: Read `REPORTING_GUIDE.yaml` for Allure, XRay, and Teams notification details.
