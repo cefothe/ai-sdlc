@@ -35,6 +35,7 @@ whole pipeline in a few seconds.
 ## Table of contents
 
 - [The big picture](#the-big-picture)
+- [Install in your Claude Code](#install-in-your-claude-code)
 - [End-to-end lifecycle](#end-to-end-lifecycle)
 - [The Step 0–13 pipeline](#the-step-013-pipeline)
 - [Capability map: skills, agents & teams as stages](#capability-map-skills-agents--teams-as-stages)
@@ -91,25 +92,93 @@ Operator entry points, all sharing the same tested core:
 | `/ai-sdlc:review [base]` | Just the cross-harness review team on a branch |
 | `npm run …` | `init`, `validate-schemas`, `convergence-gate`, `decisions` |
 
-## Install as a Claude Code plugin
+## Install in your Claude Code
 
-The framework ships a plugin manifest (`.claude-plugin/plugin.json`) and a
-single-plugin marketplace (`.claude-plugin/marketplace.json`). In any session:
+`ai-sdlc` installs as a Claude Code plugin from its own single-plugin marketplace
+(`.claude-plugin/marketplace.json` + `.claude-plugin/plugin.json`). Installing
+registers the `/ai-sdlc:*` commands, the specialized agents and skills, and all
+four hooks (`PreToolUse`, `PostToolUse`, `SessionStart`, `Stop`).
+
+### Prerequisites
+
+- **Claude Code** — CLI, desktop app, or an IDE extension.
+- **Access to the repo.** `cefothe/ai-sdlc` is **private**, so the machine you install
+  from needs Git/GitHub read access to it. Simplest is the GitHub CLI signed in as an
+  account with access: run `gh auth login`, then `gh auth status` should list that
+  account. (Public marketplaces don't need this; a private one does.)
+- **Node.js ≥ 22** — runs the decision-engine gates and the one runtime dependency.
+
+### Install
+
+In any Claude Code session:
 
 ```
 /plugin marketplace add cefothe/ai-sdlc
 /plugin install ai-sdlc
+/reload-plugins
 ```
 
-This registers the commands, agents, skills, and all four hooks
-(`PreToolUse`, `PostToolUse`, `SessionStart`, `Stop`).
+1. **`marketplace add`** clones the plugin's marketplace (private repo → uses your Git/`gh` auth).
+2. **`install`** installs the plugin at the marketplace's current commit.
+3. **`reload-plugins`** activates it in the running session — no restart needed (or just restart Claude Code).
 
-> **One-time step:** the `Stop` hook loads the promise registry via `js-yaml`
-> (the only runtime dependency). Plugin installs don't run `npm install`, so run
-> it once in the installed plugin directory to activate promise verification:
-> `npm install --omit=dev`. Until then the hook degrades gracefully — it logs an
-> actionable notice to `promise/logs/hook-errors.jsonl` and never blocks the
-> session.
+After the reload you should see the commands (`/ai-sdlc:init`, `:new`, `:design`,
+`:execute`, `:review`, `:validate`) and the agents/skills listed.
+
+> **On a machine without `gh`/that shorthand fails**, add via the explicit Git URL instead:
+> `/plugin marketplace add https://github.com/cefothe/ai-sdlc.git`
+
+### Activate promise verification (one-time)
+
+The `Stop` hook loads the promise registry via `js-yaml` — the **only** runtime
+dependency. Plugin installs don't run `npm install`, so run it once in the
+installed plugin directory:
+
+```bash
+cd ~/.claude/plugins/cache/ai-sdlc/ai-sdlc/<version> && npm install --omit=dev
+```
+
+(`<version>` is the installed manifest version, e.g. `2.3.0`.) Until then the hook
+degrades gracefully — it logs an actionable notice to `promise/logs/hook-errors.jsonl`
+and never blocks the session.
+
+### Updating to a newer version
+
+When changes land on the repo's default branch:
+
+```
+/plugin marketplace update ai-sdlc
+/plugin install ai-sdlc          # re-installs at the new commit
+/reload-plugins
+```
+
+If `install` reports *"already installed"* and skips (the manifest version is
+unchanged), force a clean pull:
+
+```
+/plugin uninstall ai-sdlc
+/plugin install ai-sdlc
+/reload-plugins
+```
+
+### Verify / troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Commands don't appear after install/update | Run `/reload-plugins` (or restart). A fresh install/update only takes effect after a reload. |
+| `marketplace add` "succeeded" but nothing installs | The private-repo clone needs auth — confirm `gh auth status` lists an account with read access, or use the explicit `https://…/cefothe/ai-sdlc.git` URL. |
+| `Duplicate hooks file detected` on load | You're on an old build — update to the latest commit (the manifest no longer declares `hooks`, which the standard `hooks/hooks.json` auto-loads). |
+| Promise verification inactive | Run the one-time `npm install --omit=dev` in the installed plugin dir (above). |
+
+### First use in a project
+
+Point Claude Code at your repository, scaffold the framework, then run a task:
+
+```
+/ai-sdlc:init            # scaffold .ai-sdlc/ + backlog (brownfield-safe, non-destructive)
+/ai-sdlc:new "<title>"   # shape a feature → PRD → DoR-ready task
+/ai-sdlc:execute <id>    # run one backlog task through the pipeline
+```
 
 ---
 
