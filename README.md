@@ -107,6 +107,12 @@ four hooks (`PreToolUse`, `PostToolUse`, `SessionStart`, `Stop`).
   account with access: run `gh auth login`, then `gh auth status` should list that
   account. (Public marketplaces don't need this; a private one does.)
 - **Node.js ≥ 22** — runs the decision-engine gates and the one runtime dependency.
+- **cxpak (recommended)** — the token-budgeted context engine and the measured **d=1.82**
+  quality lever. The plugin ships a `.mcp.json` that registers the cxpak MCP server
+  (`cxpak serve --mcp .`), so it activates automatically **once `cxpak` is on your PATH**
+  (`cargo install cxpak`, or your platform's package). Without it the pipeline still runs,
+  but implementers work without pre-action structural context. cxpak **3.x** is expected
+  (op-based intent-tools: `cxpak_context`, `cxpak_graph`, `cxpak_review`, `cxpak_insight`).
 
 ### Install
 
@@ -511,7 +517,8 @@ await executePipeline({
 | Native Teams | the 3-reviewer stage (`team: true`) |
 | Agents / Skills | providers bound to stages in `capabilities.yaml` |
 | Hooks (`hooks/*.js`) | non-blocking lint/verify on edit/stop |
-| `settings.json` | enables Teams; cxpak MCP for context |
+| `settings.json` | enables Teams |
+| `.mcp.json` | registers the cxpak MCP server (`cxpak_context`/`graph`/`review`/`insight`) |
 
 ### Example backlog task
 

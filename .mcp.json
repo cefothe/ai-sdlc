@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cxpak": {
+      "type": "stdio",
+      "command": "cxpak",
+      "args": ["serve", "--mcp", "."]
+    }
+  }
+}

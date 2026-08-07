@@ -3,6 +3,13 @@
 // rather than direct Read tool calls. Without this, the verifier penalizes
 // the very behavior the framework directs (use cxpak instead of ad-hoc Read).
 const CXPAK_CONTEXT_TOOLS = new Set([
+  // cxpak 3.x op-based intent-tools (ops resolve under these five)
+  'cxpak_context',
+  'cxpak_graph',
+  'cxpak_insight',
+  'cxpak_review',
+  'cxpak_data',
+  // pre-3.0 standalone names (retained; also matched via the `cxpak_` prefix guard)
   'cxpak_auto_context',
   'cxpak_overview',
   'cxpak_trace',

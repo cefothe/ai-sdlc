@@ -63,9 +63,23 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    any contradictions, orphan steps, or scope creep vs the PRD non-goals? Surface
    its findings; act on `ac-coverage-gap` advisories before proceeding.
 
+4c. **Acquire structured context (cxpak) — REQUIRED before implementing.** Call the
+   cxpak intent-tool `cxpak_context` with `op: "context"` and the task's title +
+   one-line description as the query. This packs token-budgeted
+   architecture/conventions/relevant-files/blast-radius — the measured **d=1.82**
+   pre-action lever (R7/R8), and the whole reason the framework decides *before*
+   dispatch. Do **not** let the implementer explore blind.
+   - Fall back to `cxpak_context` (op `overview`) + `cxpak_graph` (op `trace`) on the
+     touched module if `context` is unavailable.
+   - The plugin registers the cxpak MCP via `.mcp.json`; if the server isn't
+     connected (cxpak not on PATH), **say so explicitly** and proceed with the
+     task + plan only — degraded, not blocked.
+   - Carry the packed cxpak output into the implementer's prompt in step 5 as its
+     **structured context** block.
+
 5. **Implement.** Dispatch the `implement` agent via the **Task tool** (e.g.
-   `java-pro`) with the task contract + plan + cxpak context. It must commit and
-   return `{ commitSha, filesChanged, verifications, summary }`.
+   `java-pro`) with the task contract + plan + **the cxpak context from step 4c**.
+   It must commit and return `{ commitSha, filesChanged, verifications, summary }`.
 
 6. **Review (Native Teams).** Read the team plan in
    `steps.capabilities.review.teamPlan`. When `useTeam` is true (3+ reviewers):

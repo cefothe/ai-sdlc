@@ -88,7 +88,7 @@ class ObservabilityChecker {
         }
 
         if (p.id === 'context-acquisition') {
-          const toolPattern = new RegExp(p.tool_pattern || 'cxpak_auto_context|cxpak_overview', 'i');
+          const toolPattern = new RegExp(p.tool_pattern || 'cxpak_context|cxpak_auto_context|cxpak_overview', 'i');
           const outputStr = output || '';
           const traceStr = (context.trace || []).map(t => t.tool || t.name || t.action || '').join(' ');
           const evidence = toolPattern.test(outputStr) || toolPattern.test(traceStr);
@@ -97,7 +97,7 @@ class ObservabilityChecker {
             method: p.method,
             confidence: p.confidence || 'high',
             result: evidence ? 'kept' : 'broken',
-            evidence: evidence ? 'cxpak context tool called' : 'No cxpak_auto_context or cxpak_overview call detected',
+            evidence: evidence ? 'cxpak context tool called' : 'No cxpak_context (or legacy cxpak_auto_context/cxpak_overview) call detected',
             timestamp: new Date().toISOString(),
           });
           continue;

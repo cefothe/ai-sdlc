@@ -26,6 +26,18 @@ Target directory is `$1` (defaults to the current working directory). Pass
    - Never overwrite operator edits or existing source — the engine already
      guarantees this; if it reports a scaffold write error, surface it.
 
+1b. **Build the cxpak index (the context lever).** If `cxpak` is on PATH, warm the
+   repo's structural index so the pre-implement `cxpak_context` call is hot from the
+   first task — this is the d=1.82 pre-action lever (R7/R8) the pipeline is built
+   around:
+   ```bash
+   cd ${1:-.} && cxpak overview >/dev/null 2>&1 || true   # builds the persistent .cxpak/ index
+   ```
+   Indexing is **optional, not blocking** — if `cxpak` isn't installed, note it in
+   the triage and continue (the `.mcp.json` the plugin ships will index lazily once
+   cxpak is available). Recommend the operator add `.cxpak/` to the repo's
+   `.gitignore` (it's a local cache).
+
 2. **Read the triage report.** Open `${1:-.}/.ai-sdlc/triage-report.json` and
    report to the operator:
    - mode (greenfield / brownfield) and files created vs. skipped,

@@ -160,8 +160,8 @@ promises:
     method: tool_call_check
     confidence: low
     requires: cxpak
-    tool_pattern: "cxpak_auto_context|cxpak_overview"
-    description: "Agent called cxpak_auto_context (or fallback cxpak_overview) before implementing"
+    tool_pattern: "cxpak_context|cxpak_auto_context|cxpak_overview"
+    description: "Agent called cxpak_context (op context; or legacy cxpak_auto_context/cxpak_overview) before implementing"
 
   read-before-write:
     type: behavioral

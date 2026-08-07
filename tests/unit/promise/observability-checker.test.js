@@ -243,7 +243,7 @@ describe('ObservabilityChecker', () => {
       expect(results).toHaveLength(1);
       expect(results[0].promise_id).toBe('context-acquisition');
       expect(results[0].result).toBe('broken');
-      expect(results[0].evidence).toContain('No cxpak_auto_context');
+      expect(results[0].evidence).toContain('No cxpak_context');
     });
 
     test('verifyAll detects context-acquisition kept via trace (tool field)', async () => {

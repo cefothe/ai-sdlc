@@ -37,8 +37,15 @@ function callCxpakTool(toolName, args, workDir, timeout) {
         for (const line of lines) {
           const parsed = JSON.parse(line);
           if (parsed.id === 1 && parsed.result) {
-            const text = parsed.result.content?.[0]?.text;
-            if (text) { settle(JSON.parse(text)); return; }
+            const res = parsed.result;
+            // cxpak 3.x intent-tools return the machine object in
+            // `structuredContent`; on a cold repo it is `{status:'indexing'}`
+            // (retryable) — treat that as no-data, not a parse target.
+            const sc = res.structuredContent;
+            if (sc && sc.status === 'indexing') { settle(null); return; }
+            if (sc && Object.keys(sc).length) { settle(sc); return; }
+            const text = res.content?.[0]?.text;
+            if (text) { try { settle(JSON.parse(text)); return; } catch (_) { settle(null); return; } }
           }
         }
         settle(null);
@@ -91,10 +98,12 @@ async function main() {
 
   if (cxpakAvailable) {
     const timeout = 10000;
+    // cxpak 3.x: health/architecture/risks are ops of the `cxpak_insight`
+    // intent-tool (the standalone cxpak_health/… tools were removed).
     const [health, architecture, risks] = await Promise.all([
-      callCxpakTool('cxpak_health', {}, workDir, timeout),
-      callCxpakTool('cxpak_architecture', {}, workDir, timeout),
-      callCxpakTool('cxpak_risks', {}, workDir, timeout),
+      callCxpakTool('cxpak_insight', { op: 'health' }, workDir, timeout),
+      callCxpakTool('cxpak_insight', { op: 'architecture' }, workDir, timeout),
+      callCxpakTool('cxpak_insight', { op: 'risks' }, workDir, timeout),
     ]);
 
     if (health) {

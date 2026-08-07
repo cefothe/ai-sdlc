@@ -41,9 +41,11 @@ Token compounding: every unnecessary output token becomes input context on next 
 
 ## Context Acquisition (REQUIRED)
 
-Before implementing any change, call `cxpak_auto_context` with a one-line task description. This provides token-budgeted structural context (architecture, conventions, relevant files, blast radius). Do not skip this step — R7 proved d=1.82 quality improvement from structured input context vs working blind.
+Before implementing any change, call the cxpak intent-tool `cxpak_context` with `op: "context"` and a one-line task description. This provides token-budgeted structural context (architecture, conventions, relevant files, blast radius). Do not skip this step — R7 proved d=1.82 quality improvement from structured input context vs working blind.
 
-If `cxpak_auto_context` is unavailable, fall back to `cxpak_overview` + `cxpak_trace` for the relevant symbol/module.
+If `cxpak_context` (op `context`) is unavailable, fall back to `cxpak_context` (op `overview`) + `cxpak_graph` (op `trace`) for the relevant symbol/module.
+
+> **cxpak 3.x tool surface.** The tools are op-based intent-tools: `cxpak_context` (ops `context`, `overview`, `context_for_task`, `stats`), `cxpak_graph` (ops `trace`, `blast_radius`, `call_graph`, `api_surface`), `cxpak_review` (ops `review`, `diff`, `verify`), `cxpak_insight` (ops `health`, `risks`, `architecture`, `conventions`, `security_surface`). The pre-3.0 names (`cxpak_auto_context`, `cxpak_overview`, `cxpak_trace`) are gone (only `cxpak_auto_context` survives as a one-release deprecated alias for `cxpak_context` op `context`). The plugin registers the server via `.mcp.json` (`cxpak serve --mcp .`); it activates when `cxpak` is on PATH.
 
 ## Architecture
 
@@ -52,7 +54,7 @@ Three pillars:
 | Pillar | Location | Function |
 |---|---|---|
 | Promise Theory | `promise/` | Observer verifies post-output as telemetry; trust via EMA; on broken findings, `findings-interpreter.js` dispatches a reviewer subagent (R16) that emits structured `{action, feedback}` JSON — informed retry, not clean-prompt resampling. R15 (n=30) measured clean-prompt retry at d=-1.37 quality regression; R16 architecture replaces it. R5 still rules out raw feedback injection. |
-| cxpak MCP | external | Token-budgeted context: overview, trace, diff, auto_context — **must be called before implementation** |
+| cxpak MCP | external, registered via `.mcp.json` | Token-budgeted context (cxpak 3.x, op-based): `cxpak_context` (context/overview), `cxpak_graph` (trace/blast_radius), `cxpak_review` (diff/verify), `cxpak_insight` (health/risks/architecture) — **`cxpak_context` op `context` must be called before implementation** |
 | Hooks | `hooks/` | PostToolUse lint, Stop verify, PreToolUse build hygiene (100% **observation** coverage; non-blocking by design — R5 proved feedback injection harmful) |
 
 Measurement framework (`measurement/`) validates changes via Wilcoxon signed-rank on 5-task battery.
