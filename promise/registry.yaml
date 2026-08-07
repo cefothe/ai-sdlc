@@ -111,21 +111,21 @@ promises:
     method: cxpak:call_graph
     confidence: high
     requires: cxpak
-    description: "All imports resolve to real files (cxpak_call_graph.unresolved == 0)"
+    description: "All imports resolve to real files (cxpak_graph op call_graph .unresolved == 0)"
 
   function-length:
     type: structural
     method: cxpak:health
     confidence: medium
     requires: cxpak
-    description: "Convention adherence proxy (cxpak_health.conventions >= 7)"
+    description: "Convention adherence proxy (cxpak_insight op health .conventions >= 7)"
 
   duplication:
     type: structural
     method: cxpak:dead_code
     confidence: high
     requires: cxpak
-    description: "No dead symbols in modified files (cxpak_dead_code with health fallback)"
+    description: "No dead symbols in modified files (cxpak_graph op dead_code, with health fallback)"
 
   architectural-boundary:
     type: structural
@@ -139,14 +139,14 @@ promises:
     method: cxpak:verify
     confidence: medium
     requires: cxpak
-    description: "Code changes follow observed codebase conventions (cxpak_verify)"
+    description: "Code changes follow observed codebase conventions (cxpak_review op verify)"
 
   change-impact:
     type: structural
     method: cxpak:predict
     confidence: medium
     requires: cxpak
-    description: "Change impact analysis shows manageable risk (cxpak_predict)"
+    description: "Change impact analysis shows manageable risk (cxpak_graph op predict)"
 
   security-surface:
     type: structural
@@ -178,4 +178,4 @@ promises:
     requires:
       - trace
       - cxpak
-    description: "Agent read architecturally-related files (cxpak_blast_radius)"
+    description: "Agent read architecturally-related files (cxpak_graph op blast_radius)"

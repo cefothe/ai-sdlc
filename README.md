@@ -506,9 +506,16 @@ await executePipeline({
   capabilityMap: loadCapabilityMap('.ai-sdlc/capabilities.yaml'),
   taskContext: { languages: ['java'], files: ['src/Main.java'], labels: ['payment'] },
   evaluateDor,
-  ...makeClaudeCodeSeams({ model: 'sonnet' }),   // spawn→`claude -p`, runner→git, gh→gh
+  ...makeClaudeCodeSeams({ model: 'sonnet' }),   // spawn→`claude -p`, runner→git, gh→gh, fetchCxpak→`cxpak overview`
 });
 ```
+
+`makeClaudeCodeSeams` also supplies a **`fetchCxpak`** seam: when you don't pass
+`cxpakContext`, the pipeline calls it to pull token-budgeted structural context
+(`cxpak overview`) into the implementer's prompt — the same d=1.82 pre-action
+lever the interactive `/ai-sdlc:execute` fetches at step 4c. It requires `cxpak`
+on PATH and degrades to null (never blocks) when absent. Pass your own
+`cxpakContext` or `fetchCxpak` to override.
 
 | Claude Code primitive | Role here |
 |---|---|

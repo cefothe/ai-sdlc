@@ -26,7 +26,7 @@ async function executePipeline(opts) {
     repoDir = projectRoot, baseBranch = 'main', worktreePath, worktreesDir,
     runner, spawn, gh, gitState, isMerged,
     dorConfig, evaluateDor, stageBJudge,
-    cxpakContext,
+    cxpakContext, fetchCxpak,
     promiseVerify, qualityGateConfig, evaluatePromiseGate, formatReviewerContext,
     resolveRepoForPath,
     maxIterations = 2, requireAllAcChecked = false,
@@ -102,9 +102,19 @@ async function executePipeline(opts) {
       }
     }
 
+    // Pre-action context (the R8 d=1.82 lever). Interactive runs fetch this at
+    // step 4c; for unattended runs we resolve it here via the injected fetchCxpak
+    // seam when the caller didn't supply cxpakContext. Advisory — a null result
+    // (cxpak absent or a cold index) degrades to design/plan context, never blocks.
+    let resolvedCxpak = cxpakContext;
+    if (!resolvedCxpak && typeof fetchCxpak === 'function') {
+      try { resolvedCxpak = await fetchCxpak(task); } catch (_) { resolvedCxpak = null; }
+    }
+    result.steps.cxpak = { fetched: !!resolvedCxpak && !cxpakContext, injected: !!cxpakContext };
+
     // Optional plan stage (e.g. the /code-plan skill) — its output augments the
     // pre-action context handed to the implementer (cxpak + design notes).
-    const baseContext = [cxpakContext, designText].filter(Boolean).join('\n') || null;
+    const baseContext = [resolvedCxpak, designText].filter(Boolean).join('\n') || null;
     let planText = baseContext;
     if (planProvider && runPlan) {
       try {

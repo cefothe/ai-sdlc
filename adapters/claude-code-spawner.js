@@ -79,13 +79,40 @@ function makeClaudeSpawner({ exec = defaultExec, model, timeoutMs = 600000 } = {
   };
 }
 
+// Fetch token-budgeted pre-action context for the implementer via cxpak — the
+// UNATTENDED counterpart to the interactive step-4c `cxpak_context` call. The
+// pipeline itself stays pure; this seam does the I/O. Uses the `cxpak overview`
+// CLI (the `overview` capability): a one-shot, token-budgeted structural summary
+// (architecture, module map, conventions) — the R8 d=1.82 lever. Requires `cxpak`
+// on PATH and a built `.cxpak/` index (init / SessionStart warm it). Any failure,
+// or a cold "indexing" index, degrades to null — advisory, never blocks the run.
+function makeCxpakFetcher({ exec = defaultExec, workDir = process.cwd(), tokens = '4k' } = {}) {
+  return async function fetchCxpak(task) {
+    let text = '';
+    try {
+      text = String(exec('cxpak', ['overview', '--tokens', tokens], { cwd: workDir, timeout: 60000 }) || '');
+    } catch (err) {
+      // execFileSync throws on a non-zero exit but still exposes captured stdout.
+      text = String((err && err.stdout) || '');
+    }
+    text = text.trim();
+    if (!text || /indexing in progress/i.test(text)) return null;
+    const title = task && task.frontmatter && task.frontmatter.title;
+    const header = title
+      ? `Structured context (cxpak overview) — read before implementing "${title}":`
+      : 'Structured context (cxpak overview):';
+    return `${header}\n\n${text}`;
+  };
+}
+
 // Convenience: build the full seam bundle for executePipeline().
-function makeClaudeCodeSeams({ exec = defaultExec, model } = {}) {
+function makeClaudeCodeSeams({ exec = defaultExec, model, workDir } = {}) {
   return {
     runner: makeGitRunner({ exec }),
     gh: makeGhRunner({ exec }),
     spawn: makeClaudeSpawner({ exec, model }),
+    fetchCxpak: makeCxpakFetcher({ exec, workDir }),
   };
 }
 
-module.exports = { makeGitRunner, makeGhRunner, makeClaudeSpawner, makeClaudeCodeSeams, buildClaudeArgs, parseClaudeResult, defaultExec };
+module.exports = { makeGitRunner, makeGhRunner, makeClaudeSpawner, makeCxpakFetcher, makeClaudeCodeSeams, buildClaudeArgs, parseClaudeResult, defaultExec };

@@ -161,7 +161,7 @@ class BehavioralVerifier {
     if (!blastRadiusResponse) {
       return {
         promise_id: 'exploration-breadth', confidence: 'low',
-        result: 'partial', evidence: 'cxpak_blast_radius unavailable',
+        result: 'partial', evidence: 'cxpak_graph(blast_radius) unavailable',
       };
     }
 
