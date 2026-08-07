@@ -842,4 +842,95 @@ describe('CxpakVerifier', () => {
       expect(tm.updateTrust(startingTrust, results)).toBe(startingTrust);
     });
   });
+
+  describe('cxpak 3.x op response shapes', () => {
+    // The pre-3.0 standalone tools were replaced by op-based intent-tools with
+    // reshaped responses. The verifiers accept both legacy and 3.x shapes; these
+    // cover the 3.x fields specifically.
+    describe('verifyChangeImpact — 3.x predict', () => {
+      test('kept when no structural blast (arrays, no risk_score)', async () => {
+        const verifier = new CxpakVerifier();
+        const pred = {
+          changed_files: ['a.js'], structural_impact: [], historical_impact: [{ path: 'x' }],
+          call_impact: [], test_impact: [], confidence_summary: '1 files predicted affected',
+        };
+        const result = await verifier.verifyChangeImpact(['a.js'], 0, pred);
+        expect(result.result).toBe('kept');
+      });
+
+      test('broken when structural blast with no predicted tests', async () => {
+        const verifier = new CxpakVerifier();
+        const pred = {
+          structural_impact: [{ path: 'a' }, { path: 'b' }, { path: 'c' }],
+          historical_impact: [], call_impact: [], test_impact: [], confidence_summary: 's',
+        };
+        const result = await verifier.verifyChangeImpact(['a.js'], 0, pred);
+        expect(result.result).toBe('broken');
+        expect(result.evidence).toContain('high impact, low test coverage');
+      });
+
+      test('kept when structural blast but test_impact covers it', async () => {
+        const verifier = new CxpakVerifier();
+        const pred = {
+          structural_impact: [{ path: 'a' }], historical_impact: [], call_impact: [],
+          test_impact: [{ name: 't1' }, { name: 't2' }], confidence_summary: 's',
+        };
+        const result = await verifier.verifyChangeImpact(['a.js'], 0, pred);
+        expect(result.result).toBe('kept');
+        expect(result.evidence).toContain('test_impact');
+      });
+    });
+
+    describe('verifySecuritySurface — 3.x fields', () => {
+      test('kept when secret_patterns / sql_injection_surface empty', async () => {
+        const verifier = new CxpakVerifier();
+        const resp = { secret_patterns: [], sql_injection_surface: [], unprotected_endpoints: [] };
+        const result = await verifier.verifySecuritySurface(['a.js'], 0, resp);
+        expect(result.result).toBe('kept');
+      });
+
+      test('broken on secret_patterns in modified files', async () => {
+        const verifier = new CxpakVerifier();
+        const resp = {
+          secret_patterns: [{ file: 'src/a.js', line: 10, type: 'api_key' }],
+          sql_injection_surface: [], unprotected_endpoints: [],
+        };
+        const result = await verifier.verifySecuritySurface(['src/a.js'], 0, resp);
+        expect(result.result).toBe('broken');
+        expect(result.evidence).toContain('secret');
+      });
+
+      test('broken on sql_injection_surface in modified files', async () => {
+        const verifier = new CxpakVerifier();
+        const resp = {
+          secret_patterns: [], sql_injection_surface: [{ file: 'src/db.js', line: 5 }],
+          unprotected_endpoints: [],
+        };
+        const result = await verifier.verifySecuritySurface(['src/db.js'], 0, resp);
+        expect(result.result).toBe('broken');
+        expect(result.evidence).toContain('sql_injection');
+      });
+    });
+
+    describe('verifyDuplication — 3.x dead_code total', () => {
+      test('reads `total` (not total_scanned) for scanned count', async () => {
+        const verifier = new CxpakVerifier();
+        const deadCodeResponse = { dead_symbols: [], showing: 0, total: 150 };
+        const result = await verifier.verifyDuplication(['src/a.js'], 0, null, deadCodeResponse);
+        expect(result.result).toBe('kept');
+        expect(result.evidence).toContain('150 scanned');
+      });
+
+      test('reads `symbol` (3.x) for the dead-symbol name', async () => {
+        const verifier = new CxpakVerifier();
+        const deadCodeResponse = {
+          dead_symbols: [{ file: 'src/a.js', symbol: 'deadTwo', kind: 'Function', liveness_score: 0 }],
+          showing: 1, total: 3,
+        };
+        const result = await verifier.verifyDuplication(['src/a.js'], 0, null, deadCodeResponse);
+        expect(result.result).toBe('broken');
+        expect(result.evidence).toContain('src/a.js:deadTwo');
+      });
+    });
+  });
 });

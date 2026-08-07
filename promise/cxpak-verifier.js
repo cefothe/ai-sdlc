@@ -156,11 +156,17 @@ class CxpakVerifier {
 
     return new Promise((resolve) => {
       const settle = (rawResult) => {
-        if (rawResult && rawResult.content && rawResult.content[0] && rawResult.content[0].text) {
-          try {
-            resolve(JSON.parse(rawResult.content[0].text));
-            return;
-          } catch (_) {}
+        if (rawResult) {
+          // cxpak 3.x: on a cold repo the intent-tool returns a retryable
+          // indexing status in structuredContent — treat as no-data, not JSON.
+          const sc = rawResult.structuredContent;
+          if (sc && sc.status === 'indexing') { resolve(null); return; }
+          const text = rawResult.content && rawResult.content[0] && rawResult.content[0].text;
+          if (text) {
+            try { resolve(JSON.parse(text)); return; } catch (_) {}
+          }
+          // Fallback: some ops may place the object directly in structuredContent.
+          if (sc && typeof sc === 'object' && Object.keys(sc).length) { resolve(sc); return; }
         }
         resolve(null);
       };
@@ -190,53 +196,58 @@ class CxpakVerifier {
     return { promise_id: promiseId, confidence, result, evidence };
   }
 
+  // cxpak 3.x: the pre-3.0 standalone tools are gone — each is now an `op` of an
+  // intent-tool: graph ops → cxpak_graph, review ops → cxpak_review, health/
+  // architecture/security → cxpak_insight.
   async _getCxpakCallGraph() {
     const available = await this.checkAvailability();
     if (!available) return null;
-    return this.callTool('cxpak_call_graph', {});
+    return this.callTool('cxpak_graph', { op: 'call_graph' });
   }
 
   async _getCxpakHealth() {
     const available = await this.checkAvailability();
     if (!available) return null;
-    return this.callTool('cxpak_health', {});
+    return this.callTool('cxpak_insight', { op: 'health' });
   }
 
   async _getCxpakDiff() {
     const available = await this.checkAvailability();
     if (!available) return null;
-    return this.callTool('cxpak_diff', {});
+    return this.callTool('cxpak_review', { op: 'diff' });
   }
 
   async _getCxpakVerify() {
     const available = await this.checkAvailability();
     if (!available) return null;
-    return this.callTool('cxpak_verify', {});
+    return this.callTool('cxpak_review', { op: 'verify' });
   }
 
-  async _getCxpakBlastRadius() {
+  async _getCxpakBlastRadius(files) {
     const available = await this.checkAvailability();
     if (!available) return null;
-    return this.callTool('cxpak_blast_radius', {});
+    // 3.x blast_radius requires a non-empty `files` argument.
+    if (!files || files.length === 0) return null;
+    return this.callTool('cxpak_graph', { op: 'blast_radius', files });
   }
 
   async _getCxpakDeadCode() {
     const available = await this.checkAvailability();
     if (!available) return null;
-    return this.callTool('cxpak_dead_code', {});
+    return this.callTool('cxpak_graph', { op: 'dead_code' });
   }
 
   async _getCxpakPredict(files) {
     const available = await this.checkAvailability();
     if (!available) return null;
     if (!files || files.length === 0) return null;
-    return this.callTool('cxpak_predict', { files });
+    return this.callTool('cxpak_graph', { op: 'predict', files });
   }
 
   async _getCxpakSecuritySurface() {
     const available = await this.checkAvailability();
     if (!available) return null;
-    return this.callTool('cxpak_security_surface', {});
+    return this.callTool('cxpak_insight', { op: 'security_surface' });
   }
 
   _isFileImport(name) {
@@ -265,7 +276,7 @@ class CxpakVerifier {
       const edgeCount = (response.edges || []).length;
       const filterNote = filteredCount > 0 ? `, ${filteredCount} builtin refs filtered` : '';
       return this.makeResult('import-validity', 'high', 'kept',
-        `cxpak_call_graph: ${edgeCount} edges, 0 unresolved imports${filterNote}`);
+        `cxpak_graph(call_graph): ${edgeCount} edges, 0 unresolved imports${filterNote}`);
     }
 
     const detail = fileImports.map(u =>
@@ -290,11 +301,11 @@ class CxpakVerifier {
     const conventions = response.conventions || 0;
     if (conventions >= 7) {
       return this.makeResult('function-length', 'medium', 'kept',
-        `cxpak_health conventions: ${conventions.toFixed(1)}/10`);
+        `cxpak_insight(health) conventions: ${conventions.toFixed(1)}/10`);
     }
 
     return this.makeResult('function-length', 'medium', 'broken',
-      `cxpak_health conventions: ${conventions.toFixed(1)}/10 (below 7.0 threshold)`);
+      `cxpak_insight(health) conventions: ${conventions.toFixed(1)}/10 (below 7.0 threshold)`);
   }
 
   async verifyDuplication(files, _threshold, healthResponse, deadCodeResponse) {
@@ -311,10 +322,10 @@ class CxpakVerifier {
 
       if (matched.length === 0) {
         return this.makeResult('duplication', 'high', 'kept',
-          `cxpak_dead_code: 0 dead symbols in modified files (${allSymbols.length} total, ${deadCodeResponse.total_scanned || 0} scanned)`);
+          `cxpak_graph(dead_code): 0 dead symbols in modified files (${allSymbols.length} total, ${deadCodeResponse.total_scanned || deadCodeResponse.total || 0} scanned)`);
       }
 
-      const detail = matched.slice(0, 5).map(s => `${s.file}:${s.name}`).join('; ');
+      const detail = matched.slice(0, 5).map(s => `${s.file}:${s.symbol || s.name}`).join('; ');
       const suffix = matched.length > 5 ? ` (+${matched.length - 5} more)` : '';
       return this.makeResult('duplication', 'high', 'broken',
         `${matched.length} dead symbol(s) in modified files: ${detail}${suffix}`);
@@ -329,19 +340,19 @@ class CxpakVerifier {
     if (deadCode != null) {
       if (deadCode >= 7) {
         return this.makeResult('duplication', 'medium', 'kept',
-          `cxpak_health dead_code: ${deadCode.toFixed(1)}/10`);
+          `cxpak_insight(health) dead_code: ${deadCode.toFixed(1)}/10`);
       }
       return this.makeResult('duplication', 'medium', 'broken',
-        `cxpak_health dead_code: ${deadCode.toFixed(1)}/10 (below 7.0 threshold)`);
+        `cxpak_insight(health) dead_code: ${deadCode.toFixed(1)}/10 (below 7.0 threshold)`);
     }
 
     const composite = response.composite || 0;
     if (composite >= 7) {
       return this.makeResult('duplication', 'medium', 'kept',
-        `cxpak_health composite: ${composite.toFixed(1)}/10 (dead_code unavailable)`);
+        `cxpak_insight(health) composite: ${composite.toFixed(1)}/10 (dead_code unavailable)`);
     }
     return this.makeResult('duplication', 'medium', 'broken',
-      `cxpak_health composite: ${composite.toFixed(1)}/10 (below 7.0, dead_code unavailable)`);
+      `cxpak_insight(health) composite: ${composite.toFixed(1)}/10 (below 7.0, dead_code unavailable)`);
   }
 
   async verifyChangeImpact(files, _threshold, predictResponse) {
@@ -349,25 +360,41 @@ class CxpakVerifier {
       return this.makeResult('change-impact', 'medium', 'kept', 'no files to check');
     }
     if (!predictResponse) {
-      return this.makeResult('change-impact', 'medium', 'skipped', 'cxpak_predict unavailable');
+      return this.makeResult('change-impact', 'medium', 'skipped', 'cxpak_graph(predict) unavailable');
     }
 
-    const riskScore = predictResponse.risk_score || 0;
-    const affectedFiles = (predictResponse.structural_impact && predictResponse.structural_impact.affected_files) || 0;
-    const testPredictions = predictResponse.test_predictions || [];
+    const pr = predictResponse;
+    // 3.x: structural/historical/call_impact are arrays of predicted-affected
+    // files, tests are `test_impact`, and there is no numeric risk_score (a
+    // `confidence_summary` string replaces it). Legacy: structural_impact was
+    // an object with `affected_files` and risk was `risk_score`. Accept both.
+    const si = pr.structural_impact;
+    const structuralCount = Array.isArray(si) ? si.length : ((si && si.affected_files) || 0);
+    const affectedFiles = Array.isArray(si)
+      ? structuralCount + (pr.historical_impact || []).length + (pr.call_impact || []).length
+      : structuralCount;
+    const tests = pr.test_impact || pr.test_predictions || [];
+    const hasLegacyRisk = typeof pr.risk_score === 'number';
+    const testWord = pr.test_predictions ? 'test_predictions' : 'test_impact';
+    const riskLabel = hasLegacyRisk
+      ? `risk_score=${pr.risk_score.toFixed(2)}`
+      : (pr.confidence_summary ? String(pr.confidence_summary) : `${affectedFiles} predicted affected`);
+    // Low impact: legacy uses the risk_score threshold; 3.x uses "no structural
+    // blast" (the strongest coupling signal) as the low-risk condition.
+    const lowRisk = hasLegacyRisk ? pr.risk_score < 0.5 : structuralCount === 0;
 
-    if (riskScore < 0.5) {
+    if (lowRisk) {
       return this.makeResult('change-impact', 'medium', 'kept',
-        `cxpak_predict: risk_score=${riskScore.toFixed(2)}, ${affectedFiles} affected files`);
+        `cxpak_graph(predict): ${riskLabel}, ${affectedFiles} affected files`);
     }
 
-    if (testPredictions.length >= 2) {
+    if (tests.length >= 2) {
       return this.makeResult('change-impact', 'medium', 'kept',
-        `cxpak_predict: risk_score=${riskScore.toFixed(2)}, ${affectedFiles} affected, ${testPredictions.length} test_predictions`);
+        `cxpak_graph(predict): ${riskLabel}, ${affectedFiles} affected, ${tests.length} ${testWord}`);
     }
 
     return this.makeResult('change-impact', 'medium', 'broken',
-      `cxpak_predict: risk_score=${riskScore.toFixed(2)}, ${affectedFiles} affected files, ${testPredictions.length} test prediction(s) — high impact, low test coverage`);
+      `cxpak_graph(predict): ${riskLabel}, ${affectedFiles} affected files, ${tests.length} test prediction(s) — high impact, low test coverage`);
   }
 
   async verifyConventionCompliance(files, _threshold, verifyResponse) {
@@ -384,7 +411,7 @@ class CxpakVerifier {
     if (violations.length === 0) {
       const checked = response.files_checked || response.checked || files.length;
       return this.makeResult('convention-compliance', 'medium', 'kept',
-        `cxpak_verify: ${checked} files, 0 convention violations`);
+        `cxpak_review(verify): ${checked} files, 0 convention violations`);
     }
 
     const detail = violations.slice(0, 5).map(v => {
@@ -436,7 +463,7 @@ class CxpakVerifier {
       return this.makeResult('architectural-boundary', 'medium', 'skipped', 'cxpak unavailable');
     }
 
-    const response = await this.callTool('cxpak_architecture', {});
+    const response = await this.callTool('cxpak_insight', { op: 'architecture' });
     if (!response) {
       return this.makeResult('architectural-boundary', 'medium', 'skipped', 'cxpak returned no data');
     }
@@ -459,7 +486,7 @@ class CxpakVerifier {
 
     if (violations.length === 0) {
       return this.makeResult('architectural-boundary', 'medium', 'kept',
-        `cxpak_architecture: ${modules.length} modules, no boundary violations`);
+        `cxpak_insight(architecture): ${modules.length} modules, no boundary violations`);
     }
 
     return this.makeResult('architectural-boundary', 'medium', 'broken', violations.join('; '));
@@ -476,11 +503,15 @@ class CxpakVerifier {
     }
 
     if (!securityResponse) {
-      return this.makeResult('security-surface', 'high', 'skipped', 'cxpak_security_surface unavailable');
+      return this.makeResult('security-surface', 'high', 'skipped', 'cxpak_insight(security_surface) unavailable');
     }
 
-    const secrets = (securityResponse.secrets || []).filter(s => this._issueInModifiedFiles(s, files));
-    const sqlInjection = (securityResponse.sql_injection || []).filter(s => this._issueInModifiedFiles(s, files));
+    // 3.x renamed the arrays (secret_patterns / sql_injection_surface); accept
+    // both the new and legacy field names.
+    const secretsSrc = securityResponse.secret_patterns || securityResponse.secrets || [];
+    const sqlSrc = securityResponse.sql_injection_surface || securityResponse.sql_injection || [];
+    const secrets = secretsSrc.filter(s => this._issueInModifiedFiles(s, files));
+    const sqlInjection = sqlSrc.filter(s => this._issueInModifiedFiles(s, files));
     const unprotected = (securityResponse.unprotected_endpoints || []).filter(s => this._issueInModifiedFiles(s, files));
 
     const issues = [];
@@ -501,7 +532,7 @@ class CxpakVerifier {
 
     if (issues.length === 0) {
       return this.makeResult('security-surface', 'high', 'kept',
-        'cxpak_security_surface: 0 issues in modified files');
+        'cxpak_insight(security_surface): 0 issues in modified files');
     }
 
     return this.makeResult('security-surface', 'high', 'broken', issues.join('; '));
@@ -530,7 +561,7 @@ class CxpakVerifier {
       this._getCxpakHealth(),
       this._getCxpakVerify(),
       this._getCxpakDiff(),
-      this._getCxpakBlastRadius(),
+      this._getCxpakBlastRadius(files),
       this._getCxpakDeadCode(),
       this._getCxpakPredict(files),
       this._getCxpakSecuritySurface(),
