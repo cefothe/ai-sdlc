@@ -41,11 +41,17 @@ Token compounding: every unnecessary output token becomes input context on next 
 
 ## Context Acquisition (REQUIRED)
 
-Before implementing any change, call the cxpak intent-tool `cxpak_context` with `op: "context"` and a one-line task description. This provides token-budgeted structural context (architecture, conventions, relevant files, blast radius). Do not skip this step — R7 proved d=1.82 quality improvement from structured input context vs working blind.
+Before implementing any change, acquire **token-budgeted** structural context (architecture, conventions, relevant files, blast radius) and read it before exploring. Do not skip this step — R7 proved d=1.82 quality improvement from structured input context vs working blind. Use the budget-honoring **CLI**:
 
-If `cxpak_context` (op `context`) is unavailable, fall back to `cxpak_context` (op `overview`) + `cxpak_graph` (op `trace`) for the relevant symbol/module.
+```bash
+cxpak overview --tokens 6k
+```
 
-> **cxpak 3.x tool surface.** The tools are op-based intent-tools: `cxpak_context` (ops `context`, `overview`, `context_for_task`, `stats`), `cxpak_graph` (ops `trace`, `blast_radius`, `call_graph`, `api_surface`), `cxpak_review` (ops `review`, `diff`, `verify`), `cxpak_insight` (ops `health`, `risks`, `architecture`, `conventions`, `security_surface`). The pre-3.0 names (`cxpak_auto_context`, `cxpak_overview`, `cxpak_trace`) are gone (only `cxpak_auto_context` survives as a one-release deprecated alias for `cxpak_context` op `context`). The plugin registers the server via `.mcp.json` (`cxpak serve --mcp .`); it activates when `cxpak` is on PATH.
+For targeted follow-ups use the MCP ops `cxpak_graph` (op `trace`/`blast_radius`) and `cxpak_insight` (op `architecture`).
+
+> **⚠ Do not use `cxpak_context` (op `context`/`briefing`) for the pre-action pack.** In cxpak 3.x that MCP op **ignores the token budget** and returns the entire repo index (hundreds of KB–MBs) — it overflows the tool-result cap and returns nothing usable (verified: `maxTokens:6000` → ~420 KB on a medium repo; ~1.8 M on a large one). The CLI `cxpak overview --tokens N` honors the budget; use it for the mandated context pack.
+
+> **cxpak 3.x tool surface.** Op-based intent-tools: `cxpak_context` (ops `context`, `overview`, `context_for_task`, `stats` — **budget-broken, avoid for packing**), `cxpak_graph` (ops `trace`, `blast_radius`, `call_graph`, `api_surface`), `cxpak_review` (ops `review`, `diff`, `verify`), `cxpak_insight` (ops `health`, `risks`, `architecture`, `conventions`, `security_surface`). The pre-3.0 names (`cxpak_auto_context`, `cxpak_overview`, `cxpak_trace`) are gone. The plugin registers the server via `.mcp.json` (`cxpak serve --mcp .`); it activates when `cxpak` is on PATH.
 
 ## Architecture
 
