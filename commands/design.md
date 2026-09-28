@@ -1,13 +1,16 @@
 ---
-description: Run the design panel for a feature — dispatch architects, produce a design doc + comprehensive ADRs, and check ADR coverage
+description: Turn an approved PRD into the technical how — architects propose high-level designs, a chair converges them into one architecture, then record ADRs + a design doc and scaffold the DoR-ready backlog task from them
 argument-hint: <feature-slug>   (matches docs/prd/<slug>.md)
-allowed-tools: Bash, Read, Write, Task
+allowed-tools: Bash, Read, Write, Task, AskUserQuestion
 ---
 
 # /ai-sdlc:design — architecture design stage
 
 Turn an approved PRD into the technical **how**: a detailed design doc and a
-comprehensive set of atomic ADRs. Produces artifacts, never code.
+comprehensive set of atomic ADRs — then scaffold the buildable backlog task
+**from** them. This is the stage that owns task creation: a task never exists
+before its architecture does, and DoR gate 9 refuses to admit a feature task
+whose design doc is not approved. Produces artifacts + one task, never code.
 
 Feature is `$1` (its PRD is `docs/prd/$1.md`).
 
@@ -17,48 +20,90 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    existing `docs/design/$1.md`. If the PRD isn't approved, stop — design follows
    an approved PRD, not a draft.
 
-2. **Allocate ADR number blocks up front (do this BEFORE dispatch).** Parallel
-   agents that each pick "the next free DEC id" collide — this actually happened
-   (two architects both wrote DEC-0024..0028). The orchestrator owns numbering:
+1b. **Ground the external contracts BEFORE proposing (integration features).** If the
+   feature integrates any external API, protocol, or third-party service (venue APIs,
+   payment rails, FIX, webhooks, an SDK — anything whose shape you do not own),
+   **gather the real contract first.** You may **not** invent endpoint shapes, field
+   names, pagination, rate limits, auth models, or fee/pricing formulas. Ask the
+   operator, with `AskUserQuestion`, for whatever is missing:
+   - the API spec (OpenAPI/Swagger, docs URL, or an in-repo path), per venue/service;
+   - sample real responses (list + detail) for the resources being mirrored;
+   - the auth model, and the **real** rate limits + pagination (from headers/docs);
+   - any fee/pricing formula, with its source.
+   Also gather the **sizing inputs** the architecture will rest on — market/record
+   counts, read/write rates, latency targets, data volume — from real telemetry or
+   the operator, not a guess. Pass everything collected to the panel as ground truth.
+
+   Whatever cannot be sourced is a **blocking open question**, recorded as such: the
+   dependent decisions are capped at `confidence: low`, the design doc's Risks list
+   each unverified contract as a pre-implementation **spike**, and you tell the
+   operator the design is provisional until the specs are supplied. A design built on
+   assumed contracts that reads as `confidence: high` is the exact failure this gate
+   exists to stop — do not produce one.
+
+1c. **Ground the environment & platform BEFORE proposing (stack + deployment).** The
+   **language/runtime** and the **deployment topology** are decided from the
+   operator's actual environment — never invented. Detect what the repo already
+   fixes: scan for stack manifests (`package.json`, `go.mod`, `pom.xml`,
+   `build.gradle`, `pyproject.toml`, `Cargo.toml`, Dockerfiles, IaC, CI configs). If
+   the repo already commits to a stack/platform, that is a **constraint**, not an
+   open choice — the ADR records *why it fits*, not a fresh bake-off. If the repo is
+   greenfield (no manifests), you do **not** know the answer — ask the operator with
+   `AskUserQuestion`:
+   - existing/preferred **languages & runtimes**, and any team/org stack standard;
+   - the **deployment target** (k8s, ECS/Fargate, serverless, VMs, on-prem) and its
+     constraints; CI/CD; regions; runtime/ops model and real ops capacity.
+   Do **not** treat `.ai-sdlc/capabilities.yaml` agent routing as evidence of the
+   team's stack — it configures which agent handles a language, not what you run.
+   Do **not** assert "established team runtime", "team convention", or "modest ops
+   capacity" as fact: if the operator did not tell you and the repo does not show it,
+   it is unknown. Unknown stack/deployment inputs → present the choice to the operator
+   (or record at `confidence: low` with "verify by: operator") — never a fabricated
+   `confidence: high` stack or topology ADR.
+
+   **Decisions are recorded only after the panel converges (Phase 3) — never during
+   the parallel fan-out.** Recording per-architect, in parallel, is what produced
+   the old failure mode: four blind lenses each locking in ~10 ADRs in a reserved
+   range, with no shared architecture, silent contradictions between ranges, and
+   gaps where an architect wrote 3 of its 10. Architecture must converge *before*
+   any DEC id is assigned.
+
+2. **Phase 1 — Propose (parallel, NO ADRs yet).** Read `.ai-sdlc/capabilities.yaml`
+   → `stages.design` for the architect roster (route by labels). Dispatch them **in
+   parallel via the Task tool** (a real team), each with the **§Proposal** prompt in
+   `commands/references/design-panel-prompt.md`, filling `{{DOMAIN_FOCUS}}` per
+   architect. Each returns, **as structured text only**, a HIGH-LEVEL architecture
+   proposal from its lens: the recommended shape, key components/module boundaries,
+   and the *candidate decision points* it raises — each named, with 2-4 options and
+   their trade-offs, and a leaning. **No DEC numbers, no ADR files, no `decisions.js`,
+   no design doc.** Numbering and recording are deferred on purpose (see Phase 3).
+   If an agent writes files anyway, discard them and keep only its text.
+
+3. **Phase 2 — Converge (debate → ONE architecture).** The proposals will overlap
+   and conflict; this is where the panel *discusses its choices* and reconciles them
+   **before** anything is recorded. Dispatch `architect-review` as **chair** with
+   **all** Phase-1 proposals and the **§Convergence** prompt. It produces:
+   - a single coherent **target architecture** (the agreed shape + why it wins), and
+   - the **consolidated decision list** — deduped across proposals, one entry per
+     real choice, each carrying the competing options that were actually debated,
+     the chosen option, and why the alternatives lost.
+   Surface every genuinely unresolved conflict to the operator rather than letting
+   the chair silently pick. Nothing proceeds to recording until the architecture
+   coheres. (For a contentious feature, run a short critique round first: give each
+   Phase-1 architect the *other* proposals and ask for objections, then feed those
+   into the chair.)
+
+4. **Phase 3 — Allocate DEC ids + record serially.** Only now that the decisions are
+   agreed, number them. Get the next free id and assign **contiguously** — the
+   decisions come from the converged list, not from any single agent, so there is no
+   parallel-`nextId` race to dodge and no reserved-range gaps to reconcile:
    ```bash
    node -e "const{listDecisions}=require(process.env.CLAUDE_PLUGIN_ROOT+'/decision-engine/decisions.js');const ds=listDecisions(process.cwd());const max=ds.reduce((m,d)=>Math.max(m,Number((d.metadata.id.match(/DEC-(\d+)/)||[])[1]||0)),0);console.log('next free:',max+1)"
    ```
-   From `next free`, hand each architect a **disjoint reserved range** (e.g. 10
-   ids each): architect A → `DEC-<n>..<n+9>`, B → `<n+10>..<n+19>`, and so on.
-   Pass the assigned range to each in its prompt.
-
-3. **Dispatch the panel.** Read `.ai-sdlc/capabilities.yaml` → `stages.design` for
-   the architect roster (route by labels). Dispatch them **in parallel via the Task
-   tool** (a real team), each with the reusable prompt in
-   `commands/references/design-panel-prompt.md`, filling `{{DOMAIN_FOCUS}}` and
-   `{{ADR_RANGE}}` per architect. The panel is collaborative/advisory (no
-   cross-harness constraint).
-
-   Two non-negotiable rules in the prompt:
-   - **Agents RETURN findings as structured text — they do NOT write ADR files or
-     run `decisions.js`.** The orchestrator records everything centrally in step 5,
-     so there are no write races and no premature side effects. If an agent writes
-     files anyway, discard them and record from its text.
-   - **Every core choice gets a full ADR — even the ones already decided in the
-     PRD** (stack, datastore, external deps). A decision being made is when the ADR
-     is written. Each ADR carries Context / Options (pros + cons) /
-     Decision-rationale / Consequences / Confidence, and states its assigned DEC id
-     from its allocated range.
-
-4. **Synthesize the design doc.** Write `docs/design/$1.md` from
-   `docs/design/_template.md` — the detailed schema/DDL, module boundaries, data
-   flow, interfaces, risks, test strategy — and link every ADR in its Decisions
-   section. Validate:
-   ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/design-gate.js" "docs/design/$1.md" || true
-   ```
-
-5. **Record the ADRs — serially, from the panel's returned text.** The orchestrator
-   (not the agents) writes each `Decision`, one at a time, so `nextId` allocates
-   without contention. Use each architect's assigned DEC ids (from step 2) so
-   numbering is deterministic and gap-free even if an agent crashed mid-run (you'll
-   see the gap in its block and can re-dispatch just that range). One atomic
-   `Decision` per choice, with the canonical sections:
+   The orchestrator (not the agents) records each decision one at a time. **Every
+   core choice gets a full ADR — even the ones the PRD already named** (stack,
+   datastore, external deps): a decision being made is exactly when its ADR is
+   written. Options = the debated alternatives; rationale = why convergence chose one:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/decisions.js" new --id DEC-<n> --summary "…" \
      --options "a:…,b:…" --context "…" --rationale "…" --consequences "…" --confidence high|medium|low
@@ -67,6 +112,14 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    feature-internal ones.) The CLI warns if a decision is anemic — fill the sections.
    For many ADRs, a one-off Node script using `newDecision`+`writeDecision` in a
    loop is cleaner than N shell calls.
+
+5. **Synthesize the design doc.** Write `docs/design/$1.md` from
+   `docs/design/_template.md` — reflecting the **agreed** architecture: the detailed
+   schema/DDL, module boundaries, data flow, interfaces, risks, test strategy — and
+   link every recorded ADR in its Decisions section. Validate:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/design-gate.js" "docs/design/$1.md" || true
+   ```
 
 6. **Check ADR coverage.** Run the scanner and resolve every gap:
    ```bash
@@ -77,13 +130,46 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    or state explicitly why it's out of scope for this feature. Do not leave a
    foundational area silently undecided.
 
-7. **Report.** List the ADRs (`npm run decisions -- list`), the design-doc validity,
-   and any coverage gaps + the panel's biggest-risk note. ADRs are `proposed` and
-   the design doc `draft` — a human ratifies before implementation.
+7. **Scaffold the backlog task — from the PRD *and* the design.** Now that the
+   architecture exists, fold both the product contract and the technical decisions
+   into one DoR-shaped task. The `--prd` flag emits the `specRef` block (gate 3 +
+   gate 8 resolve it); seed `--refs` with the **design doc** and the concrete
+   surfaces the ADRs name, so gate 9's design link and gate 3's ≥3 references are
+   both satisfied. Allocate the id first:
+   ```bash
+   ID=$(node -e "console.log(require(process.env.CLAUDE_PLUGIN_ROOT+'/decision-engine/backlog-task-new').nextTaskId(process.cwd()))")
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/backlog-task-new.js" "<title>" --id "$ID" \
+     --prd "docs/prd/$1.md" --feature-id "$1" \
+     --labels <a,b> --refs "docs/design/$1.md,<surface1>,<surface2>" \
+     --ac "<criterion 1>" --ac "<criterion 2>" \
+     --metric "<success metric 1>" --metric "<success metric 2>" \
+     --priority <low|medium|high> --desc "<one-paragraph problem+scope, grounded in the ADRs>"
+   ```
+
+8. **Check readiness (DoR).** Report what still blocks dispatch — gate 9 will fail
+   until the design doc is `status: approved` (and, if the project sets
+   `designGate.requireCoverage`, until ADR coverage is complete):
+   ```bash
+   node -e "const R=process.env.CLAUDE_PLUGIN_ROOT;const{loadTaskFile}=require(R+'/decision-engine/backlog-task');const{loadDorConfig,evaluateDor}=require(R+'/decision-engine/dor-gate');const t=loadTaskFile(process.argv[1]);console.log(JSON.stringify(evaluateDor(t,{projectRoot:process.cwd(),config:loadDorConfig('.ai-sdlc/dor-config.yaml')}),null,2))" "backlog/tasks/${ID} - <slug>.md"
+   ```
+   - `admitted: true` → tell the operator to run `/ai-sdlc:execute ${ID}`.
+   - Otherwise → list the failing gates and the exact fields to fix. Never
+     auto-dispatch, and never set the design doc or PRD to `approved` yourself —
+     a human ratifies.
+
+9. **Report.** List the ADRs (`npm run decisions -- list`), the design-doc validity,
+   any coverage gaps + the panel's biggest-risk note, and the scaffolded task id
+   with its DoR verdict. ADRs are `proposed` and the design doc `draft` — a human
+   ratifies both before the gate admits the task for implementation.
 
 ## Notes
-- Design produces **decisions + a design doc, never code.** Agents return findings;
-  the orchestrator records. If an architect writes implementation files, discard them.
-- Up-front ADR-number blocks + serial orchestrator recording prevent the numbering
-  collision that parallel `nextId` allocation causes.
+- Design produces **decisions + a design doc + one backlog task, never code.**
+  Agents return findings; the orchestrator records the ADRs and scaffolds the task.
+  If an architect writes implementation files, discard them.
+- Task creation lives here, not in `/ai-sdlc:new`, on purpose: seeding the task
+  from the ADRs (not the raw PRD) is what guarantees no task predates its design.
+- **Propose → converge → record**, in that order. Architects never record ADRs in
+  parallel — decisions emerge from the converged architecture, then the orchestrator
+  numbers them contiguously and records serially. This replaces the old
+  per-architect reserved DEC ranges, which produced incoherent, gap-riddled ADR sets.
 - Checklist of areas the panel must cover: `commands/references/adr-coverage-checklist.md`.

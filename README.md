@@ -194,7 +194,7 @@ Point Claude Code at your repository, scaffold the framework, then run a task:
 flowchart TD
     IDEA[Idea / feature] --> PRD["PRD (docs/prd/*.md)"]
     PRD --> TASK["Backlog task<br/>backlog/tasks/&lt;ID&gt;.md"]
-    TASK --> DOR{"Definition-of-Ready gate<br/>7 rubric gates"}
+    TASK --> DOR{"Definition-of-Ready gate<br/>7 rubric gates + PRD/design sign-off"}
     DOR -- "not ready" --> FIX["Refuse + reasons →<br/>operator resolves open questions"]
     FIX --> TASK
     DOR -- "ready (admitted)" --> DESIGN["Design panel<br/>(architects) → ADR"]
@@ -398,6 +398,18 @@ canonical sections, placeholder markers) or still `draft` — so a **human must
 review and set `status: approved`** before any code is written or PR opened.
 Structure + approval are enforced; PRD *quality* (measurable metrics, thin
 sections) is scored **advisory**. Check anytime: `npm run validate-prd -- docs/prd/<slug>.md`.
+
+**Designs are governed too.** The same way gate 8 makes the PRD load-bearing,
+**DoR gate 9** makes the *design* load-bearing: a feature task cannot be admitted
+for dispatch until `docs/design/<featureId>.md` exists, is structurally valid (all
+canonical sections + at least one linked ADR via `design-gate.js`), and is
+`status: approved`. This enforces the `new → design → execute` lifecycle — no task
+reaches a worktree on an un-architected feature. Task scaffolding itself lives in
+`/ai-sdlc:design` (seeded from the ADRs), not `/ai-sdlc:new`, so a task can never
+predate its architecture. Teams that want completeness (not just presence) set
+`spec.designGate.requireCoverage: true` to also fail gate 9 on any uncovered
+foundational decision area (`adr-coverage.js`).
+
 The downstream half — a human approving the PR itself — is enforced with branch
 protection + `CODEOWNERS`; see [PR human-in-the-loop](docs/operations/pr-human-in-the-loop.md).
 

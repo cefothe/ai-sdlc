@@ -16,6 +16,7 @@ const AREAS = [
   { key: 'backend-stack', label: 'Backend language / runtime', re: /\bnode\b|typescript|python|golang|\bgo\b|\brust\b|\bjava\b|runtime|backend (stack|language|framework)/i },
   { key: 'frontend', label: 'Frontend framework (if there is a UI)', re: /react|next\.?js|svelte|vue|angular|\bspa\b|\bssr\b|frontend/i },
   { key: 'datastore', label: 'Database / datastore', re: /postgres|mysql|mongo|sqlite|dynamo|cassandra|datastore|database engine/i },
+  { key: 'data-model', label: 'Data / domain model (canonical entities, fields, relationships, mapping)', re: /canonical (data|domain|common|three|two|entity|model|schema)|data model|domain model|entity model|entity-relationship|field mapping|schema mapping|natural key|composite (primary )?key|normalized (common )?schema/i },
   { key: 'build-vs-buy', label: 'External dependency: build vs buy / self-host', re: /build vs buy|self-?host|third-?party|vendor|hosted|managed service|scrap/i },
   { key: 'resilience', label: 'Resilience / retry / error handling', re: /retry|resilien|backoff|circuit break|failure budget|idempoten|dead-?letter/i },
   { key: 'scale', label: 'Scale / data volume / growth', re: /\bscale\b|volume|partition|shard|throughput|growth|indexing|history table|time.?series/i },
