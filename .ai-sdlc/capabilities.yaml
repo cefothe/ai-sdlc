@@ -67,8 +67,15 @@ spec:
     design:
       panel: true
       providers:
-        - { role: solution-architect, type: agent, name: architect-review }
-        - { role: backend-architect, type: agent, name: backend-architect }
+        - { role: solution-architect, type: agent, name: architect-review, harness: claude }
+        - { role: backend-architect, type: agent, name: backend-architect, harness: claude }
+        # Cross-MODEL diversity (not attestation): the same solution-architect lens
+        # mirrored on a different harness (codex). Design is the highest-leverage,
+        # most-upstream artifact — its ADRs gate the whole build — so a single
+        # model's blind spots must not define the architecture. The Phase-2 chair
+        # converges the two independent architectures. Dispatched on codex via
+        # scripts/codex-dispatch.mjs (interactive) or the harness router (unattended).
+        - { role: solution-architect-codex, type: agent, name: architect-review, harness: codex }
       # Front-loaded grounding (see design.md steps 1b/1c): architects fetch the
       # REAL external contracts and prior art instead of inventing them. firecrawl
       # scrapes/downloads vendor API docs; deep-research surveys prior art; the web

@@ -78,10 +78,21 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    Give each architect Task the resolved `tools` as its allowlist and append the
    `guidance` line to its prompt — e.g. firecrawl to **scrape/download the real vendor
    API docs**, `postgres-ro` (when the task carries a `db`/`schema` label) to **inspect
-   the live schema**, and `deep-research`/WebSearch for prior art. Dispatch them **in
-   parallel via the Task tool** (a real team), each with the **§Proposal** prompt in
+   the live schema**, and `deep-research`/WebSearch for prior art. Dispatch the panel
+   **in parallel**, each with the **§Proposal** prompt in
    `commands/references/design-panel-prompt.md`, filling `{{DOMAIN_FOCUS}}` per
-   architect. Each returns, **as structured text only**, a HIGH-LEVEL architecture
+   architect — **but dispatch by harness** so the panel is genuinely cross-model:
+   - **`harness: claude` (or unset)** architects → the **Task tool** (a real team).
+   - **`harness: codex`** architects → the **Codex bridge**, so they truly run on a
+     different model (not an inert Task on claude). Pipe the same §Proposal prompt in:
+     ```bash
+     printf '%s' "$PROMPT" | node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-dispatch.mjs" \
+       --type design --role solution-architect-codex --name architect-review
+     ```
+     Treat its stdout as that architect's proposal. This is diversity-of-perspective
+     (claude ∥ codex), converged by the Phase-2 chair — not attestation.
+
+   Each returns, **as structured text only**, a HIGH-LEVEL architecture
    proposal from its lens: the recommended shape, key components/module boundaries,
    and the *candidate decision points* it raises — each named, with 2-4 options and
    their trade-offs, and a leaning. **No DEC numbers, no ADR files, no `decisions.js`,

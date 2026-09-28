@@ -70,8 +70,19 @@ describe('resolveDesignPanel (architects)', () => {
   test('default panel is the solution + backend architects', () => {
     const { providers, panel } = cap.resolveDesignPanel(MAP, {});
     expect(panel).toBe(true);
-    expect(providers.map((p) => p.name)).toEqual(['architect-review', 'backend-architect']);
-    expect(providers.map((p) => p.role)).toContain('solution-architect');
+    expect(providers.map((p) => p.role)).toEqual(expect.arrayContaining(['solution-architect', 'backend-architect']));
+    expect(providers.some((p) => p.name === 'architect-review')).toBe(true);
+    expect(providers.some((p) => p.name === 'backend-architect')).toBe(true);
+  });
+
+  test('design is cross-MODEL: the solution lens is mirrored on the codex harness', () => {
+    const { providers } = cap.resolveDesignPanel(MAP, {});
+    const codex = providers.filter((p) => p.harness === 'codex');
+    expect(codex.length).toBeGreaterThanOrEqual(1);
+    // the codex twin runs the same architect agent as the claude solution lens
+    expect(codex.some((p) => p.name === 'architect-review')).toBe(true);
+    // and the panel genuinely spans both harnesses (diversity, not attestation)
+    expect(providers.some((p) => (p.harness || 'claude') === 'claude')).toBe(true);
   });
 
   test('infra/cloud tasks pull in the cloud-architect', () => {

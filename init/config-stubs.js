@@ -115,6 +115,42 @@ metadata:
   name: default
 spec:
   stages:
+    # Discovery — a product panel (PM/PO) shapes the WHAT/WHY before any
+    # architecture, grounded in real market evidence (web + deep-research).
+    discovery:
+      panel: true
+      providers:
+        - { role: product-manager, type: agent, name: product-manager }
+        - { role: product-owner, type: agent, name: product-owner }
+      capabilities:
+        web: [WebSearch, WebFetch]
+        skills: [deep-research]
+    # Design — a cross-MODEL architect panel shapes the HOW before code. The
+    # solution-architect lens runs on BOTH claude and codex; the Phase-2 chair
+    # converges the two independent architectures (design is the highest-leverage
+    # artifact, so no single model's blind spots should define it). Architects
+    # fetch REAL contracts/prior art via firecrawl + deep-research instead of
+    # inventing them; DB access is added by routing only when the task touches one.
+    design:
+      panel: true
+      providers:
+        - { role: solution-architect, type: agent, name: architect-review, harness: claude }
+        - { role: backend-architect, type: agent, name: backend-architect, harness: claude }
+        - { role: solution-architect-codex, type: agent, name: architect-review, harness: codex }
+      capabilities:
+        skills: [firecrawl, deep-research]
+        web: [WebSearch, WebFetch]
+      routing:
+        - when: { labels: [db, database, datastore, schema] }
+          addCapabilities: { mcp: [postgres-ro] }
+        - when: { labels: [integration, api, external, webhook] }
+          addCapabilities: { mcp: [firecrawl] }
+        - when: { labels: [infra, cloud] }
+          addProvider: { role: cloud-architect, type: agent, name: cloud-architect, harness: claude }
+        - when: { labels: [frontend, ui] }
+          addProvider: { role: ux-architect, type: agent, name: ui-ux-designer, harness: claude }
+        - when: { labels: [auth, payment, security, pii] }
+          addProvider: { role: security-architect, type: agent, name: security-auditor, harness: claude }
     plan:
       provider: { type: skill, name: code-plan }
     implement:
