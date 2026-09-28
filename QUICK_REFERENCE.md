@@ -35,9 +35,9 @@
 ### AI SDLC Lifecycle
 ```bash
 /ai-sdlc:init [dir]         # Scaffold .ai-sdlc/ + backlog into a repo (brownfield-safe)
-/ai-sdlc:new "<title>"      # Product panel (PM/PO+CMO/CPO) shapes a PRODUCT-ONLY PRD
-/ai-sdlc:design <slug>      # Architect panel -> design doc + comprehensive ADRs (the technical how)
-/ai-sdlc:execute <task-id>  # Run one backlog task through the full pipeline
+/ai-sdlc:new "<title>"      # Product panel (PM/PO+CMO/CPO) shapes a PRODUCT-ONLY PRD — ends at the PRD, no task
+/ai-sdlc:design <slug>      # Architect panel -> design doc + ADRs (the how), THEN scaffolds the backlog task
+/ai-sdlc:execute <task-id>  # Run one backlog task through the full pipeline (DoR gate 9 needs an approved design)
 /ai-sdlc:review [base]      # Standalone cross-harness review team on a branch
 ```
 

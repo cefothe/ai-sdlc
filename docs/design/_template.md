@@ -22,6 +22,7 @@ relatedAdrs: []          # [DEC-0001, DEC-0002, ...] — the atomic decisions in
 
 ## Data model
 <The detailed schema — tables, columns, types, keys, indexes, constraints. Real DDL, not prose. This is the "detailed proposed database schema".>
+<For any normalization/integration feature, lead with the **canonical entity model** (entities, fields, keys, relationships) and an explicit **field-mapping table**: each source's REAL field (from the grounded spec — not an assumed shape) → the canonical field, with type/unit conversions and how absent fields are represented. The canonical model is derived here from the real source contracts; if a source field is unverified, mark it and link the de-risking spike. The DDL below realizes this model in the chosen datastore.>
 
 ## Interfaces
 <External surfaces: APIs, CLI, env vars, message formats, third-party endpoints.>

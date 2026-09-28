@@ -192,6 +192,23 @@
           "minimum": 1,
           "default": 3,
           "description": "RFC-0014 §12 Q5 Phase 3 — blast-radius count above which a dor-bypass-admitted task triggers the maintainer-tone FYI comment. Below this, the bypass is treated as routine (no FYI). Tunable per project; the default 3 matches the rolled-up-three-tasks-or-deeper bar that empirically distinguishes 'dispatch leaf bypass' from 'foundation-task bypass that should have been rubric-tuned instead'."
+        },
+        "designGate": {
+          "type": "object",
+          "description": "DoR gate 9 (design ratified). For feature tasks that link a PRD via specRef, the design doc docs/design/<featureId>.md must exist, be structurally valid (canonical sections + >=1 linked ADR), and be status: approved before the task is admitted for dispatch — enforcing new -> design -> execute.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Set false to disable gate 9 entirely (feature tasks admit on PRD approval alone). Default true."
+            },
+            "requireCoverage": {
+              "type": "boolean",
+              "default": false,
+              "description": "When true, gate 9 also fails if adr-coverage reports any foundational decision area (stack, datastore, resilience, scale, cost, security, observability, api, read-path, …) with no ADR. Because coverage is matched heuristically, this is off by default; enable it for teams that want architecture completeness enforced, not just present."
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

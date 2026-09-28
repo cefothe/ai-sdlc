@@ -29,6 +29,19 @@ describe('evaluateCoverage', () => {
     expect(missingKeys).toContain('read-path');
   });
 
+  test('a canonical data-model ADR covers the data-model area; a datastore-engine ADR alone does not', () => {
+    const engineOnly = evaluateCoverage([dec('DEC-0001', { summary: 'Primary datastore = PostgreSQL', options: [] })]);
+    expect(engineOnly.missing.map((m) => m.key)).toContain('data-model');
+
+    const withModel = evaluateCoverage([
+      dec('DEC-0001', { summary: 'Primary datastore = PostgreSQL', options: [] }),
+      dec('DEC-0002', { summary: 'Canonical three-table schema with composite natural keys', options: [] }),
+    ]);
+    const dm = withModel.areas.find((a) => a.key === 'data-model');
+    expect(dm.covered).toBe(true);
+    expect(dm.adrs).toContain('DEC-0002');
+  });
+
   test('matches against context/rationale/options, not just summary', () => {
     const decisions = [dec('DEC-0001', {
       summary: 'How we handle failures',

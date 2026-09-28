@@ -37,3 +37,13 @@ spec:
       sources: ['ai-sdlc/signal-pipeline']
       gatesSkipped: [1, 4, 5, 6]
       gatesRetained: [2, 3, 7]
+
+  # Gate 9 — design ratified. Feature tasks (those linking a PRD via specRef)
+  # cannot be admitted for dispatch until docs/design/<featureId>.md exists, is
+  # structurally valid (canonical sections + >=1 linked ADR), and is approved.
+  # This enforces new -> design -> execute; going straight from PRD to a
+  # dispatchable task is refused. requireCoverage additionally demands every
+  # foundational ADR-coverage area be decided (or explicitly ruled out).
+  designGate:
+    enabled: true
+    requireCoverage: true

@@ -51,4 +51,5 @@ merge a hard human gate with GitHub branch protection.
 | Checkpoint | Enforced by | Blocks |
 |---|---|---|
 | PRD approved | DoR gate 8 (`prd-gate.js`) | task admission → no PR on a draft plan |
+| Design approved | DoR gate 9 (`design-gate.js`) | task admission → no PR on an un-architected feature |
 | PR reviewed | GitHub branch protection + CODEOWNERS | merge without a human approver |

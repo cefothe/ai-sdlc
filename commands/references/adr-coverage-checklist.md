@@ -11,6 +11,7 @@ and reports which areas have no decision.
 | 1 | **Backend stack** | language/runtime choice (Node/TS, Python, Go, …) and why |
 | 2 | **Frontend framework** | if there's a UI: React/Next/Svelte/… and why |
 | 3 | **Datastore** | database engine (Postgres/Mongo/…) and why, incl. future needs (geo, search, vector) |
+| 3b | **Data / domain model** | the **canonical** entities, their fields, keys, and relationships — *derived from the real source schemas*, not assumed. For any normalization/integration feature this includes the explicit **field-mapping table** from each source's real contract to the canonical model. A decision in its own right, separate from the datastore *engine*: flag it, don't smuggle it into the engine ADR. |
 | 4 | **External deps: build vs buy** | self-host vs hosted vs bespoke for scraping/auth/payments/etc., with cost + control + legal |
 | 5 | **Resilience / retry** | retry policy, backoff, idempotency, failure handling, partial-run recovery |
 | 6 | **Scale / data volume** | estimated volume + growth, partitioning/indexing, history/time-series retention |
@@ -27,3 +28,12 @@ Rules:
 - The **detailed** design (schema DDL, module map, data flow) lives in the design
   doc; ADRs record the atomic decisions the design doc links.
 - A decision the operator already made still gets an ADR — documenting *why*.
+- **Analysis depth scales with how load-bearing and how irreversible the decision
+  is.** For an irreversible, foundational choice (the data model, the datastore, an
+  external contract), the options must be genuinely *worked* — quantified from
+  grounded inputs, with the design **derived** through the analysis, not a three-line
+  pick capped with `confidence: high`. A short options list on a reversible, low-blast
+  decision is fine; the same treatment on the data model is not. If the numbers
+  driving the choice are assumed rather than sourced, the decision is `confidence:
+  low` and names what real input would settle it (see the grounding rule in
+  `design-panel-prompt.md`).

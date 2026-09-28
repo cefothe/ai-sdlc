@@ -1,14 +1,20 @@
 ---
-description: Shape a new feature with the product panel (PM/PO, +CMO/CPO for strategic), write a PRD, scaffold a DoR-ready task, and check readiness
+description: Shape a new feature with the product panel (PM/PO, +CMO/CPO for strategic), write a PRD, and hand off to /ai-sdlc:design. Ends at a reviewed PRD — no task is scaffolded here.
 argument-hint: <feature title>   e.g. "feat: add SSO login via OAuth"
 allowed-tools: Bash, Read, Write, Task, AskUserQuestion
 ---
 
-# /ai-sdlc:new — shape and scaffold a new feature
+# /ai-sdlc:new — shape a new feature (PRD only)
 
 Run the **discovery** panel to plan the feature `$ARGUMENTS` in the best possible
-way, capture it as a PRD, then scaffold a DoR-shaped backlog task seeded from that
-PRD. The unit of work is a well-shaped, ready task — not a thin stub.
+way and capture it as a PRD. **This command ends at a reviewed PRD.** It does
+**not** scaffold a backlog task — going straight from a product idea to a
+dispatchable task skips architecture, which is a defect. The technical *how*
+(design doc + ADRs) and the buildable task both come next, in `/ai-sdlc:design`.
+
+Lifecycle: `new` (PRD, the why/what) → `design` (design doc + ADRs + task, the
+how) → `execute` (build). DoR gate 9 enforces this — a feature task cannot be
+admitted for dispatch until its design doc is approved.
 
 ## Steps
 
@@ -49,9 +55,6 @@ PRD. The unit of work is a well-shaped, ready task — not a thin stub.
    every canonical `##` heading (Problem, Target user, Success metrics, Scope,
    Acceptance criteria, Open questions); `prd-gate.js` enforces that structure.
    Set frontmatter `status: draft` and `featureId: <feature-slug>`.
-   ```bash
-   ID=$(node -e "console.log(require(process.env.CLAUDE_PLUGIN_ROOT+'/decision-engine/backlog-task-new').nextTaskId(process.cwd()))")
-   ```
    Write `docs/prd/<feature-slug>.md` (slug from the title). If the CPO recommends
    **defer/drop**, surface that to the operator and stop unless they choose to proceed.
 
@@ -76,27 +79,22 @@ PRD. The unit of work is a well-shaped, ready task — not a thin stub.
    it to approved yourself, and do not proceed to scaffolding while the clarify
    gate reports unresolved questions.
 
-5. **Scaffold the task from the PRD.** Fold the panel's conclusions into the task.
-   The `--prd` flag emits a `specRef` block, which DoR gate 3 resolves — so a task
-   pointing at a missing PRD is refused admission (the link can't rot):
-   ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/backlog-task-new.js" "<title>" --id "$ID" \
-     --prd "docs/prd/<feature-slug>.md" --feature-id "<feature-slug>" \
-     --labels <a,b> --refs <path1,path2,path3> \
-     --ac "<criterion 1>" --ac "<criterion 2>" \
-     --metric "<success metric 1>" --metric "<success metric 2>" \
-     --priority <low|medium|high> --desc "<one-paragraph problem+scope>"
-   ```
-
-6. **Check readiness (DoR).** Report what still blocks dispatch:
-   ```bash
-   node -e "const R=process.env.CLAUDE_PLUGIN_ROOT;const{loadTaskFile}=require(R+'/decision-engine/backlog-task');const{loadDorConfig,evaluateDor}=require(R+'/decision-engine/dor-gate');const t=loadTaskFile(process.argv[1]);console.log(JSON.stringify(evaluateDor(t,{projectRoot:process.cwd(),config:loadDorConfig('.ai-sdlc/dor-config.yaml')}),null,2))" "backlog/tasks/${ID} - <slug>.md"
-   ```
-   - `admitted: true` → tell the operator to run `/ai-sdlc:execute ${ID}`.
-   - Otherwise → list the failing gates and the exact fields to fix. Never auto-dispatch.
+5. **Stop and hand off to design.** Do **not** scaffold a task. The PRD stays
+   `status: draft` until a human reviews it and sets `status: approved`. Report to
+   the operator:
+   - the PRD path (`docs/prd/<feature-slug>.md`) and its gate result;
+   - any unresolved clarify questions still to fold in;
+   - the next command: once the PRD is approved, run
+     **`/ai-sdlc:design <feature-slug>`** — that stage produces the design doc +
+     ADRs (the technical *how*) and scaffolds the DoR-shaped backlog task from
+     them. `/ai-sdlc:new` never emits a task, and never tells the operator to run
+     `/ai-sdlc:execute` — a task that has not been through design cannot be
+     admitted (DoR gate 9).
 
 ## Notes
 - Small features stay lightweight: only PM+PO run unless a strategic label is set.
-- Don't invent references — an unresolvable path fails the DoR gate; ask instead.
-- The PRD is the durable record of *why*; the task is the buildable *what*.
-- Non-interactive shortcut (skips the panel): `npm run task -- "<title>" --refs a,b,c --ac "..."`.
+- The PRD is the durable record of *why*. The buildable *what* (the task) is
+  scaffolded in `/ai-sdlc:design`, seeded from the PRD **and** the ADRs — so no
+  task exists before its architecture does.
+- Architecture is not a product question. If the operator asks "how do we build
+  it?", answer: that's decided in `/ai-sdlc:design` and recorded as ADRs.
