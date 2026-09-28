@@ -91,7 +91,7 @@ function beginTask({ taskFilePath, worktreePath, taskId }) {
 
 // Step 5 — build developer prompt. cxpakContext is the pre-action provider
 // output (the proven d=1.82 lever); passed through when available.
-function buildDeveloperPrompt({ task, branch, cxpakContext }) {
+function buildDeveloperPrompt({ task, branch, cxpakContext, capabilityGuidance }) {
   const fm = task.frontmatter || {};
   const acs = (task.acceptanceCriteria || []).map((a, i) => `  ${i + 1}. ${a.text}`).join('\n');
   const lines = [
@@ -105,6 +105,7 @@ function buildDeveloperPrompt({ task, branch, cxpakContext }) {
   if (cxpakContext) {
     lines.push('Structured context (cxpak — read this before exploring):', cxpakContext, '');
   }
+  if (capabilityGuidance) lines.push(capabilityGuidance, '');
   lines.push('Implement the contract exactly. Return JSON: { commitSha, filesChanged[], filesChangedExternal[], verifications[], summary }.');
   return { prompt: lines.join('\n') };
 }
@@ -131,7 +132,7 @@ function parseDeveloperReturn(ret) {
 // advisory promise-verification string (read-only reviewer input). `team` is an
 // optional resolved reviewer set (from the CapabilityMap) — each entry may
 // carry { role, name, harness }; when omitted, the default 3 roles are used.
-function buildReviewPrompts({ task, diff, promiseContext, team }) {
+function buildReviewPrompts({ task, diff, promiseContext, team, capabilityGuidance }) {
   const fm = task.frontmatter || {};
   const roster = (team && team.length ? team : ['code-reviewer', 'test-reviewer', 'security-reviewer']).map((r) =>
     typeof r === 'string' ? { role: r, name: r } : { role: r.role || r.name, name: r.name || r.role, harness: r.harness },
@@ -140,6 +141,7 @@ function buildReviewPrompts({ task, diff, promiseContext, team }) {
     const lines = [
       `You are the ${r.role} for task ${fm.id}${r.name && r.name !== r.role ? ` (agent: ${r.name})` : ''}. Review the diff below independently.`,
       promiseContext ? `\n${promiseContext}\n` : '',
+      capabilityGuidance ? `${capabilityGuidance}\n` : '',
       'Diff:',
       diff || '(diff omitted)',
       '',

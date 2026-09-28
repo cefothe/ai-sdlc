@@ -69,7 +69,16 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    any DEC id is assigned.
 
 2. **Phase 1 — Propose (parallel, NO ADRs yet).** Read `.ai-sdlc/capabilities.yaml`
-   → `stages.design` for the architect roster (route by labels). Dispatch them **in
+   → `stages.design` for the architect roster (route by labels). Resolve the stage's
+   **capability grant** and pass it to every architect so grounding (step 1b/1c) uses
+   real sources, not guesses:
+   ```bash
+   node -e "const{loadCapabilityMap,resolveStageCapabilities,formatCapabilityGuidance,capabilityToolNames}=require(process.env.CLAUDE_PLUGIN_ROOT+'/pipeline/capabilities');const m=loadCapabilityMap('.ai-sdlc/capabilities.yaml');const ctx={labels:process.argv.slice(1)};const g=resolveStageCapabilities(m,'design',ctx);console.log(JSON.stringify({tools:capabilityToolNames(g),guidance:formatCapabilityGuidance(g)}))" <task-labels...>
+   ```
+   Give each architect Task the resolved `tools` as its allowlist and append the
+   `guidance` line to its prompt — e.g. firecrawl to **scrape/download the real vendor
+   API docs**, `postgres-ro` (when the task carries a `db`/`schema` label) to **inspect
+   the live schema**, and `deep-research`/WebSearch for prior art. Dispatch them **in
    parallel via the Task tool** (a real team), each with the **§Proposal** prompt in
    `commands/references/design-panel-prompt.md`, filling `{{DOMAIN_FOCUS}}` per
    architect. Each returns, **as structured text only**, a HIGH-LEVEL architecture

@@ -1,6 +1,14 @@
 # CapabilityMap — binds pipeline stages to the framework's existing skills and
 # agents. Schema: spec/schemas/capability-map.v1.schema.json. Edit this to change
 # WHO fulfills each stage without touching pipeline code.
+#
+# A stage may also declare a `capabilities` grant: the external MCP servers,
+# built-in web tools, and framework skills its agents are permitted to use
+# (advisory allowlist — see resolveStageCapabilities in pipeline/capabilities.js).
+# This is how design gets to scrape real API docs (firecrawl) and inspect a live
+# schema (a read-only DB server), and review/discovery get deep web research —
+# without handing those capabilities to every stage. MCP servers named here must
+# be registered in .mcp.json to actually connect.
 apiVersion: ai-sdlc.io/v1alpha1
 kind: CapabilityMap
 metadata:
@@ -19,7 +27,15 @@ spec:
       providers:
         - { role: product-manager, type: agent, name: product-manager }
         - { role: product-owner, type: agent, name: product-owner }
+      # PM/PO ground the problem in real market/competitor evidence, not guesses.
+      capabilities:
+        web: [WebSearch, WebFetch]
+        skills: [deep-research]
       routing:
+        # Data-driven discovery: query real product usage/metrics from ClickHouse
+        # instead of asserting adoption numbers.
+        - when: { labels: [analytics, clickhouse, metrics, data] }
+          addCapabilities: { mcp: [clickhouse-ro] }
         - when: { labels: [strategic, gtm, launch, growth] }
           addProvider: { role: cmo, type: agent, name: cmo }
         - when: { labels: [strategic, roadmap, platform] }
@@ -53,7 +69,22 @@ spec:
       providers:
         - { role: solution-architect, type: agent, name: architect-review }
         - { role: backend-architect, type: agent, name: backend-architect }
+      # Front-loaded grounding (see design.md steps 1b/1c): architects fetch the
+      # REAL external contracts and prior art instead of inventing them. firecrawl
+      # scrapes/downloads vendor API docs; deep-research surveys prior art; the web
+      # tools cover targeted lookups. DB access is added by routing only when the
+      # task actually touches a datastore (below), so the live schema is inspected
+      # rather than assumed.
+      capabilities:
+        skills: [firecrawl, deep-research]
+        web: [WebSearch, WebFetch]
       routing:
+        - when: { labels: [db, database, datastore, schema] }
+          addCapabilities: { mcp: [postgres-ro] }
+        - when: { labels: [analytics, clickhouse, olap, metrics, reporting] }
+          addCapabilities: { mcp: [clickhouse-ro] }
+        - when: { labels: [integration, api, external, webhook] }
+          addCapabilities: { mcp: [firecrawl] }
         - when: { labels: [infra, cloud] }
           addProvider: { role: cloud-architect, type: agent, name: cloud-architect }
         - when: { labels: [kubernetes] }
@@ -96,6 +127,11 @@ spec:
         - { role: code-reviewer, type: agent, name: code-reviewer, harness: codex }
         - { role: test-reviewer, type: agent, name: test-automator, harness: codex }
         - { role: security-reviewer, type: agent, name: security-auditor, harness: codex }
+      # Reviewers may research to verify a claim — a CVE for a dependency, the real
+      # semantics of an external API, a security advisory — rather than guessing.
+      capabilities:
+        web: [WebSearch, WebFetch]
+        skills: [deep-research]
       routing:
         - when: { javaTestFiles: true }
           replaceRole: test-reviewer
