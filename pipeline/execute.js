@@ -44,17 +44,25 @@ async function executePipeline(opts) {
   let reviewTeam = null;
   let planProvider = null;
   let designPanel = null;
+  // Per-stage external-capability grants (MCP servers / web tools / skills). Each
+  // stage's dispatch gets its own allowlist + prompt guidance so design can ground
+  // in real docs/schema and review can research to verify a claim — see
+  // .ai-sdlc/capabilities.yaml `capabilities:` blocks.
+  const grants = {};
   if (capabilityMap) {
     try {
       designPanel = capabilities.resolveDesignPanel(capabilityMap, taskContext);
       planProvider = capabilities.resolvePlanStage(capabilityMap, taskContext);
       implementer = capabilities.resolveImplementer(capabilityMap, taskContext);
       reviewTeam = capabilities.resolveReviewTeam(capabilityMap, taskContext, { implementerHarness });
+      for (const s of ['discovery', 'design', 'plan', 'implement', 'review']) {
+        grants[s] = capabilities.resolveStageCapabilities(capabilityMap, s, taskContext);
+      }
       // Native Teams dispatch plans (consumed by the interactive orchestrator;
       // the programmatic path below just runs parallel spawns).
       reviewTeam.teamPlan = buildTeamPlan({ taskId, stage: 'review', providers: reviewTeam.providers, team: reviewTeam.team });
       if (designPanel.providers.length) designPanel.teamPlan = buildTeamPlan({ taskId, stage: 'design', providers: designPanel.providers, team: designPanel.panel });
-      result.steps.capabilities = { design: designPanel, plan: planProvider, implementer, review: reviewTeam };
+      result.steps.capabilities = { design: designPanel, plan: planProvider, implementer, review: reviewTeam, grants };
     } catch (err) {
       return abort('capabilities', [err.message], result);
     }
@@ -92,8 +100,10 @@ async function executePipeline(opts) {
       try {
         const fmId = (task.frontmatter || {}).id;
         const fmTitle = (task.frontmatter || {}).title;
+        const designGuidance = capabilities.formatCapabilityGuidance(grants.design);
+        const designTools = capabilities.capabilityToolNames(grants.design);
         const designs = await Promise.all(designPanel.providers.map((p) =>
-          spawn({ type: 'design', provider: p, panel: designPanel.panel, prompt: `As the ${p.role} (agent: ${p.name}), propose the design/approach for task ${fmId}: ${fmTitle}. Flag risks and the key architectural decision.` })));
+          spawn({ type: 'design', provider: p, panel: designPanel.panel, capabilities: grants.design, tools: designTools, prompt: [`As the ${p.role} (agent: ${p.name}), propose the design/approach for task ${fmId}: ${fmTitle}. Flag risks and the key architectural decision.`, designGuidance].filter(Boolean).join('\n\n') })));
         const notes = designs.map((d, i) => ({ architect: designPanel.providers[i].name, role: designPanel.providers[i].role, note: typeof d === 'string' ? d : (d && (d.design || d.summary)) || '' }));
         designText = ['Architecture design input (record the chosen approach as an ADR):', ...notes.map((n) => `- ${n.role} (${n.architect}): ${n.note}`)].join('\n');
         result.steps.design = { providers: designPanel.providers.map((p) => p.name), panel: designPanel.panel, notes };
@@ -136,9 +146,9 @@ async function executePipeline(opts) {
     for (let iter = 0; iter < maxIterations; iter++) {
       // Step 5 — dev prompt (with cxpak/plan context +, on retries, reviewer feedback).
       const feedback = review && !review.approved ? formatReviewerFeedback(review) : null;
-      const { prompt } = steps.buildDeveloperPrompt({ task, branch, cxpakContext: planText });
+      const { prompt } = steps.buildDeveloperPrompt({ task, branch, cxpakContext: planText, capabilityGuidance: capabilities.formatCapabilityGuidance(grants.implement) });
       const devPrompt = feedback ? `${prompt}\n\nPrior review requested changes (address these specifically):\n${feedback}` : prompt;
-      const devReturn = await spawn({ type: 'developer', provider: implementer, prompt: devPrompt, iteration: iter });
+      const devReturn = await spawn({ type: 'developer', provider: implementer, tools: capabilities.capabilityToolNames(grants.implement), prompt: devPrompt, iteration: iter });
 
       // Step 6 — parse/validate dev return.
       developer = steps.parseDeveloperReturn(devReturn);
@@ -154,11 +164,12 @@ async function executePipeline(opts) {
       // Step 7 — build review prompts (promise context is read-only reviewer
       // input); the reviewer roster comes from the resolved CapabilityMap team.
       const diff = developer.summary || '(diff via commit ' + developer.commitSha + ')';
-      const { prompts } = steps.buildReviewPrompts({ task, diff, promiseContext, team: reviewTeam ? reviewTeam.providers : undefined });
+      const { prompts } = steps.buildReviewPrompts({ task, diff, promiseContext, team: reviewTeam ? reviewTeam.providers : undefined, capabilityGuidance: capabilities.formatCapabilityGuidance(grants.review) });
 
       // Dispatch the reviewers — as a Native Team when 3+ (reviewTeam.team).
       const asTeam = reviewTeam ? reviewTeam.team : false;
-      const verdicts = await Promise.all(prompts.map((p) => spawn({ type: 'reviewer', reviewer: p.reviewer, provider: p.provider, team: asTeam, prompt: p.prompt })));
+      const reviewTools = capabilities.capabilityToolNames(grants.review);
+      const verdicts = await Promise.all(prompts.map((p) => spawn({ type: 'reviewer', reviewer: p.reviewer, provider: p.provider, team: asTeam, tools: reviewTools, prompt: p.prompt })));
 
       // Step 8 — aggregate.
       review = steps.aggregateVerdicts({ verdicts });

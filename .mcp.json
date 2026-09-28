@@ -4,6 +4,30 @@
       "type": "stdio",
       "command": "cxpak",
       "args": ["serve", "--mcp", "."]
+    },
+    "firecrawl": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "firecrawl-mcp"],
+      "env": { "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}" }
+    },
+    "postgres-ro": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL_RO}"]
+    },
+    "clickhouse-ro": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--with", "mcp-clickhouse", "--python", "3.13", "mcp-clickhouse"],
+      "env": {
+        "CLICKHOUSE_HOST": "${CLICKHOUSE_HOST}",
+        "CLICKHOUSE_PORT": "${CLICKHOUSE_PORT}",
+        "CLICKHOUSE_USER": "${CLICKHOUSE_USER}",
+        "CLICKHOUSE_PASSWORD": "${CLICKHOUSE_PASSWORD}",
+        "CLICKHOUSE_SECURE": "${CLICKHOUSE_SECURE}",
+        "CLICKHOUSE_VERIFY": "${CLICKHOUSE_VERIFY}"
+      }
     }
   }
 }

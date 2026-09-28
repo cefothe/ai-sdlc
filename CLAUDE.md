@@ -73,6 +73,51 @@ Standing promises: see `promise/registry.yaml` (19 promises, version 2.3 — 18 
 
 When the framework detects broken findings on a turn that touched Java test files — unit (`src/test/**/*.java`, `*Test.java`, `*Tests.java`), integration (`*IT.java`), system integration (`src/sit/**/*.java`, `*SIT.java`), or under `tests/` — `findings-interpreter.js` routes the reviewer dispatch to the `qa-code-reviewer` agent (rather than the generic `review-deterministic-findings` skill). That agent owns the carve-out logic for Allure diagnostics, `logger.*` calls, header checks via `response.raw().headers()`, and 204/304 statusCode-only assertions — single source of truth for test-code conventions.
 
+## Per-Stage Capabilities (MCP / web / skills)
+
+Each pipeline stage may declare a `capabilities` grant in `.ai-sdlc/capabilities.yaml`
+— the external MCP servers, built-in web tools, and framework skills its agents are
+permitted to use. This is how **design** scrapes the real vendor API docs (firecrawl)
+and inspects a live schema (`postgres-ro`, added by routing only for `db`/`schema`
+labels), while **review**/**discovery** get deep web research — without handing those
+capabilities to every stage.
+
+| Piece | Where |
+|---|---|
+| Grant declaration | `.ai-sdlc/capabilities.yaml` → `stages.<name>.capabilities` (`mcp`/`web`/`skills`); routing rules union more via `addCapabilities` (label-gated) |
+| Resolution | `pipeline/capabilities.js` → `resolveStageCapabilities` / `capabilityToolNames` / `formatCapabilityGuidance` |
+| Injection | `pipeline/execute.js` passes each grant to `spawn({tools})` + prompt guidance; `adapters/claude-code-spawner.js` maps it to `--allowedTools` |
+| Server registration | `.mcp.json` (cxpak, firecrawl, postgres-ro, clickhouse-ro). `firecrawl`/`postgres-ro` launch via `npx`; `clickhouse-ro` is the **official** ClickHouse `mcp-clickhouse` (Python) via `uv run --with mcp-clickhouse` — needs `uv` on PATH. `postgres-ro` is Anthropic's **official reference** server `@modelcontextprotocol/server-postgres` (repo archived but functional; wraps queries in a READ ONLY transaction). `firecrawl` needs `FIRECRAWL_API_KEY`; `postgres-ro` needs `DATABASE_URL_RO`; `clickhouse-ro` needs `CLICKHOUSE_HOST`/`_PORT`/`_USER`/`_PASSWORD`. Unset servers simply don't connect. Both DB servers are read-only by design; still point them at a SELECT-only user |
+
+Model is **advisory** (R5-consistent): a stage is only handed the tools in its grant;
+nothing outside the grant is pre-approved. Add a server to `.mcp.json`, then grant it
+to the stage(s) that should use it.
+
+## Cross-Harness Execution (claude ↔ codex)
+
+Reviewers are declared `harness: codex` so they never share the implementer's
+harness — enforced at resolve time (`resolveReviewTeam` throws on a shared
+harness) and cryptographically in `attestation/attestation.js`. That guarantee is
+only *real* if codex-harness providers actually run on Codex, so the unattended
+`spawn` seam is **harness-aware**:
+
+| Piece | Where |
+|---|---|
+| Codex spawner | `adapters/codex-spawner.js` → `makeCodexSpawner` shells `codex exec … --json -s read-only --skip-git-repo-check`, parses the final `agent_message` JSONL event, normalizes to a canonical verdict stamped `harness: 'codex'` |
+| Router | `adapters/claude-code-spawner.js` → `makeHarnessSpawner({ spawners:{ claude, codex } })` dispatches by `provider.harness`; absent/unknown → claude fallback |
+| Wiring | `makeClaudeCodeSeams({ codexModel })` builds both and routes; `spawn` is the router |
+
+Model on a **ChatGPT-login account**: fixed by plan (verified default
+`gpt-6-astra`); every explicit `-m`/`-c model=` is rejected with HTTP 400, so no
+model is forced by default — passing `codexModel` there *breaks* dispatch (only
+set it on an API-key account that supports selection). Reasoning effort *is*
+adjustable and Codex defaults it to `none`, too weak for review — so
+`makeClaudeCodeSeams` sets `codexReasoningEffort: 'high'` (→ `-c
+model_reasoning_effort="high"`) for the reviewer stage. Reviewers run `-s
+read-only`. Codex must be installed + logged in (`codex login status`). The
+capability grant's `tools` allowlist is **not** yet forwarded to codex (MCP for
+codex needs `~/.codex/config.toml`); prompt guidance still applies.
+
 ## Agent Dispatch
 
 | Scale | Method |

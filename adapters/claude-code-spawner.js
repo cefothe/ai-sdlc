@@ -14,6 +14,7 @@
 // execFileSync) so the whole adapter is unit-testable without spawning claude.
 
 const { execFileSync } = require('node:child_process');
+const { makeCodexSpawner } = require('./codex-spawner');
 
 function defaultExec(cmd, args, opts = {}) {
   return execFileSync(cmd, args, { encoding: 'utf8', ...opts });
@@ -33,7 +34,7 @@ function makeGhRunner({ exec = defaultExec } = {}) {
 //   - skill provider -> the prompt is prefixed with `/<skill>` so the session
 //     invokes that skill
 //   - JSON output is requested so we can parse a structured return
-function buildClaudeArgs(provider, prompt, { model, extraArgs = [] } = {}) {
+function buildClaudeArgs(provider, prompt, { model, extraArgs = [], tools = [] } = {}) {
   const isSkill = provider && provider.type === 'skill';
   const finalPrompt = isSkill ? `/${provider.name}\n${prompt}` : prompt;
   const args = ['-p', finalPrompt, '--output-format', 'json'];
@@ -41,6 +42,11 @@ function buildClaudeArgs(provider, prompt, { model, extraArgs = [] } = {}) {
     args.push('--agent', provider.name);
   }
   if (model) args.push('--model', model);
+  // Per-stage external-capability grant -> pre-approved tool allowlist. Passing
+  // the granted MCP servers (mcp__firecrawl, mcp__postgres-ro), web tools, and
+  // Skill invoker as --allowedTools is what actually lets a headless design/review
+  // agent call them without a permission prompt. Empty grant -> no restriction added.
+  if (Array.isArray(tools) && tools.length) args.push('--allowedTools', tools.join(','));
   return args.concat(extraArgs);
 }
 
@@ -66,9 +72,9 @@ function parseClaudeResult(stdout) {
 }
 
 function makeClaudeSpawner({ exec = defaultExec, model, timeoutMs = 600000 } = {}) {
-  return async function spawn({ type, provider, prompt }) {
+  return async function spawn({ type, provider, prompt, tools }) {
     const effectiveProvider = provider || { type: 'agent', name: 'claude' };
-    const args = buildClaudeArgs(effectiveProvider, prompt, { model });
+    const args = buildClaudeArgs(effectiveProvider, prompt, { model, tools });
     const stdout = await Promise.resolve(exec('claude', args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 }));
     const payload = parseClaudeResult(stdout);
     // Normalize the minimal shapes the pipeline asserts per stage.
@@ -76,6 +82,23 @@ function makeClaudeSpawner({ exec = defaultExec, model, timeoutMs = 600000 } = {
       return { reviewer: effectiveProvider.name, approved: false, findings: payload.findings || [] };
     }
     return payload;
+  };
+}
+
+// Harness router — the seam that makes `harness: codex` real. Each resolved
+// provider carries a `harness` (claude | codex …); this dispatcher sends the
+// spawn to the matching CLI spawner so a codex reviewer physically runs on
+// Codex (not on claude). Without this, the cross-harness attestation is
+// cryptographically checkable but not physically true. Unknown/absent harness
+// falls back to the claude spawner (the default implementer harness).
+function makeHarnessSpawner({ spawners, fallbackHarness = 'claude' } = {}) {
+  if (!spawners || typeof spawners !== 'object') throw new Error('makeHarnessSpawner requires a spawners map');
+  return async function spawn(opts = {}) {
+    const provider = opts.provider || {};
+    const harness = provider.harness || fallbackHarness;
+    const target = spawners[harness] || spawners[fallbackHarness];
+    if (!target) throw new Error(`no spawner registered for harness "${harness}" (and no "${fallbackHarness}" fallback)`);
+    return target(opts);
   };
 }
 
@@ -105,14 +128,23 @@ function makeCxpakFetcher({ exec = defaultExec, workDir = process.cwd(), tokens 
   };
 }
 
-// Convenience: build the full seam bundle for executePipeline().
-function makeClaudeCodeSeams({ exec = defaultExec, model, workDir } = {}) {
+// Convenience: build the full seam bundle for executePipeline(). The `spawn`
+// seam is harness-aware: claude-harness providers (implementer + advisory
+// stages) run on `claude -p`; codex-harness providers (the cross-harness review
+// team) run on `codex exec`. codexModel overrides the Codex model.
+function makeClaudeCodeSeams({ exec = defaultExec, model, codexModel, codexReasoningEffort = 'high', workDir } = {}) {
+  const claudeSpawn = makeClaudeSpawner({ exec, model });
+  // codexModel stays unset by default — a ChatGPT-login account rejects explicit
+  // models (HTTP 400). codexReasoningEffort defaults to 'high': reviewers are the
+  // only codex-harness stage and Codex's own default effort ('none') is too weak
+  // to reliably surface bugs. This knob IS allowed on a ChatGPT account.
+  const codexSpawn = makeCodexSpawner({ exec, model: codexModel, reasoningEffort: codexReasoningEffort });
   return {
     runner: makeGitRunner({ exec }),
     gh: makeGhRunner({ exec }),
-    spawn: makeClaudeSpawner({ exec, model }),
+    spawn: makeHarnessSpawner({ spawners: { claude: claudeSpawn, codex: codexSpawn } }),
     fetchCxpak: makeCxpakFetcher({ exec, workDir }),
   };
 }
 
-module.exports = { makeGitRunner, makeGhRunner, makeClaudeSpawner, makeCxpakFetcher, makeClaudeCodeSeams, buildClaudeArgs, parseClaudeResult, defaultExec };
+module.exports = { makeGitRunner, makeGhRunner, makeClaudeSpawner, makeHarnessSpawner, makeCxpakFetcher, makeClaudeCodeSeams, buildClaudeArgs, parseClaudeResult, defaultExec };

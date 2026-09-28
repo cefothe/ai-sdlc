@@ -23,15 +23,22 @@ just the review stage, dispatched as a Native Team.
    ```
    This prints the team plan (teammates + whether to use a Native Team).
 
-3. **Dispatch the reviewers.**
+3. **Resolve the review capability grant.** Reviewers may research to verify a claim
+   (a CVE for a dependency, the real semantics of an external API) rather than guess:
+   ```bash
+   node -e "const{loadCapabilityMap,resolveStageCapabilities,formatCapabilityGuidance,capabilityToolNames}=require('./pipeline/capabilities');const m=loadCapabilityMap('.ai-sdlc/capabilities.yaml');const g=resolveStageCapabilities(m,'review',{files:process.argv.slice(1)});console.log(JSON.stringify({tools:capabilityToolNames(g),guidance:formatCapabilityGuidance(g)}))" $(git diff --name-only ${1:-main}...HEAD)
+   ```
+
+4. **Dispatch the reviewers.**
    - If `useTeam` is true: `TeamCreate { name: teamPlan.teamName }`, then `Task`
      each teammate (its `agentType`, on a harness ≠ the implementer's), collect
      each verdict from its JSONL inbox, then `TeamDelete`.
    - Else: parallel `Task` calls.
    - Give each reviewer the diff + (if available) the advisory promise findings
-     as read-only context.
+     as read-only context, plus the resolved `tools` allowlist and `guidance` line
+     from step 3.
 
-4. **Aggregate + report.** APPROVED only if all reviewers approve and there are
+5. **Aggregate + report.** APPROVED only if all reviewers approve and there are
    no critical/major findings. Print the decision, per-reviewer findings, and —
    if a hard-mandatory promise gate failed — that the merge is blocked.
 

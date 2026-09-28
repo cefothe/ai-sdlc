@@ -40,6 +40,66 @@ function stage(map, name) {
   return (map.spec.stages || {})[name] || null;
 }
 
+// ---- External-capability grants (per-stage MCP servers / web tools / skills) ----
+// A stage may declare which external capabilities its agents are permitted to use:
+// registered MCP servers (firecrawl, a read-only DB), built-in web-research tools
+// (WebSearch/WebFetch), and framework skills (deep-research, firecrawl). The grant
+// is advisory — it becomes the dispatched agent's `tools` allowlist plus a prompt
+// line telling the stage to ground its work in real sources. This is the seam that
+// lets design scrape real API docs / inspect a live schema, and review/discovery
+// run deep web research, without granting those capabilities to every stage.
+
+const CAP_KINDS = ['mcp', 'web', 'skills'];
+
+function mergeCapabilities(into, from) {
+  if (!from || typeof from !== 'object') return into;
+  for (const kind of CAP_KINDS) {
+    if (!Array.isArray(from[kind])) continue;
+    const set = new Set(into[kind] || []);
+    for (const v of from[kind]) set.add(v);
+    into[kind] = [...set];
+  }
+  return into;
+}
+
+// Resolve a stage's capability grant: the base `capabilities` block unioned with
+// every routing rule whose `when` matches via `addCapabilities`. Always returns
+// the three kinds (possibly empty) so callers can treat it uniformly.
+function resolveStageCapabilities(map, name, ctx = {}) {
+  const binding = stage(map, name);
+  const grant = { mcp: [], web: [], skills: [] };
+  if (!binding) return grant;
+  mergeCapabilities(grant, binding.capabilities);
+  for (const rule of binding.routing || []) {
+    if (rule.addCapabilities && matchesWhen(rule.when, ctx)) mergeCapabilities(grant, rule.addCapabilities);
+  }
+  return grant;
+}
+
+// Flatten a grant to a concrete tool allowlist for a subagent's `tools` field.
+// MCP servers -> mcp__<server> (Claude Code matches all of that server's tools);
+// web tools pass through verbatim; any granted skill adds the Skill invoker.
+function capabilityToolNames(grant) {
+  if (!grant) return [];
+  const tools = [];
+  for (const s of grant.mcp || []) tools.push(`mcp__${s}`);
+  for (const w of grant.web || []) tools.push(w);
+  if ((grant.skills || []).length) tools.push('Skill');
+  return tools;
+}
+
+// One-line human-readable guidance appended to a stage's dispatch prompt.
+// Returns null when the stage grants nothing (so callers can omit the line).
+function formatCapabilityGuidance(grant) {
+  if (!grant) return null;
+  const parts = [];
+  if ((grant.mcp || []).length) parts.push(`MCP servers [${grant.mcp.join(', ')}]`);
+  if ((grant.web || []).length) parts.push(`web research [${grant.web.join(', ')}]`);
+  if ((grant.skills || []).length) parts.push(`skills [${grant.skills.join(', ')}]`);
+  if (!parts.length) return null;
+  return `External capabilities granted for this stage — use them to ground your work in real sources (fetch the real docs/specs, inspect the live schema, research prior art) rather than inventing anything you could verify: ${parts.join('; ')}.`;
+}
+
 // Single-provider stage with first-match-wins routing.
 function resolveSingle(map, name, ctx = {}) {
   const binding = stage(map, name);
@@ -110,4 +170,4 @@ function resolveReviewTeam(map, ctx = {}, { implementerHarness } = {}) {
   return { providers, team, umbrellaSkill: binding.skill || null };
 }
 
-module.exports = { loadCapabilityMap, resolvePlanStage, resolveImplementer, resolveTestStage, resolveDesignPanel, resolveReviewTeam, applyTeamRouting, matchesWhen, ctxHasJavaTests };
+module.exports = { loadCapabilityMap, resolvePlanStage, resolveImplementer, resolveTestStage, resolveDesignPanel, resolveReviewTeam, applyTeamRouting, matchesWhen, ctxHasJavaTests, resolveStageCapabilities, capabilityToolNames, formatCapabilityGuidance };

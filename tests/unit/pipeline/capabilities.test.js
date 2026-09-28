@@ -107,6 +107,76 @@ describe('architect-review lens on the review team', () => {
   });
 });
 
+describe('resolveStageCapabilities (per-stage MCP / web / skill grants)', () => {
+  test('design grants firecrawl + deep-research skills and web tools by default', () => {
+    const g = cap.resolveStageCapabilities(MAP, 'design', {});
+    expect(g.skills).toEqual(expect.arrayContaining(['firecrawl', 'deep-research']));
+    expect(g.web).toEqual(expect.arrayContaining(['WebSearch', 'WebFetch']));
+    expect(g.mcp).toEqual([]); // no DB grant without a db label
+  });
+
+  test('db-labelled tasks union in the read-only postgres MCP server', () => {
+    const g = cap.resolveStageCapabilities(MAP, 'design', { labels: ['db'] });
+    expect(g.mcp).toContain('postgres-ro');
+    // base grant is preserved (union, not replace)
+    expect(g.skills).toContain('firecrawl');
+  });
+
+  test('integration-labelled tasks union in the firecrawl MCP server', () => {
+    const g = cap.resolveStageCapabilities(MAP, 'design', { labels: ['integration'] });
+    expect(g.mcp).toContain('firecrawl');
+  });
+
+  test('analytics-labelled tasks union in the read-only clickhouse MCP server', () => {
+    for (const label of ['analytics', 'clickhouse', 'olap']) {
+      expect(cap.resolveStageCapabilities(MAP, 'design', { labels: [label] }).mcp).toContain('clickhouse-ro');
+    }
+    // discovery too: data-driven product decisions query real usage
+    expect(cap.resolveStageCapabilities(MAP, 'discovery', { labels: ['metrics'] }).mcp).toContain('clickhouse-ro');
+  });
+
+  test('review grants web research + deep-research', () => {
+    const g = cap.resolveStageCapabilities(MAP, 'review', {});
+    expect(g.web).toContain('WebSearch');
+    expect(g.skills).toContain('deep-research');
+  });
+
+  test('a stage with no capabilities block grants nothing', () => {
+    const g = cap.resolveStageCapabilities(MAP, 'implement', {});
+    expect(g).toEqual({ mcp: [], web: [], skills: [] });
+  });
+
+  test('an unknown stage grants nothing (no throw)', () => {
+    expect(cap.resolveStageCapabilities(MAP, 'does-not-exist', {})).toEqual({ mcp: [], web: [], skills: [] });
+  });
+});
+
+describe('capabilityToolNames', () => {
+  test('maps mcp servers -> mcp__<server>, passes web verbatim, adds Skill when skills present', () => {
+    const tools = cap.capabilityToolNames({ mcp: ['firecrawl', 'postgres-ro'], web: ['WebSearch'], skills: ['deep-research'] });
+    expect(tools).toEqual(['mcp__firecrawl', 'mcp__postgres-ro', 'WebSearch', 'Skill']);
+  });
+
+  test('empty grant -> empty allowlist', () => {
+    expect(cap.capabilityToolNames({ mcp: [], web: [], skills: [] })).toEqual([]);
+    expect(cap.capabilityToolNames(null)).toEqual([]);
+  });
+});
+
+describe('formatCapabilityGuidance', () => {
+  test('names the granted MCP servers / web tools / skills', () => {
+    const line = cap.formatCapabilityGuidance({ mcp: ['firecrawl'], web: ['WebSearch'], skills: ['deep-research'] });
+    expect(line).toMatch(/firecrawl/);
+    expect(line).toMatch(/WebSearch/);
+    expect(line).toMatch(/deep-research/);
+  });
+
+  test('returns null when nothing is granted', () => {
+    expect(cap.formatCapabilityGuidance({ mcp: [], web: [], skills: [] })).toBeNull();
+    expect(cap.formatCapabilityGuidance(null)).toBeNull();
+  });
+});
+
 describe('matchesWhen helper', () => {
   test('AND-composes languages/labels/javaTestFiles', () => {
     expect(cap.matchesWhen({ languages: ['java'] }, { languages: ['java', 'go'] })).toBe(true);

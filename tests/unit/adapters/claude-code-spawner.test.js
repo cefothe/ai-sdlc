@@ -24,6 +24,18 @@ describe('buildClaudeArgs', () => {
     expect(args[1]).toBe('/code-plan\nplan this');
     expect(args).not.toContain('--agent');
   });
+
+  test('a capability grant becomes a comma-joined --allowedTools allowlist', () => {
+    const args = adapter.buildClaudeArgs({ type: 'agent', name: 'architect-review' }, 'design it', { tools: ['mcp__firecrawl', 'WebSearch', 'Skill'] });
+    const i = args.indexOf('--allowedTools');
+    expect(i).toBeGreaterThan(-1);
+    expect(args[i + 1]).toBe('mcp__firecrawl,WebSearch,Skill');
+  });
+
+  test('no tools -> no --allowedTools flag', () => {
+    const args = adapter.buildClaudeArgs({ type: 'agent', name: 'claude' }, 'x');
+    expect(args).not.toContain('--allowedTools');
+  });
 });
 
 describe('parseClaudeResult', () => {
