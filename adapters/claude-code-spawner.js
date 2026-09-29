@@ -109,7 +109,7 @@ function makeHarnessSpawner({ spawners, fallbackHarness = 'claude' } = {}) {
 // (architecture, module map, conventions) — the R8 d=1.82 lever. Requires `cxpak`
 // on PATH and a built `.cxpak/` index (init / SessionStart warm it). Any failure,
 // or a cold "indexing" index, degrades to null — advisory, never blocks the run.
-function makeCxpakFetcher({ exec = defaultExec, workDir = process.cwd(), tokens = '4k' } = {}) {
+function makeCxpakFetcher({ exec = defaultExec, workDir = process.cwd(), tokens = '6k' } = {}) {
   return async function fetchCxpak(task) {
     let text = '';
     try {
@@ -125,6 +125,21 @@ function makeCxpakFetcher({ exec = defaultExec, workDir = process.cwd(), tokens 
       ? `Structured context (cxpak overview) — read before implementing "${title}":`
       : 'Structured context (cxpak overview):';
     return `${header}\n\n${text}`;
+  };
+}
+
+// Load the ADRs an implementer must honor for a task (project-scope + task-
+// referenced DECs) from the on-disk decision store. The UNATTENDED counterpart
+// to execute.md's "load architectural decisions" step. Any failure degrades to
+// an empty set — advisory input, never blocks the run.
+function makeDecisionsFetcher({ root = process.cwd() } = {}) {
+  const { selectDecisionsForTask } = require('../decision-engine/decisions');
+  return async function fetchDecisions(task) {
+    try {
+      return selectDecisionsForTask(root, task);
+    } catch {
+      return [];
+    }
   };
 }
 
@@ -144,7 +159,8 @@ function makeClaudeCodeSeams({ exec = defaultExec, model, codexModel, codexReaso
     gh: makeGhRunner({ exec }),
     spawn: makeHarnessSpawner({ spawners: { claude: claudeSpawn, codex: codexSpawn } }),
     fetchCxpak: makeCxpakFetcher({ exec, workDir }),
+    fetchDecisions: makeDecisionsFetcher({ root: workDir || process.cwd() }),
   };
 }
 
-module.exports = { makeGitRunner, makeGhRunner, makeClaudeSpawner, makeHarnessSpawner, makeCxpakFetcher, makeClaudeCodeSeams, buildClaudeArgs, parseClaudeResult, defaultExec };
+module.exports = { makeGitRunner, makeGhRunner, makeClaudeSpawner, makeHarnessSpawner, makeCxpakFetcher, makeDecisionsFetcher, makeClaudeCodeSeams, buildClaudeArgs, parseClaudeResult, defaultExec };

@@ -1,7 +1,7 @@
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
-const { evaluateDesign, REQUIRED_SECTIONS } = require(path.join(ROOT, 'decision-engine', 'design-gate.js'));
+const { evaluateDesign, REQUIRED_SECTIONS, headingMatchesSection } = require(path.join(ROOT, 'decision-engine', 'design-gate.js'));
 
 function design({ omit = [], empty = [], adrs = 'DEC-0001', status = 'approved', extra = '' } = {}) {
   const bodies = {
@@ -56,6 +56,40 @@ describe('evaluateDesign — enforced tier', () => {
     const r = evaluateDesign(design({ extra: '## Notes\nTODO decide indexes' }));
     expect(r.markers.length).toBeGreaterThan(0);
     expect(r.valid).toBe(false);
+  });
+});
+
+describe('evaluateDesign — section synonyms (no cosmetic rename-to-pass)', () => {
+  // A design doc using natural synonym headings must pass — the gate checks the
+  // substance is present, not the exact heading text.
+  function synonymDoc() {
+    return [
+      '---', 'status: approved', 'feature: pmdm', '---', '', '# Design: Data Mirror', '',
+      '## Overview', 'A Go service mirrors venue markets into Postgres. See the PRD.', '',
+      '## Architecture', 'Poller + read API; anti-corruption adapters per venue.', '',
+      '## Datastore & physical schema', 'PostgreSQL 16, schema pmdm; NUMERIC prices as probability 0–1.', '',
+      '## API surface', 'REST read API; env DATABASE_URL_RO.', '',
+      '## Ingestion & data flow', 'fetch → normalize → validate → upsert → report.', '',
+      '## Key decisions', 'Datastore is Postgres (DEC-0003); price unit probability (DEC-0005).', '',
+      '## Risks & spikes', 'Kalshi liquidity field removed — spike before build.', '',
+      '## Testing strategy', 'Unit normalize; integration upsert vs Postgres; smoke.', '',
+    ].join('\n');
+  }
+
+  test('"Overview" satisfies Context and "Datastore & physical schema" satisfies Data model', () => {
+    const r = evaluateDesign(synonymDoc());
+    expect(r.missingSections).toEqual([]);
+    expect(r.structureValid).toBe(true);
+    expect(r.valid).toBe(true);
+  });
+
+  test('headingMatchesSection maps synonyms to their canonical section', () => {
+    expect(headingMatchesSection('Overview', 'Context')).toBe(true);
+    expect(headingMatchesSection('Datastore & physical schema', 'Data model')).toBe(true);
+    expect(headingMatchesSection('Ingestion & data flow', 'Data flow')).toBe(true);
+    expect(headingMatchesSection('Testing strategy', 'Test strategy')).toBe(true);
+    // and does not match an unrelated section
+    expect(headingMatchesSection('Overview', 'Risks')).toBe(false);
   });
 });
 

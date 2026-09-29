@@ -38,6 +38,19 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    then `git worktree add -b ai-sdlc/$1-<slug> .worktrees/$1 main`. Write the
    `.active-task` sentinel.
 
+3b. **Load the architectural decisions (ADRs).** The design-time decisions are
+   CONSTRAINTS on this build, not just an admission gate — carry them into the plan
+   (step 4) and the implementer (step 5) so the code honors the recorded architecture
+   instead of re-deriving or contradicting it. Read the project-scope decisions plus
+   any the task references:
+   ```bash
+   node -e "const R=process.env.CLAUDE_PLUGIN_ROOT;const{loadTaskFile}=require(R+'/decision-engine/backlog-task');const{selectDecisionsForTask}=require(R+'/decision-engine/decisions');const t=loadTaskFile(process.argv[1]);for(const d of selectDecisionsForTask(process.cwd(),t)){const s=d.status||{};console.log(\`\${d.metadata.id} [\${s.lifecycle}/\${d.metadata.scope}] \${d.spec.summary}\${s.answeredOptionId?' (chosen: '+s.answeredOptionId+')':''}\`)}" "backlog/tasks/$1"*.md
+   ```
+   Pass these into the plan and implementer prompts as "Architectural decisions
+   (ADRs) — CONSTRAINTS: honor them, cite the DEC id where you implement one, and if
+   one blocks the task, STOP and flag it rather than silently diverging." Advisory
+   input (the d=1.82 pre-action lever), never a gate.
+
 4. **Plan (MANDATORY when a `plan` provider is set).** Read
    `.ai-sdlc/capabilities.yaml`. If `spec.stages.plan.provider` is present, you
    **must** invoke that provider now — e.g. run the `/code-plan` skill — and carry
@@ -47,6 +60,11 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    - Do **not** fold planning into an inline "equivalent." If the provider cannot
      be invoked, **stop** and report why rather than proceeding to implement.
    - Only when `spec.stages.plan.provider` is absent/null may you skip this step.
+   - **The plan must also emit a file-disjoint work breakdown** — the streams step 5
+     parallelizes over: each stream owns a set of files/modules and names the
+     integration seams it leaves for others. Streams must **not** share files (that's
+     what makes parallel implementation conflict-free). A task too small or too coupled
+     to split cleanly yields a single stream — that's fine.
 
 4b. **Analyze (before implement).** Cross-artifact consistency audit — catch a
    plan that contradicts or under-covers the PRD *before* any code is written.
@@ -82,9 +100,33 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    - If `cxpak` isn't on PATH, **say so explicitly** and proceed with the task +
      plan only — degraded, not blocked.
 
-5. **Implement.** Dispatch the `implement` agent via the **Task tool** (e.g.
-   `java-pro`) with the task contract + plan + **the cxpak context from step 4c**.
-   It must commit and return `{ commitSha, filesChanged, verifications, summary }`.
+5. **Implement — parallel when the plan decomposes.** If the plan (step 4) yields
+   **≥2 file-disjoint work streams**, implement them **in parallel via Native Teams**;
+   otherwise dispatch a single implementer. Every implementer — parallel or single —
+   gets the **ADR constraints** (step 3b), the plan, and **structured context** (4c).
+
+   **Parallel path (preferred for a decomposable task):**
+   - `TeamCreate { name: ai-sdlc-implement-$1 }`; `parallel-worker` owns the isolation
+     + merge discipline.
+   - `Task` one `implement` agent per stream (routed by language), each told the
+     **exact file set it owns**. Streams MUST be file-disjoint — **file-level isolation
+     inside the single Pattern-C worktree** `.worktrees/$1/`; never worktree-per-stream,
+     never overlapping files.
+   - Give each worker a **targeted** context slice, not just the global overview:
+     `cxpak_graph` op `blast_radius`/`trace` on its owned files (degrade to the step-4c
+     overview if cxpak is absent), plus its stream's plan section and the ADR constraints.
+   - Collect each stream's `{ filesChanged, verifications, summary }` from its JSONL
+     inbox; `TeamDelete`. A stream that touched a file it did not own is a conflict —
+     **stop and reconcile**, don't merge over it.
+   - **Integrate serially:** wire the shared seams the streams left open, then run the
+     build + full test suite **once over the integrated tree** — a green per-stream
+     worker does not prove the whole compiles or that the seams line up.
+
+   **Single path:** dispatch one `implement` agent with the same inputs (task contract +
+   plan + ADRs + cxpak context).
+
+   Each implementer commits its work and returns `{ commitSha, filesChanged,
+   verifications, summary }`.
 
 6. **Review (Native Teams).** Read the team plan in
    `steps.capabilities.review.teamPlan`. When `useTeam` is true (3+ reviewers):

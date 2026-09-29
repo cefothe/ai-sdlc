@@ -116,6 +116,19 @@ describe('architect-review lens on the review team', () => {
     const { providers } = cap.resolveReviewTeam(MAP, { labels: ['bug'] }, { implementerHarness: 'claude' });
     expect(providers.some((p) => p.role === 'architect-reviewer')).toBe(false);
   });
+
+  test('scale/throughput tasks add a cross-harness NFR reviewer (performance-engineer)', () => {
+    for (const label of ['scale', 'throughput', 'ingestion', 'data']) {
+      const { providers } = cap.resolveReviewTeam(MAP, { labels: [label] }, { implementerHarness: 'claude' });
+      const nfr = providers.find((p) => p.role === 'performance-reviewer');
+      expect(nfr).toBeDefined();
+      expect(nfr.name).toBe('performance-engineer');
+      expect(nfr.harness).toBe('codex'); // cross-harness, like the other reviewers
+    }
+    // ordinary tasks do NOT get the NFR lens
+    expect(cap.resolveReviewTeam(MAP, { labels: ['bug'] }, { implementerHarness: 'claude' })
+      .providers.some((p) => p.role === 'performance-reviewer')).toBe(false);
+  });
 });
 
 describe('resolveStageCapabilities (per-stage MCP / web / skill grants)', () => {
@@ -154,11 +167,29 @@ describe('resolveStageCapabilities (per-stage MCP / web / skill grants)', () => 
 
   test('a stage with no capabilities block grants nothing', () => {
     const g = cap.resolveStageCapabilities(MAP, 'implement', {});
-    expect(g).toEqual({ mcp: [], web: [], skills: [] });
+    expect(g).toEqual({ mcp: [], web: [], skills: [], poc: false });
   });
 
   test('an unknown stage grants nothing (no throw)', () => {
-    expect(cap.resolveStageCapabilities(MAP, 'does-not-exist', {})).toEqual({ mcp: [], web: [], skills: [] });
+    expect(cap.resolveStageCapabilities(MAP, 'does-not-exist', {})).toEqual({ mcp: [], web: [], skills: [], poc: false });
+  });
+
+  test('design may run a proof-of-concept (poc grant); review may not', () => {
+    expect(cap.resolveStageCapabilities(MAP, 'design', {}).poc).toBe(true);
+    expect(cap.resolveStageCapabilities(MAP, 'review', {}).poc).toBe(false);
+  });
+});
+
+describe('formatCapabilityGuidance — PoC', () => {
+  test('mentions the throwaway PoC validation when granted', () => {
+    const line = cap.formatCapabilityGuidance({ mcp: [], web: [], skills: ['firecrawl'], poc: true });
+    expect(line).toMatch(/proof-of-concept/i);
+    expect(line).toMatch(/never commit/i);
+  });
+
+  test('no PoC line when not granted', () => {
+    const line = cap.formatCapabilityGuidance({ mcp: [], web: ['WebSearch'], skills: [], poc: false });
+    expect(line).not.toMatch(/proof-of-concept/i);
   });
 });
 

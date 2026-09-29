@@ -91,7 +91,27 @@ function beginTask({ taskFilePath, worktreePath, taskId }) {
 
 // Step 5 — build developer prompt. cxpakContext is the pre-action provider
 // output (the proven d=1.82 lever); passed through when available.
-function buildDeveloperPrompt({ task, branch, cxpakContext, capabilityGuidance }) {
+// Render the selected ADRs as an implementation-constraint block. Returns null
+// when there are none, so callers can omit the section.
+function formatDecisionsContext(decisions) {
+  if (!Array.isArray(decisions) || decisions.length === 0) return null;
+  const lines = decisions.map((d) => {
+    const m = d.metadata || {};
+    const s = d.spec || {};
+    const st = d.status || {};
+    const chosen = st.answeredOptionId ? ` (chosen: ${st.answeredOptionId})` : '';
+    const why = s.rationale ? ` — ${String(s.rationale).split('\n')[0].trim()}` : '';
+    return `  - ${m.id} [${st.lifecycle || 'proposed'}${m.scope ? `/${m.scope}` : ''}]: ${s.summary}${chosen}${why}`;
+  });
+  return [
+    'Architectural decisions (ADRs) — CONSTRAINTS for this implementation.',
+    'Honor these; cite the DEC id where you implement one. If an ADR blocks the task or',
+    'you must diverge, STOP and flag it — do not silently contradict a recorded decision.',
+    ...lines,
+  ].join('\n');
+}
+
+function buildDeveloperPrompt({ task, branch, cxpakContext, capabilityGuidance, decisionsContext }) {
   const fm = task.frontmatter || {};
   const acs = (task.acceptanceCriteria || []).map((a, i) => `  ${i + 1}. ${a.text}`).join('\n');
   const lines = [
@@ -105,6 +125,7 @@ function buildDeveloperPrompt({ task, branch, cxpakContext, capabilityGuidance }
   if (cxpakContext) {
     lines.push('Structured context (cxpak — read this before exploring):', cxpakContext, '');
   }
+  if (decisionsContext) lines.push(decisionsContext, '');
   if (capabilityGuidance) lines.push(capabilityGuidance, '');
   lines.push('Implement the contract exactly. Return JSON: { commitSha, filesChanged[], filesChangedExternal[], verifications[], summary }.');
   return { prompt: lines.join('\n') };
@@ -228,7 +249,7 @@ function cleanupTask({ worktreePath }) {
 
 module.exports = {
   slugify, sweepMergedWorktrees, validateTaskStep, computeBranchName, setupWorktree,
-  beginTask, buildDeveloperPrompt, parseDeveloperReturn, buildReviewPrompts,
+  beginTask, buildDeveloperPrompt, formatDecisionsContext, parseDeveloperReturn, buildReviewPrompts,
   aggregateVerdicts, finalizeTask, pushAndPr, siblingPrs, cleanupTask,
   DEFAULT_BRANCH_PATTERN, FALLBACK_SLUG, SEVERITIES, ACTIVE_TASK_SENTINEL,
 };

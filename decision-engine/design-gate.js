@@ -27,11 +27,36 @@ const REQUIRED_SECTIONS = [
   'Test strategy',
 ];
 
+// A required section is matched by INTENT, not exact heading text: each canonical
+// section accepts common synonyms, and a heading satisfies it when it CONTAINS any
+// alias (not just a prefix match). This is what lets "## Overview" satisfy Context
+// and "## Datastore & physical schema" satisfy Data model — the gate checks that
+// the substance is present, and does not force cosmetic rename-to-pass. Keep aliases
+// specific enough not to cross-match a different section.
+const SECTION_ALIASES = {
+  'Context': ['context', 'overview', 'background', 'summary', 'problem'],
+  'Architecture': ['architecture', 'system design', 'high-level design', 'solution design', 'components', 'approach'],
+  'Data model': ['data model', 'datastore', 'data store', 'schema', 'persistence', 'storage'],
+  'Interfaces': ['interface', 'api', 'contract', 'endpoint'],
+  'Data flow': ['data flow', 'dataflow', 'sequence', 'pipeline', 'ingestion'],
+  'Decisions': ['decision', 'adr', 'trade-off', 'tradeoff'],
+  'Risks': ['risk', 'spike', 'open question', 'unknown'],
+  'Test strategy': ['test strategy', 'testing', 'test plan', 'tests', 'validation', 'qa'],
+};
+
 const ADR_REF_RE = /\bDEC-\d{4}\b/g;
 
+function aliasesFor(name) {
+  return SECTION_ALIASES[name] || [name.toLowerCase()];
+}
+
+function headingMatchesSection(heading, name) {
+  const h = String(heading || '').toLowerCase();
+  return aliasesFor(name).some((a) => h.includes(a));
+}
+
 function findSection(sections, name) {
-  const needle = name.toLowerCase();
-  return sections.find((s) => s.heading.toLowerCase().startsWith(needle));
+  return sections.find((s) => headingMatchesSection(s.heading, name));
 }
 
 function evaluateDesign(markdown, { path = '<design>' } = {}) {
@@ -60,7 +85,7 @@ function evaluateDesign(markdown, { path = '<design>' } = {}) {
   const advisory = [];
   if (status !== 'approved') advisory.push({ code: 'not-approved', message: `design status is "${status || 'unset'}" — a human should review + set status: approved` });
   for (const s of sections) {
-    if (REQUIRED_SECTIONS.some((r) => s.heading.toLowerCase().startsWith(r.toLowerCase())) && s.hasContent && s.content.length < 40) {
+    if (REQUIRED_SECTIONS.some((r) => headingMatchesSection(s.heading, r)) && s.hasContent && s.content.length < 40) {
       advisory.push({ code: 'thin-section', message: `Section "${s.heading}" is very thin (${s.content.length} chars)` });
     }
   }
@@ -78,7 +103,7 @@ function evaluateDesignFile(designPath) {
   return evaluateDesign(readFileSync(designPath, 'utf8'), { path: designPath });
 }
 
-module.exports = { evaluateDesign, evaluateDesignFile, REQUIRED_SECTIONS };
+module.exports = { evaluateDesign, evaluateDesignFile, REQUIRED_SECTIONS, SECTION_ALIASES, headingMatchesSection };
 
 // CLI: node decision-engine/design-gate.js docs/design/<slug>.md
 if (require.main === module) {

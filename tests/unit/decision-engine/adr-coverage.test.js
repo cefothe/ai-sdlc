@@ -42,6 +42,28 @@ describe('evaluateCoverage', () => {
     expect(dm.adrs).toContain('DEC-0002');
   });
 
+  test('resource-budget is distinct from scale: a "TB → ClickHouse later" ADR covers scale but NOT resource-budget', () => {
+    // The premia_v3 lesson: a scale/datastore ADR does not decide how v1 stays bounded.
+    const scaleOnly = evaluateCoverage([
+      dec('DEC-0001', { summary: 'Phase-2 datastore for TB of history: ClickHouse (columnar/time-series)', options: [] }),
+    ]);
+    expect(scaleOnly.areas.find((a) => a.key === 'scale').covered).toBe(true);
+    expect(scaleOnly.missing.map((m) => m.key)).toContain('resource-budget');
+
+    // A bounded-working-set decision covers it.
+    const withBudget = evaluateCoverage([
+      dec('DEC-0001', { summary: 'Phase-2 datastore: ClickHouse', options: [] }),
+      dec('DEC-0002', {
+        summary: 'Ingestion memory profile',
+        rationale: 'Stream markets per page and upsert per batch; never hold the full dataset in memory. Incremental crash-durable writes.',
+        options: [{ id: 'stream', description: 'per-batch upsert, bounded working set' }],
+      }),
+    ]);
+    const rb = withBudget.areas.find((a) => a.key === 'resource-budget');
+    expect(rb.covered).toBe(true);
+    expect(rb.adrs).toContain('DEC-0002');
+  });
+
   test('matches against context/rationale/options, not just summary', () => {
     const decisions = [dec('DEC-0001', {
       summary: 'How we handle failures',

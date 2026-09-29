@@ -85,6 +85,10 @@ spec:
       capabilities:
         skills: [firecrawl, deep-research]
         web: [WebSearch, WebFetch]
+        # Confirm the contract, don't just read it: architects may run a small
+        # throwaway PoC to validate a real endpoint/schema/auth before the ADR is
+        # locked — turning a blocking spike into a confirmed decision. See design.md.
+        poc: true
       routing:
         - when: { labels: [db, database, datastore, schema] }
           addCapabilities: { mcp: [postgres-ro] }
@@ -147,6 +151,14 @@ spec:
         # code/test/security reviewers (distinct concern: design integrity).
         - when: { labels: [architecture, refactor] }
           addProvider: { role: architect-reviewer, type: agent, name: code-review-architect, harness: codex }
+        # NFR / scale LENS: data-volume / throughput / performance tasks get a
+        # reviewer whose job is the non-functional question the generic reviewers
+        # miss — peak memory at the stated N, streaming vs batch-all-into-RAM,
+        # incremental/crash-durable writes, backpressure. This is the lens that
+        # would have caught "FetchAllMarkets holds 100k rows in memory before any
+        # write". Cross-harness (codex) like the other reviewers.
+        - when: { labels: [scale, performance, throughput, data, ingestion, realtime, streaming] }
+          addProvider: { role: performance-reviewer, type: agent, name: performance-engineer, harness: codex }
 
     # Tests always run through the test-runner agent.
     test:
