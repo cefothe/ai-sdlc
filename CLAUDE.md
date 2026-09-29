@@ -93,6 +93,45 @@ Model is **advisory** (R5-consistent): a stage is only handed the tools in its g
 nothing outside the grant is pre-approved. Add a server to `.mcp.json`, then grant it
 to the stage(s) that should use it.
 
+A grant may also set **`poc: true`** (design has it): the stage may run a small,
+throwaway, read-only proof-of-concept to *validate* an external contract (hit the real
+endpoint, check a response schema, confirm auth) before an ADR is locked — turning a
+blocking spike into a confirmed decision. Evidence, never committed as product code.
+
+## ADRs as implementation context
+
+Recorded design decisions (`.ai-sdlc/_decisions/DEC-*.yaml`) are not just a DoR
+admission gate — they're injected as **constraints** into the plan and the implementer.
+`selectDecisionsForTask` (decision-engine/decisions.js) picks every project-scope ADR
+plus any the task references; `steps.formatDecisionsContext` renders them as a
+"CONSTRAINTS — honor these, cite the DEC id, stop and flag if one blocks the task"
+block. `execute.js` feeds it via the `fetchDecisions` seam (`makeDecisionsFetcher`);
+`execute.md` step 3b does the interactive equivalent. This is what makes front-loaded
+design actually reach the code instead of being re-derived.
+
+## Non-functional / scale (bounded working set)
+
+Scale must be a **constraint**, not prose. `adr-coverage.js` has a `resource-budget`
+area **distinct from `scale`**: a "TB → ClickHouse later" datastore ADR covers `scale`
+but NOT `resource-budget`, which demands a decision on how v1 stays *bounded* at the
+stated volume (streaming vs batch-all-into-RAM, per-batch/incremental crash-durable
+writes, peak-memory ceiling, backpressure). A data-volume feature carries a matching
+**non-functional acceptance criterion**, and the `scale`/`throughput`/`data` labels
+route a cross-harness **NFR reviewer** (`performance-engineer`) onto the review team —
+the lens that catches "FetchAll* holds 100k rows in memory before any write". design.md
+also runs a **scale-probe PoC** and surfaces datastore-vs-ingestion scale contradictions
+to the operator before recording (3c).
+
+## Parallel implementation
+
+When the plan decomposes a task into **file-disjoint work streams**, `execute.md` step 5
+implements them in parallel via Native Teams (`parallel-worker`), **file-level isolation
+inside the single Pattern-C worktree** (never worktree-per-stream, never overlapping
+files), each worker given a targeted cxpak slice (`cxpak_graph` blast_radius/trace on its
+files) + the ADR constraints + its plan section — then a **serial integration + full
+build/test** over the merged tree (a green per-stream worker doesn't prove the whole
+compiles). A too-small/too-coupled task yields one stream and the single path.
+
 ## Cross-Harness Execution (claude ↔ codex)
 
 Reviewers are declared `harness: codex` so they never share the implementer's

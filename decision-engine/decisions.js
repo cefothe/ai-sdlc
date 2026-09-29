@@ -110,7 +110,27 @@ function listDecisions(root, { lifecycle } = {}) {
   return filtered.sort((a, b) => a.metadata.id.localeCompare(b.metadata.id));
 }
 
-module.exports = { newDecision, answerDecision, writeDecision, loadDecision, listDecisions, nextId, storeDir, STORE_REL, LIFECYCLES };
+// Select the ADRs an implementer must honor for a task: every project-scope
+// decision (foundational constraints that apply to any change) plus any DEC id
+// the task explicitly references (its refs / specRef / description / body / ACs,
+// which reach the linked design doc's decisions). Excludes non-constraining
+// lifecycles (open/deferred/superseded/archived). This is the seam that turns
+// recorded design decisions into IMPLEMENTATION context, not just an admission
+// gate — "look at the ADRs for references" at build time.
+const IMPLEMENTATION_LIFECYCLES = ['proposed', 'answered'];
+
+function selectDecisionsForTask(root, task = {}, { lifecycles = IMPLEMENTATION_LIFECYCLES } = {}) {
+  const all = listDecisions(root).filter((d) => d.status && lifecycles.includes(d.status.lifecycle));
+  const fm = (task && task.frontmatter) || {};
+  const blob = JSON.stringify([fm.refs, fm.specRef, fm.description, fm.feature, task.acceptanceCriteria, task.body]);
+  const referenced = new Set(blob.match(/DEC-\d{4}/g) || []);
+  return all.filter((d) => {
+    const m = d.metadata || {};
+    return m.scope === 'project' || referenced.has(m.id);
+  });
+}
+
+module.exports = { newDecision, answerDecision, writeDecision, loadDecision, listDecisions, selectDecisionsForTask, nextId, storeDir, STORE_REL, LIFECYCLES, IMPLEMENTATION_LIFECYCLES };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);

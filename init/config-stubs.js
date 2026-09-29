@@ -140,6 +140,9 @@ spec:
       capabilities:
         skills: [firecrawl, deep-research]
         web: [WebSearch, WebFetch]
+        # Architects may run a small throwaway PoC to CONFIRM a real endpoint/
+        # schema/auth before locking the ADR (turns a spike into a decision).
+        poc: true
       routing:
         - when: { labels: [db, database, datastore, schema] }
           addCapabilities: { mcp: [postgres-ro] }
@@ -171,6 +174,11 @@ spec:
         - when: { javaTestFiles: true }
           replaceRole: test-reviewer
           addProvider: { role: test-reviewer, type: agent, name: qa-code-reviewer, harness: codex }
+        # NFR / scale lens: data-volume / throughput tasks get a reviewer for the
+        # non-functional question (peak memory at the stated N, streaming vs
+        # batch-all-into-RAM, incremental/crash-durable writes, backpressure).
+        - when: { labels: [scale, performance, throughput, data, ingestion, realtime, streaming] }
+          addProvider: { role: performance-reviewer, type: agent, name: performance-engineer, harness: codex }
     test:
       provider: { type: agent, name: test-runner }
 `;

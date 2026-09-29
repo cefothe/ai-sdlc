@@ -11,6 +11,32 @@ const { evaluatePromiseGate, formatReviewerContext } = require(path.join(ROOT, '
 
 const WARN = { spec: { evaluationMode: 'warn-only', autoPassRules: [] } };
 
+describe('ADRs as implementation context', () => {
+  const decisions = [
+    { metadata: { id: 'DEC-0001', scope: 'project' }, spec: { summary: 'ed25519 signing', rationale: 'small keys, native crypto' }, status: { lifecycle: 'answered', answeredOptionId: 'ed25519' } },
+    { metadata: { id: 'DEC-0009', scope: 'feature' }, spec: { summary: 'cursor pagination' }, status: { lifecycle: 'proposed' } },
+  ];
+
+  test('formatDecisionsContext renders each ADR as a constraint with id + chosen option', () => {
+    const out = steps.formatDecisionsContext(decisions);
+    expect(out).toMatch(/CONSTRAINTS/);
+    expect(out).toMatch(/DEC-0001 \[answered\/project\]: ed25519 signing \(chosen: ed25519\)/);
+    expect(out).toMatch(/DEC-0009 \[proposed\/feature\]: cursor pagination/);
+  });
+
+  test('no decisions -> null (section omitted)', () => {
+    expect(steps.formatDecisionsContext([])).toBeNull();
+    expect(steps.formatDecisionsContext(undefined)).toBeNull();
+  });
+
+  test('the developer prompt carries the ADR constraints block', () => {
+    const task = { frontmatter: { id: 'AISDLC-1', title: 'x' }, acceptanceCriteria: [{ text: 'do it' }] };
+    const { prompt } = steps.buildDeveloperPrompt({ task, branch: 'b', decisionsContext: steps.formatDecisionsContext(decisions) });
+    expect(prompt).toMatch(/DEC-0001/);
+    expect(prompt).toMatch(/cite the DEC id/);
+  });
+});
+
 function taskMarkdown(status = 'To Do') {
   return [
     '---',

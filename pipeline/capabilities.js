@@ -59,15 +59,16 @@ function mergeCapabilities(into, from) {
     for (const v of from[kind]) set.add(v);
     into[kind] = [...set];
   }
+  if (from.poc === true) into.poc = true; // boolean grant: OR across sources
   return into;
 }
 
 // Resolve a stage's capability grant: the base `capabilities` block unioned with
 // every routing rule whose `when` matches via `addCapabilities`. Always returns
-// the three kinds (possibly empty) so callers can treat it uniformly.
+// the three tool kinds (possibly empty) + the `poc` flag so callers treat it uniformly.
 function resolveStageCapabilities(map, name, ctx = {}) {
   const binding = stage(map, name);
-  const grant = { mcp: [], web: [], skills: [] };
+  const grant = { mcp: [], web: [], skills: [], poc: false };
   if (!binding) return grant;
   mergeCapabilities(grant, binding.capabilities);
   for (const rule of binding.routing || []) {
@@ -96,8 +97,14 @@ function formatCapabilityGuidance(grant) {
   if ((grant.mcp || []).length) parts.push(`MCP servers [${grant.mcp.join(', ')}]`);
   if ((grant.web || []).length) parts.push(`web research [${grant.web.join(', ')}]`);
   if ((grant.skills || []).length) parts.push(`skills [${grant.skills.join(', ')}]`);
-  if (!parts.length) return null;
-  return `External capabilities granted for this stage — use them to ground your work in real sources (fetch the real docs/specs, inspect the live schema, research prior art) rather than inventing anything you could verify: ${parts.join('; ')}.`;
+  const poc = grant.poc
+    ? ' You MAY also run a SMALL, throwaway proof-of-concept to VALIDATE an external contract (call the real endpoint, check a response schema, confirm auth/pagination/rate limits) — record the result as evidence and cite it; keep it bounded, read-only, and never commit PoC code.'
+    : '';
+  if (!parts.length && !poc) return null;
+  const base = parts.length
+    ? `External capabilities granted for this stage — use them to ground your work in real sources (fetch the real docs/specs, inspect the live schema, research prior art) rather than inventing anything you could verify: ${parts.join('; ')}.`
+    : '';
+  return (base + poc).trim() || null;
 }
 
 // Single-provider stage with first-match-wins routing.

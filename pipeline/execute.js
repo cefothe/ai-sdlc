@@ -28,7 +28,7 @@ async function executePipeline(opts) {
     dorConfig, evaluateDor, stageBJudge,
     cxpakContext, fetchCxpak,
     promiseVerify, qualityGateConfig, evaluatePromiseGate, formatReviewerContext,
-    resolveRepoForPath,
+    resolveRepoForPath, fetchDecisions,
     maxIterations = 2, requireAllAcChecked = false,
     taskFilePath, completedDir, branchPattern,
     capabilityMap, taskContext = {}, implementerHarness = 'claude', runPlan = true, runDesign = true,
@@ -122,13 +122,26 @@ async function executePipeline(opts) {
     }
     result.steps.cxpak = { fetched: !!resolvedCxpak && !cxpakContext, injected: !!cxpakContext };
 
+    // Architectural decisions (ADRs) — the design-time constraints the plan and
+    // the implementer must honor. Resolved via the injected fetchDecisions seam
+    // (project-scope + task-referenced DECs). Advisory input, never blocks: no
+    // decisions / a read error degrades to null. This is what makes front-loaded
+    // design reach implementation instead of only gating admission.
+    let decisionsText = null;
+    if (typeof fetchDecisions === 'function') {
+      try { decisionsText = steps.formatDecisionsContext(await fetchDecisions(task)); } catch (_) { decisionsText = null; }
+    }
+    result.steps.decisions = { injected: !!decisionsText };
+
     // Optional plan stage (e.g. the /code-plan skill) — its output augments the
-    // pre-action context handed to the implementer (cxpak + design notes).
+    // pre-action context handed to the implementer (cxpak + design notes). ADRs
+    // ride their own dedicated block in the developer prompt (decisionsContext).
     const baseContext = [resolvedCxpak, designText].filter(Boolean).join('\n') || null;
     let planText = baseContext;
     if (planProvider && runPlan) {
       try {
-        const plan = await spawn({ type: 'plan', provider: planProvider, prompt: `Produce an implementation plan for task ${(task.frontmatter || {}).id}: ${(task.frontmatter || {}).title}.` });
+        const planPrompt = [`Produce an implementation plan for task ${(task.frontmatter || {}).id}: ${(task.frontmatter || {}).title}.`, decisionsText].filter(Boolean).join('\n\n');
+        const plan = await spawn({ type: 'plan', provider: planProvider, prompt: planPrompt });
         const planStr = typeof plan === 'string' ? plan : (plan && plan.plan) || '';
         if (planStr) planText = [baseContext, `Implementation plan (${planProvider.name}):`, planStr].filter(Boolean).join('\n');
         result.steps.plan = { provider: planProvider, produced: !!planStr };
@@ -146,7 +159,7 @@ async function executePipeline(opts) {
     for (let iter = 0; iter < maxIterations; iter++) {
       // Step 5 — dev prompt (with cxpak/plan context +, on retries, reviewer feedback).
       const feedback = review && !review.approved ? formatReviewerFeedback(review) : null;
-      const { prompt } = steps.buildDeveloperPrompt({ task, branch, cxpakContext: planText, capabilityGuidance: capabilities.formatCapabilityGuidance(grants.implement) });
+      const { prompt } = steps.buildDeveloperPrompt({ task, branch, cxpakContext: planText, decisionsContext: decisionsText, capabilityGuidance: capabilities.formatCapabilityGuidance(grants.implement) });
       const devPrompt = feedback ? `${prompt}\n\nPrior review requested changes (address these specifically):\n${feedback}` : prompt;
       const devReturn = await spawn({ type: 'developer', provider: implementer, tools: capabilities.capabilityToolNames(grants.implement), prompt: devPrompt, iteration: iter });
 

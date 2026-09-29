@@ -68,6 +68,32 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    gaps where an architect wrote 3 of its 10. Architecture must converge *before*
    any DEC id is assigned.
 
+1d. **Validate by PoC before locking the contract (optional; integration/API features).**
+   When `stages.design.capabilities.poc` is granted and the feature rests on an external
+   API/protocol you don't own, you MAY de-risk it with a **small, throwaway** proof-of-concept
+   instead of only reading docs — the fastest way to turn a **blocking spike** into a
+   **confirmed decision**. Run a minimal, **read-only** probe in a scratch dir (`mktemp -d`,
+   never the repo) to confirm the *real* behavior the design will rest on:
+   - the endpoint shape + a real list/detail **response schema** (curl/httpie + a tiny script);
+   - the **auth** model actually works (a token round-trips);
+   - **pagination**, **rate-limit headers**, and any **fee/pricing** field, as they truly are.
+
+   **Scale probe (when the design rests on a data-volume figure).** If the feature has a
+   volume/throughput number (N records, req/s, TB), the PoC must also turn that number from
+   an *assumption* into a *measurement*: fetch the real page/total count and measure or
+   extrapolate the **working-set memory** for the shape the design implies. A measured "the
+   full set is ~40k markets × ~KB each = hundreds of MB held at once" is exactly what forces
+   the streaming / bounded-memory decision (below) instead of a batch-all-into-RAM implementation
+   discovered in production.
+
+   Guardrails: **time-box** it; **read-only / idempotent** calls only (no writes to a live
+   system); **never log secrets** (reference the env var, don't echo it); the PoC is
+   **evidence, not product code** — do not commit it. Feed the captured output to the panel
+   as ground truth, and attach it to the relevant ADR: a passing PoC **raises** that decision's
+   `confidence` (spike resolved); a failing/inconclusive one **keeps** it a `confidence: low`
+   pre-implementation spike with the finding recorded. Whatever you could not actually confirm
+   stays a blocking open question — a PoC that *didn't* run is not a validated contract.
+
 2. **Phase 1 — Propose (parallel, NO ADRs yet).** Read `.ai-sdlc/capabilities.yaml`
    → `stages.design` for the architect roster (route by labels). Resolve the stage's
    **capability grant** and pass it to every architect so grounding (step 1b/1c) uses
@@ -99,24 +125,50 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    no design doc.** Numbering and recording are deferred on purpose (see Phase 3).
    If an agent writes files anyway, discard them and keep only its text.
 
-3. **Phase 2 — Converge (debate → ONE architecture).** The proposals will overlap
-   and conflict; this is where the panel *discusses its choices* and reconciles them
-   **before** anything is recorded. Dispatch `architect-review` as **chair** with
-   **all** Phase-1 proposals and the **§Convergence** prompt. It produces:
-   - a single coherent **target architecture** (the agreed shape + why it wins), and
-   - the **consolidated decision list** — deduped across proposals, one entry per
-     real choice, each carrying the competing options that were actually debated,
-     the chosen option, and why the alternatives lost.
-   Surface every genuinely unresolved conflict to the operator rather than letting
-   the chair silently pick. Nothing proceeds to recording until the architecture
-   coheres. (For a contentious feature, run a short critique round first: give each
-   Phase-1 architect the *other* proposals and ask for objections, then feed those
-   into the chair.)
+3. **Phase 2 — Debate, converge, then discuss with the operator (before ANY ADR).**
+   The proposals WILL overlap and conflict; this is where the panel *actually discusses
+   its choices*. **Never jump from proposals straight to recording** — recording an ADR
+   is the *commit*, and it must follow a discussion, not replace one.
 
-4. **Phase 3 — Allocate DEC ids + record serially.** Only now that the decisions are
-   agreed, number them. Get the next free id and assign **contiguously** — the
-   decisions come from the converged list, not from any single agent, so there is no
-   parallel-`nextId` race to dodge and no reserved-range gaps to reconcile:
+   **3a. Critique round — REQUIRED whenever the proposals disagree.** Find every
+   decision where two architects pick a different option, assert contradictory facts,
+   or differ **numerically** (a fee-bps figure, a rate limit, a sizing number — exactly
+   the 175-vs-350 bps kind of split). For each such conflict, give every Phase-1
+   architect the *other* proposals and the **§Critique** prompt in
+   `commands/references/design-panel-prompt.md` — **"defend or concede, with evidence."**
+   Cross-model (claude vs codex) disagreements MUST be debated, not smoothed. Only skip
+   this round when the proposals genuinely agree on every decision.
+
+   **3b. Converge.** Dispatch `architect-review` as **chair** with **all** Phase-1
+   proposals AND the 3a critique + resolutions, using the **§Convergence** prompt. It
+   produces a single coherent **target architecture** (the agreed shape + why it wins)
+   and the **consolidated decision list** — deduped, one entry per real choice, each
+   with the debated options, the chosen one, why the alternatives lost, a `confidence`,
+   and an explicit **`unresolved:`** note for anything the debate could not settle. The
+   chair may **not** silently pick a winner for an unresolved conflict, nor average two
+   disagreeing numbers — an unsettled item stays flagged.
+
+   **3c. Discuss the decision list with the operator — the gate before recording.**
+   Present the consolidated list (still **no DEC ids, no files, nothing written**):
+   each decision's chosen option, alternatives, rationale, and confidence. Call out
+   **up front** (a) every `unresolved` conflict, (b) every `confidence: low` decision,
+   (c) **any place grounding/PoC CONTRADICTED the PRD/ground-truth** (e.g. a fee the
+   PRD called "~0%" that live data shows at 100 bps — that contradiction is discussed,
+   never silently reconciled into an ADR), and (d) **any scale contradiction** — a
+   recorded volume/TB figure whose ingestion/processing data-flow would hold the whole
+   dataset in memory (a "we'll use ClickHouse later" datastore ADR sitting next to a
+   `fetch-all → normalize → write` v1 that never bounds its working set). A large-N
+   design **must** carry an explicit **resource-budget** decision (streaming / per-batch
+   upserts / peak-memory ceiling / incremental crash-durable writes), not just a
+   future-datastore ADR. Use `AskUserQuestion` for the calls that change an ADR's content
+   or confidence. **Do not batch-write ADRs the operator has not seen.** Proceed to
+   Phase 3 only after the operator signs off on the decision set.
+
+4. **Phase 3 — Allocate DEC ids + record serially (only after the 3c sign-off).** Only
+   now that the decisions are agreed **and the operator has signed off on the list**,
+   number them. Get the next free id and assign **contiguously** — the decisions come
+   from the converged list, not from any single agent, so there is no parallel-`nextId`
+   race to dodge and no reserved-range gaps to reconcile:
    ```bash
    node -e "const{listDecisions}=require(process.env.CLAUDE_PLUGIN_ROOT+'/decision-engine/decisions.js');const ds=listDecisions(process.cwd());const max=ds.reduce((m,d)=>Math.max(m,Number((d.metadata.id.match(/DEC-(\d+)/)||[])[1]||0)),0);console.log('next free:',max+1)"
    ```
@@ -146,9 +198,15 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/adr-coverage.js" .
    ```
    For each area it reports as missing (stack, datastore, build-vs-buy, resilience,
-   scale, cost, security, observability, api, read-path, …) either record the ADR
-   or state explicitly why it's out of scope for this feature. Do not leave a
-   foundational area silently undecided.
+   scale, **resource-budget**, cost, security, observability, api, read-path, …) either
+   record the ADR or state explicitly why it's out of scope. Do not leave a foundational
+   area silently undecided. **`resource-budget` is distinct from `scale`:** a
+   "TB → columnar later" datastore ADR covers `scale` but does **not** satisfy
+   `resource-budget` — that area demands a decision on how v1 stays *bounded* at the
+   stated volume (streaming vs batch-all-into-RAM, per-batch/incremental crash-durable
+   writes, a peak-memory ceiling, backpressure). If it's a gap on a data-volume feature,
+   record that ADR **and** carry a matching non-functional acceptance criterion into the
+   task (step 7) so the implementer and the NFR/scale reviewer both see it.
 
 7. **Scaffold the backlog task — from the PRD *and* the design.** Now that the
    architecture exists, fold both the product contract and the technical decisions
@@ -165,6 +223,11 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
      --metric "<success metric 1>" --metric "<success metric 2>" \
      --priority <low|medium|high> --desc "<one-paragraph problem+scope, grounded in the ADRs>"
    ```
+   For a **data-volume / throughput** feature, include the `resource-budget` decision as a
+   **non-functional acceptance criterion** and add a `scale` (or `performance`/`throughput`/
+   `data`) **label** — the AC makes the constraint testable and the label routes the NFR/scale
+   reviewer onto the review team. Example AC: *"ingestion holds ≤ one page/batch in memory and
+   upserts per batch; a crash after K records retains those K (no all-or-nothing venue write)."*
 
 8. **Check readiness (DoR).** Report what still blocks dispatch — gate 9 will fail
    until the design doc is `status: approved` (and, if the project sets
@@ -188,8 +251,13 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
   If an architect writes implementation files, discard them.
 - Task creation lives here, not in `/ai-sdlc:new`, on purpose: seeding the task
   from the ADRs (not the raw PRD) is what guarantees no task predates its design.
-- **Propose → converge → record**, in that order. Architects never record ADRs in
-  parallel — decisions emerge from the converged architecture, then the orchestrator
-  numbers them contiguously and records serially. This replaces the old
-  per-architect reserved DEC ranges, which produced incoherent, gap-riddled ADR sets.
+- **Propose → debate → converge → discuss with the operator → record**, in that
+  order. The debate (3a) is **required whenever proposals disagree** — a numeric or
+  factual split (e.g. 175 vs 350 bps) is resolved with evidence, never smoothed by the
+  chair. Recording (Phase 3) is the **commit** and is **gated on an explicit operator
+  sign-off of the decision list (3c)** — never batch-write ADRs the operator hasn't
+  seen. Architects never record ADRs in parallel; the orchestrator numbers the agreed,
+  signed-off decisions contiguously and records them serially. This replaces both the
+  old per-architect reserved DEC ranges *and* the failure mode where the chair silently
+  reconciled real disagreements and the skill jumped straight to writing ADRs.
 - Checklist of areas the panel must cover: `commands/references/adr-coverage-checklist.md`.

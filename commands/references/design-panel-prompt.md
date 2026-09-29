@@ -1,10 +1,13 @@
 # Design-panel prompts (reusable)
 
-The design panel runs in two phases: architects **propose** high-level designs in
-parallel (§Proposal), then a chair **converges** them into one agreed architecture
+The design panel runs in phases: architects **propose** high-level designs in
+parallel (§Proposal); when the proposals disagree they **critique** each other's
+conflicts (§Critique); then a chair **converges** them into one agreed architecture
 (§Convergence). ADRs are numbered and recorded by the orchestrator only *after*
-convergence — never by the architects, never during the fan-out. This is what makes
-the decisions cohere instead of four blind lenses each locking in its own range.
+convergence **and an explicit operator sign-off of the decision list** — never by the
+architects, never during the fan-out, never before the disagreements are resolved.
+This is what makes the decisions cohere instead of four blind lenses each locking in
+its own range — and stops the chair from silently reconciling a real disagreement.
 
 ---
 
@@ -74,6 +77,43 @@ Return exactly this structure:
 - **INTEGRITY** — the single biggest architectural risk you see.
 
 Be skeptical, quantitative, and comprehensive. This is a proposal to be challenged.
+
+---
+
+## §Critique — per-architect prompt (Phase 2, required when proposals disagree)
+
+Run this BEFORE convergence for every decision where two proposals pick a different
+option, assert contradictory facts, or differ numerically (a fee-bps figure, a rate
+limit, a sizing number). Send it to each Phase-1 architect with the *other* proposals
+pasted in. Fill `{{PRODUCT}}`, `{{YOUR_PROPOSAL}}`, `{{OTHER_PROPOSALS}}`, and
+`{{CONFLICTS}}` (the specific disagreements to adjudicate). The point is a real
+argument on the merits — not a vote, not an average.
+
+---
+
+DESIGN STAGE for {{PRODUCT}} — CRITIQUE PHASE. Your proposal:
+
+{{YOUR_PROPOSAL}}
+
+The other architects proposed:
+
+{{OTHER_PROPOSALS}}
+
+These specific decisions are in conflict across the panel:
+
+{{CONFLICTS}}
+
+For EACH conflict, **defend or concede — with evidence**:
+- If you defend your choice: give the concrete evidence (a real API response, a doc/spec
+  citation, a measured number, a named trade-off). Assertion without evidence is not a defense.
+- If you concede: say so plainly and state which option now wins and why.
+- For a **numeric or factual** disagreement (e.g. 175 vs 350 bps): do not split the
+  difference — one of you is wrong. Show the calculation or the source that settles it,
+  or mark it explicitly as **needs a spike / operator call** if it genuinely cannot be
+  settled from available evidence.
+
+Return structured TEXT only, per conflict: `{ conflict, position: defend|concede,
+evidence, resolved_option | unresolved_reason }`. No files, no DEC ids.
 
 ---
 

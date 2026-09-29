@@ -61,7 +61,8 @@
       "properties": {
         "mcp": { "type": "array", "items": { "type": "string" }, "description": "MCP server names (as registered in .mcp.json) the stage may use, e.g. 'firecrawl', 'postgres-ro'. Each expands to that server's mcp__<server>__* tools." },
         "web": { "type": "array", "items": { "type": "string", "enum": ["WebSearch", "WebFetch"] }, "description": "Built-in web research tools the stage may use." },
-        "skills": { "type": "array", "items": { "type": "string" }, "description": "Framework skills the stage may invoke via the Skill tool, e.g. 'deep-research', 'firecrawl'." }
+        "skills": { "type": "array", "items": { "type": "string" }, "description": "Framework skills the stage may invoke via the Skill tool, e.g. 'deep-research', 'firecrawl'." },
+        "poc": { "type": "boolean", "description": "The stage may run a SMALL, throwaway proof-of-concept to VALIDATE an external contract before committing the design — call the real endpoint, check a response schema, confirm auth/pagination/rate limits. Evidence that turns a spike / blocking open-question into a confirmed decision (raising an ADR's confidence). Bounded + time-boxed + throwaway (never committed as product code); read-only calls only." }
       },
       "additionalProperties": false
     },

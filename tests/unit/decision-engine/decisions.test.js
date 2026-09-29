@@ -106,3 +106,37 @@ describe('store: write / load / list / nextId', () => {
     expect(d.status.answeredOptionId).toBe('ed25519');
   });
 });
+
+describe('selectDecisionsForTask (ADRs as implementation constraints)', () => {
+  const opt = [{ id: 'a', description: 'x' }];
+  function seed(root) {
+    dec.writeDecision(root, dec.newDecision({ id: 'DEC-0001', summary: 'project foundational', options: opt, created: 't', scope: 'project', lifecycle: 'answered' }));
+    dec.writeDecision(root, dec.newDecision({ id: 'DEC-0002', summary: 'feature referenced', options: opt, created: 't', scope: 'feature', lifecycle: 'proposed' }));
+    dec.writeDecision(root, dec.newDecision({ id: 'DEC-0003', summary: 'feature unrelated', options: opt, created: 't', scope: 'feature', lifecycle: 'answered' }));
+    dec.writeDecision(root, dec.newDecision({ id: 'DEC-0004', summary: 'superseded project', options: opt, created: 't', scope: 'project', lifecycle: 'superseded' }));
+  }
+
+  test('always includes project-scope decisions, and feature decisions the task references', () => {
+    const root = tmp();
+    try {
+      seed(root);
+      const task = { frontmatter: { id: 'T-1', refs: ['docs/design/x.md', 'see DEC-0002 for the pagination model'] } };
+      const ids = dec.selectDecisionsForTask(root, task).map((d) => d.metadata.id).sort();
+      expect(ids).toContain('DEC-0001'); // project scope, always a constraint
+      expect(ids).toContain('DEC-0002'); // feature scope, referenced by the task
+      expect(ids).not.toContain('DEC-0003'); // feature scope, not referenced
+      expect(ids).not.toContain('DEC-0004'); // superseded -> not a live constraint
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('no decisions store -> empty (advisory, never throws)', () => {
+    const root = tmp();
+    try {
+      expect(dec.selectDecisionsForTask(root, { frontmatter: {} })).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
