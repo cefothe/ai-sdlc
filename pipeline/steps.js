@@ -149,6 +149,56 @@ function parseDeveloperReturn(ret) {
   };
 }
 
+// Compute the REAL diff a cross-harness reviewer must see — the actual changed
+// lines, not the implementer's self-reported summary. Reviewing a paraphrase
+// defeats the whole point of an independent harness: an implementer that writes
+// a clean summary over buggy code would pass. We render the full patch of the
+// task branch vs its base (the standard PR diff), prefixed with a --stat header.
+//
+// Bounded, not unbounded: a giant change is truncated at maxChars with an
+// explicit marker so the prompt never blows the model's context (R7/R8 token
+// discipline) — but the default budget is large (200k chars) so real reviews
+// get the whole change. Falls back to the developer summary only when git
+// produces nothing usable (e.g. no runner, or an empty/failed diff).
+function computeReviewDiff({ runner, cwd, baseBranch = 'main', commitSha, fallbackSummary, maxChars = 200000 }) {
+  const readDiff = () => {
+    if (!runner) return '';
+    const run = (args) => {
+      try {
+        return String((runner(args, { cwd }) || {}).stdout || '').trim();
+      } catch (err) {
+        // execFileSync throws on non-zero exit but may still expose captured stdout.
+        return String((err && err.stdout) || '').trim();
+      }
+    };
+    // Range diff against the merge-base with the base branch = the full change
+    // set on this branch (the PR view). Fall back to showing the single commit
+    // when the range is empty (e.g. base branch not present in the worktree).
+    const range = `${baseBranch}...HEAD`;
+    let stat = run(['diff', '--stat', range]);
+    let patch = run(['diff', range]);
+    if (!patch && commitSha) {
+      stat = run(['show', '--stat', '--format=', commitSha]);
+      patch = run(['show', '--format=', commitSha]);
+    }
+    if (!patch) return '';
+    return [stat ? `Changed files:\n${stat}` : '', patch].filter(Boolean).join('\n\n');
+  };
+
+  let diff = readDiff();
+  if (!diff) {
+    // Nothing from git — degrade to the summary so the reviewer still gets
+    // *something*, but make it explicit this is not the real diff.
+    return fallbackSummary
+      ? `(git diff unavailable — implementer summary only, NOT the actual diff)\n\n${fallbackSummary}`
+      : '(diff unavailable)';
+  }
+  if (diff.length > maxChars) {
+    diff = `${diff.slice(0, maxChars)}\n\n… [diff truncated at ${maxChars} chars — review the remainder in the worktree]`;
+  }
+  return diff;
+}
+
 // Step 7 — build the cross-harness review prompts. promiseContext is the
 // advisory promise-verification string (read-only reviewer input). `team` is an
 // optional resolved reviewer set (from the CapabilityMap) — each entry may
@@ -249,7 +299,7 @@ function cleanupTask({ worktreePath }) {
 
 module.exports = {
   slugify, sweepMergedWorktrees, validateTaskStep, computeBranchName, setupWorktree,
-  beginTask, buildDeveloperPrompt, formatDecisionsContext, parseDeveloperReturn, buildReviewPrompts,
+  beginTask, buildDeveloperPrompt, formatDecisionsContext, parseDeveloperReturn, computeReviewDiff, buildReviewPrompts,
   aggregateVerdicts, finalizeTask, pushAndPr, siblingPrs, cleanupTask,
   DEFAULT_BRANCH_PATTERN, FALLBACK_SLUG, SEVERITIES, ACTIVE_TASK_SENTINEL,
 };

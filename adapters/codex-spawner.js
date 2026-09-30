@@ -144,14 +144,17 @@ function normalizeReviewerVerdict(parsed, provider) {
 }
 
 function makeCodexSpawner({ exec = defaultExec, model = DEFAULT_MODEL, reasoningEffort = DEFAULT_REASONING_EFFORT, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  return async function spawn({ type, provider, prompt, sandbox }) {
+  return async function spawn({ type, provider, prompt, sandbox, cwd }) {
     const effectiveProvider = provider || { type: 'agent', name: 'codex' };
     const args = buildCodexArgs(effectiveProvider, prompt, { model, reasoningEffort, type, sandbox });
     // input:'' closes Codex's stdin immediately so headless `codex exec` does not
     // block waiting for piped input (it reads the prompt from argv instead).
-    const stdout = await Promise.resolve(
-      exec('codex', args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, input: '' }),
-    );
+    // cwd roots Codex in the worktree so a read-only reviewer can inspect every
+    // file in the change (not just the diff in its prompt) — a real harness sees
+    // the whole tree. Omitted -> inherits the process cwd.
+    const execOpts = { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, input: '' };
+    if (cwd) execOpts.cwd = cwd;
+    const stdout = await Promise.resolve(exec('codex', args, execOpts));
     const payload = parseCodexResult(stdout);
     if (type === 'reviewer') return normalizeReviewerVerdict(payload, effectiveProvider);
     return payload;

@@ -103,6 +103,20 @@ describe('resolveDesignPanel (architects)', () => {
     // ordinary tasks do NOT get the security lens at design
     expect(cap.resolveDesignPanel(MAP, { labels: ['docs'] }).providers.some((p) => p.role === 'security-architect')).toBe(false);
   });
+
+  test('AI/ML lens is front-loaded: LLM tasks add ai-engineer, ML tasks add ml-engineer', () => {
+    for (const label of ['ai', 'llm', 'rag', 'genai', 'embeddings', 'prompt', 'agent']) {
+      const { providers } = cap.resolveDesignPanel(MAP, { labels: [label] });
+      expect(providers.some((p) => p.role === 'ai-architect' && p.name === 'ai-engineer')).toBe(true);
+    }
+    for (const label of ['ml', 'model', 'inference', 'training', 'mlops']) {
+      const { providers } = cap.resolveDesignPanel(MAP, { labels: [label] });
+      expect(providers.some((p) => p.role === 'ml-architect' && p.name === 'ml-engineer')).toBe(true);
+    }
+    // ordinary tasks get neither lens
+    const ordinary = cap.resolveDesignPanel(MAP, { labels: ['docs'] }).providers;
+    expect(ordinary.some((p) => p.role === 'ai-architect' || p.role === 'ml-architect')).toBe(false);
+  });
 });
 
 describe('architect-review lens on the review team', () => {
@@ -128,6 +142,39 @@ describe('architect-review lens on the review team', () => {
     // ordinary tasks do NOT get the NFR lens
     expect(cap.resolveReviewTeam(MAP, { labels: ['bug'] }, { implementerHarness: 'claude' })
       .providers.some((p) => p.role === 'performance-reviewer')).toBe(false);
+  });
+
+  test('backend tasks add a cross-harness backend-architect reviewer (codex), symmetric with design', () => {
+    for (const label of ['api', 'backend', 'microservice', 'service', 'rest', 'database', 'schema']) {
+      const { providers } = cap.resolveReviewTeam(MAP, { labels: [label] }, { implementerHarness: 'claude' });
+      const rev = providers.find((p) => p.role === 'backend-reviewer');
+      expect(rev).toBeDefined();
+      expect(rev.name).toBe('backend-architect');
+      expect(rev.harness).toBe('codex'); // cross-harness, like the other reviewers
+    }
+    // ordinary tasks do NOT get the backend lens
+    expect(cap.resolveReviewTeam(MAP, { labels: ['bug'] }, { implementerHarness: 'claude' })
+      .providers.some((p) => p.role === 'backend-reviewer')).toBe(false);
+  });
+
+  test('AI/ML tasks add a cross-harness ai/ml reviewer (codex)', () => {
+    for (const label of ['ai', 'llm', 'rag', 'genai', 'embeddings', 'prompt', 'agent']) {
+      const { providers } = cap.resolveReviewTeam(MAP, { labels: [label] }, { implementerHarness: 'claude' });
+      const rev = providers.find((p) => p.role === 'ai-reviewer');
+      expect(rev).toBeDefined();
+      expect(rev.name).toBe('ai-engineer');
+      expect(rev.harness).toBe('codex'); // cross-harness, like the other reviewers
+    }
+    for (const label of ['ml', 'model', 'inference', 'training', 'mlops']) {
+      const { providers } = cap.resolveReviewTeam(MAP, { labels: [label] }, { implementerHarness: 'claude' });
+      const rev = providers.find((p) => p.role === 'ml-reviewer');
+      expect(rev).toBeDefined();
+      expect(rev.name).toBe('ml-engineer');
+      expect(rev.harness).toBe('codex');
+    }
+    // ordinary tasks get neither reviewer
+    const ordinary = cap.resolveReviewTeam(MAP, { labels: ['bug'] }, { implementerHarness: 'claude' }).providers;
+    expect(ordinary.some((p) => p.role === 'ai-reviewer' || p.role === 'ml-reviewer')).toBe(false);
   });
 });
 

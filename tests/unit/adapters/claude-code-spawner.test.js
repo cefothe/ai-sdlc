@@ -74,6 +74,16 @@ describe('makeClaudeSpawner', () => {
     expect(out.approved).toBe(false);
     expect(out.findings).toHaveLength(1);
   });
+
+  test('cwd roots the agent in the worktree; omitted -> process cwd', async () => {
+    const calls = [];
+    const exec = (cmd, args, opts) => { calls.push({ opts }); return JSON.stringify({ result: JSON.stringify({ summary: 'ok' }) }); };
+    const spawn = adapter.makeClaudeSpawner({ exec });
+    await spawn({ type: 'reviewer', provider: { type: 'agent', name: 'code-reviewer' }, prompt: 'r', cwd: '/wt/task-1' });
+    expect(calls[0].opts.cwd).toBe('/wt/task-1');
+    await spawn({ type: 'reviewer', provider: { type: 'agent', name: 'code-reviewer' }, prompt: 'r' });
+    expect('cwd' in calls[1].opts).toBe(false);
+  });
 });
 
 describe('git + gh runners', () => {

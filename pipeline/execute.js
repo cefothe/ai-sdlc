@@ -161,7 +161,7 @@ async function executePipeline(opts) {
       const feedback = review && !review.approved ? formatReviewerFeedback(review) : null;
       const { prompt } = steps.buildDeveloperPrompt({ task, branch, cxpakContext: planText, decisionsContext: decisionsText, capabilityGuidance: capabilities.formatCapabilityGuidance(grants.implement) });
       const devPrompt = feedback ? `${prompt}\n\nPrior review requested changes (address these specifically):\n${feedback}` : prompt;
-      const devReturn = await spawn({ type: 'developer', provider: implementer, tools: capabilities.capabilityToolNames(grants.implement), prompt: devPrompt, iteration: iter });
+      const devReturn = await spawn({ type: 'developer', provider: implementer, tools: capabilities.capabilityToolNames(grants.implement), prompt: devPrompt, iteration: iter, cwd: activeWorktree });
 
       // Step 6 — parse/validate dev return.
       developer = steps.parseDeveloperReturn(devReturn);
@@ -176,13 +176,16 @@ async function executePipeline(opts) {
 
       // Step 7 — build review prompts (promise context is read-only reviewer
       // input); the reviewer roster comes from the resolved CapabilityMap team.
-      const diff = developer.summary || '(diff via commit ' + developer.commitSha + ')';
+      // The reviewer must see the REAL diff (actual changed lines), not the
+      // implementer's self-reported summary — otherwise a cross-harness review
+      // is grading a paraphrase and the independence guarantee is hollow.
+      const diff = steps.computeReviewDiff({ runner, cwd: activeWorktree, baseBranch, commitSha: developer.commitSha, fallbackSummary: developer.summary });
       const { prompts } = steps.buildReviewPrompts({ task, diff, promiseContext, team: reviewTeam ? reviewTeam.providers : undefined, capabilityGuidance: capabilities.formatCapabilityGuidance(grants.review) });
 
       // Dispatch the reviewers — as a Native Team when 3+ (reviewTeam.team).
       const asTeam = reviewTeam ? reviewTeam.team : false;
       const reviewTools = capabilities.capabilityToolNames(grants.review);
-      const verdicts = await Promise.all(prompts.map((p) => spawn({ type: 'reviewer', reviewer: p.reviewer, provider: p.provider, team: asTeam, tools: reviewTools, prompt: p.prompt })));
+      const verdicts = await Promise.all(prompts.map((p) => spawn({ type: 'reviewer', reviewer: p.reviewer, provider: p.provider, team: asTeam, tools: reviewTools, prompt: p.prompt, cwd: activeWorktree })));
 
       // Step 8 — aggregate.
       review = steps.aggregateVerdicts({ verdicts });
