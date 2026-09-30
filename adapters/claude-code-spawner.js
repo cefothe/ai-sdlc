@@ -72,10 +72,14 @@ function parseClaudeResult(stdout) {
 }
 
 function makeClaudeSpawner({ exec = defaultExec, model, timeoutMs = 600000 } = {}) {
-  return async function spawn({ type, provider, prompt, tools }) {
+  return async function spawn({ type, provider, prompt, tools, cwd }) {
     const effectiveProvider = provider || { type: 'agent', name: 'claude' };
     const args = buildClaudeArgs(effectiveProvider, prompt, { model, tools });
-    const stdout = await Promise.resolve(exec('claude', args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 }));
+    // cwd roots the agent in the worktree so the implementer mutates the right
+    // tree and a reviewer can read every file in the change. Omitted -> process cwd.
+    const execOpts = { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 };
+    if (cwd) execOpts.cwd = cwd;
+    const stdout = await Promise.resolve(exec('claude', args, execOpts));
     const payload = parseClaudeResult(stdout);
     // Normalize the minimal shapes the pipeline asserts per stage.
     if (type === 'reviewer' && payload.approved === undefined) {

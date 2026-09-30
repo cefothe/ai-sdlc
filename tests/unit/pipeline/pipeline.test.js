@@ -89,6 +89,62 @@ describe('steps: pure primitives', () => {
     expect(steps.parseDeveloperReturn(validDevReturn).commitSha).toBe('abc123');
   });
 
+  test('computeReviewDiff returns the REAL patch, not the summary', () => {
+    const patch = 'diff --git a/src/a.js b/src/a.js\n+const x = 1;';
+    const stat = 'src/a.js | 1 +';
+    const calls = [];
+    const runner = (args, o) => {
+      calls.push({ args, o });
+      if (args[0] === 'diff' && args[1] === '--stat') return { stdout: stat };
+      if (args[0] === 'diff') return { stdout: patch };
+      return { stdout: '' };
+    };
+    const diff = steps.computeReviewDiff({ runner, cwd: '/wt', baseBranch: 'main', commitSha: 'abc123', fallbackSummary: 'did the thing' });
+    expect(diff).toContain(patch);
+    expect(diff).toContain(stat);
+    expect(diff).not.toContain('did the thing');
+    // diffs against the merge-base range in the worktree cwd
+    expect(calls.some((c) => c.args.join(' ') === 'diff main...HEAD' && c.o && c.o.cwd === '/wt')).toBe(true);
+  });
+
+  test('computeReviewDiff falls back to git show when the range is empty', () => {
+    const runner = (args) => {
+      if (args[0] === 'diff') return { stdout: '' };
+      if (args[0] === 'show' && args.includes('--stat')) return { stdout: ' f | 1 +' };
+      if (args[0] === 'show') return { stdout: 'diff --git a/f b/f\n+y' };
+      return { stdout: '' };
+    };
+    const diff = steps.computeReviewDiff({ runner, cwd: '/wt', commitSha: 'abc123', fallbackSummary: 's' });
+    expect(diff).toContain('+y');
+  });
+
+  test('computeReviewDiff degrades to a labeled summary only when git yields nothing', () => {
+    const runner = () => ({ stdout: '' });
+    const diff = steps.computeReviewDiff({ runner, cwd: '/wt', commitSha: '', fallbackSummary: 'only summary' });
+    expect(diff).toMatch(/NOT the actual diff/);
+    expect(diff).toContain('only summary');
+  });
+
+  test('computeReviewDiff truncates an oversized diff with a marker', () => {
+    const big = 'x'.repeat(50);
+    const runner = (args) => (args[0] === 'diff' && args[1] !== '--stat' ? { stdout: big } : { stdout: '' });
+    const diff = steps.computeReviewDiff({ runner, cwd: '/wt', commitSha: 'a', fallbackSummary: 's', maxChars: 20 });
+    expect(diff).toMatch(/diff truncated at 20 chars/);
+  });
+
+  test('computeReviewDiff survives a throwing runner via captured stdout', () => {
+    const runner = (args) => {
+      if (args[0] === 'diff' && args[1] !== '--stat') {
+        const err = new Error('non-zero exit');
+        err.stdout = 'diff --git a/f b/f\n+z';
+        throw err;
+      }
+      return { stdout: '' };
+    };
+    const diff = steps.computeReviewDiff({ runner, cwd: '/wt', commitSha: 'a', fallbackSummary: 's' });
+    expect(diff).toContain('+z');
+  });
+
   test('setupWorktree enforces Pattern C', () => {
     const runner = fakeRunner();
     expect(() => steps.setupWorktree({ repoDir: '/r', worktreePath: '/wt', branch: 'b', runner, gitState: () => ({ branch: 'feature', clean: true }) })).toThrow(/must be on main/);

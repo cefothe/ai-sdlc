@@ -108,6 +108,16 @@ spec:
         # design time (not just a security review after the code is written).
         - when: { labels: [auth, payment, security, pii] }
           addProvider: { role: security-architect, type: agent, name: security-auditor }
+        # AI/ML architecture lens, FRONT-LOADED like security: LLM/GenAI features
+        # (RAG, agents, prompting, embeddings) get the ai-engineer; classical-ML /
+        # model-serving features get the ml-engineer. These shape the AI-specific
+        # decisions the generic architects miss — retrieval/grounding strategy,
+        # eval harness, model/prompt versioning, training/serving skew, cost/latency
+        # budgets. Advisory panel (claude harness), so no cross-harness constraint.
+        - when: { labels: [ai, llm, rag, genai, embeddings, prompt, agent] }
+          addProvider: { role: ai-architect, type: agent, name: ai-engineer, harness: claude }
+        - when: { labels: [ml, model, inference, training, mlops] }
+          addProvider: { role: ml-architect, type: agent, name: ml-engineer, harness: claude }
 
     # Planning turns the design into an implementation plan (/code-plan skill).
     plan:
@@ -151,6 +161,13 @@ spec:
         # code/test/security reviewers (distinct concern: design integrity).
         - when: { labels: [architecture, refactor] }
           addProvider: { role: architect-reviewer, type: agent, name: code-review-architect, harness: codex }
+        # Backend architecture LENS (cross-harness, codex), symmetric with the
+        # design panel's backend-architect: API/service/schema/data-model changes
+        # get a reviewer focused on service boundaries, API contracts, the data
+        # model, and backend scalability — a concrete backend lens distinct from
+        # architect-reviewer's generic structural-integrity check above.
+        - when: { labels: [api, backend, microservice, service, rest, database, schema] }
+          addProvider: { role: backend-reviewer, type: agent, name: backend-architect, harness: codex }
         # NFR / scale LENS: data-volume / throughput / performance tasks get a
         # reviewer whose job is the non-functional question the generic reviewers
         # miss — peak memory at the stated N, streaming vs batch-all-into-RAM,
@@ -159,6 +176,17 @@ spec:
         # write". Cross-harness (codex) like the other reviewers.
         - when: { labels: [scale, performance, throughput, data, ingestion, realtime, streaming] }
           addProvider: { role: performance-reviewer, type: agent, name: performance-engineer, harness: codex }
+        # AI/ML verification LENS (cross-harness, codex like the other reviewers):
+        # LLM/GenAI changes get an ai-engineer reviewer; classical-ML / model-
+        # serving changes get an ml-engineer reviewer. The concerns the generic
+        # code/test/security reviewers miss — prompt-injection surface, RAG
+        # grounding + retrieval correctness, eval/regression coverage, model I/O
+        # contracts, non-determinism handling, training/serving skew, token/cost
+        # blow-ups. Runs on codex so cross-harness attestation still seals the work.
+        - when: { labels: [ai, llm, rag, genai, embeddings, prompt, agent] }
+          addProvider: { role: ai-reviewer, type: agent, name: ai-engineer, harness: codex }
+        - when: { labels: [ml, model, inference, training, mlops] }
+          addProvider: { role: ml-reviewer, type: agent, name: ml-engineer, harness: codex }
 
     # Tests always run through the test-runner agent.
     test:

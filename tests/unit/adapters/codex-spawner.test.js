@@ -118,6 +118,22 @@ describe('makeCodexSpawner', () => {
     const out = await spawn({ type: 'reviewer', provider: { name: 'code-reviewer', harness: 'codex' }, prompt: 'd' });
     expect(out).toMatchObject({ approved: false, harness: 'codex' });
   });
+
+  test('cwd roots codex in the worktree so a reviewer sees the whole tree', async () => {
+    const calls = [];
+    const exec = (cmd, args, opts) => { calls.push({ opts }); return jsonl('{"approved":true,"findings":[]}'); };
+    const spawn = codex.makeCodexSpawner({ exec });
+    await spawn({ type: 'reviewer', provider: { name: 'r', harness: 'codex' }, prompt: 'd', cwd: '/wt/task-1' });
+    expect(calls[0].opts.cwd).toBe('/wt/task-1');
+  });
+
+  test('no cwd -> exec inherits the process cwd (opts.cwd omitted)', async () => {
+    const calls = [];
+    const exec = (cmd, args, opts) => { calls.push({ opts }); return jsonl('{"approved":true,"findings":[]}'); };
+    const spawn = codex.makeCodexSpawner({ exec });
+    await spawn({ type: 'reviewer', provider: { name: 'r', harness: 'codex' }, prompt: 'd' });
+    expect('cwd' in calls[0].opts).toBe(false);
+  });
 });
 
 describe('makeHarnessSpawner (router)', () => {
