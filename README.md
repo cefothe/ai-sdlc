@@ -574,7 +574,7 @@ Capture must be safe to retry; a duplicate capture returns the original result.
 | `npm run task -- "<title>" --refs a,b,c --ac "..."` | Scaffold a new backlog task (feature) |
 | `npm run validate-schemas` | Lint schemas + validate `.ai-sdlc/` instances |
 | `npm run validate-prd -- docs/prd/<slug>.md` | Check a PRD's structure + approval (gate 8) |
-| `npm run dod -- --file <changed-file>` | Definition-of-Done gate: build + full tests + markers (hard-enforced) |
+| `npm run dod -- --base main` | Definition-of-Done gate: every configured check (concurrent, `paths:`-scoped, optional CI wait) + markers (hard-enforced) |
 | `npm run validate-design -- docs/design/<slug>.md` | Design-doc gate: canonical sections present + links ≥1 ADR |
 | `npm run clarify -- docs/prd/<slug>.md` | Ambiguity gate: block on unresolved open questions (pre-approval) |
 | `npm run analyze -- backlog/tasks/<id>.md [plan]` | Consistency gate: PRD↔plan↔task linkage/coverage (pre-implement) |

@@ -163,13 +163,19 @@ spec:
           provider: { type: agent, name: java-pro, harness: claude }
         - when: { languages: [typescript] }
           provider: { type: agent, name: typescript-pro, harness: claude }
+        - when: { languages: [go] }
+          provider: { type: agent, name: golang-pro, harness: claude }
+        - when: { languages: [rust] }
+          provider: { type: agent, name: rust-pro, harness: claude }
+        - when: { languages: [python] }
+          provider: { type: agent, name: python-pro, harness: claude }
     review:
       team: true
       skill: code-review-pr
       providers:
         - { role: code-reviewer, type: agent, name: code-reviewer, harness: codex }
-        - { role: test-reviewer, type: agent, name: test-automator, harness: codex }
-        - { role: security-reviewer, type: agent, name: security-auditor, harness: codex }
+        - { role: test-reviewer, type: agent, name: test-automator, harness: codex, reasoningEffort: medium }
+        - { role: security-reviewer, type: agent, name: security-auditor, harness: codex, reasoningEffort: medium }
       routing:
         - when: { javaTestFiles: true }
           replaceRole: test-reviewer

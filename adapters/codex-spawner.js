@@ -16,11 +16,12 @@
 //
 //   makeCodexSpawner({ exec, model }) -> async spawn({ type, provider, prompt })
 //
-// `exec(cmd, args, opts) -> stdout` is injected (default execFileSync) so the
-// adapter is unit-testable without a real Codex install (CI / contributor
-// laptops never invoke codex).
+// `exec(cmd, args, opts) -> stdout | Promise<stdout>` is injected (default: the
+// non-blocking asyncExec, so parallel reviewers really overlap) so the adapter is
+// unit-testable without a real Codex install (CI / contributor laptops never
+// invoke codex).
 
-const { execFileSync } = require('node:child_process');
+const { asyncExec } = require('./async-exec');
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min, matches the claude spawner
 // No forced default model. On a ChatGPT-login account Codex FIXES the model by
@@ -33,10 +34,9 @@ const DEFAULT_MODEL = undefined;
 // `-c model_reasoning_effort=<v>`. Codex defaults to `none`; reviewers benefit
 // from more. Unset here -> codex default; callers opt in (e.g. 'high' for review).
 const DEFAULT_REASONING_EFFORT = undefined;
+const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
-function defaultExec(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { encoding: 'utf8', ...opts });
-}
+const defaultExec = asyncExec;
 
 // Short per-stage role context prepended to the pipeline-built prompt. The user
 // prompt already carries the task spec / diff / JSON return contract; these lines
@@ -71,7 +71,10 @@ function buildCodexArgs(provider, prompt, { model = DEFAULT_MODEL, reasoningEffo
   const box = sandbox || (type === 'developer' ? 'workspace-write' : 'read-only');
   const args = ['exec', finalPrompt, '--json', '--skip-git-repo-check', '-s', box];
   if (model) args.push('-m', model); // omitted -> codex uses the account default
-  if (reasoningEffort) args.push('-c', `model_reasoning_effort="${reasoningEffort}"`);
+  if (reasoningEffort) {
+    if (!REASONING_EFFORTS.includes(reasoningEffort)) throw new Error(`unknown codex reasoning effort "${reasoningEffort}" (expected one of ${REASONING_EFFORTS.join('/')})`);
+    args.push('-c', `model_reasoning_effort="${reasoningEffort}"`);
+  }
   return args;
 }
 
@@ -146,7 +149,11 @@ function normalizeReviewerVerdict(parsed, provider) {
 function makeCodexSpawner({ exec = defaultExec, model = DEFAULT_MODEL, reasoningEffort = DEFAULT_REASONING_EFFORT, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   return async function spawn({ type, provider, prompt, sandbox, cwd }) {
     const effectiveProvider = provider || { type: 'agent', name: 'codex' };
-    const args = buildCodexArgs(effectiveProvider, prompt, { model, reasoningEffort, type, sandbox });
+    // A provider may pin its own effort in capabilities.yaml (e.g. the primary
+    // code-reviewer at high, test/security lenses at medium); the spawner-level
+    // effort is the fallback for providers that don't.
+    const effort = effectiveProvider.reasoningEffort || reasoningEffort;
+    const args = buildCodexArgs(effectiveProvider, prompt, { model, reasoningEffort: effort, type, sandbox });
     // input:'' closes Codex's stdin immediately so headless `codex exec` does not
     // block waiting for piped input (it reads the prompt from argv instead).
     // cwd roots Codex in the worktree so a read-only reviewer can inspect every
@@ -163,6 +170,6 @@ function makeCodexSpawner({ exec = defaultExec, model = DEFAULT_MODEL, reasoning
 
 module.exports = {
   makeCodexSpawner, buildCodexArgs, parseCodexResult, tryParseJson,
-  normalizeReviewerVerdict, defaultExec, CODEX_SYSTEM_PROMPTS,
+  normalizeReviewerVerdict, defaultExec, CODEX_SYSTEM_PROMPTS, REASONING_EFFORTS,
   DEFAULT_CODEX_MODEL: DEFAULT_MODEL, // undefined -> codex account default
 };

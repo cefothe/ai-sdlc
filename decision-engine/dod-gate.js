@@ -8,10 +8,30 @@
 // showed degrades quality). The DoD gate is OBJECTIVE — the build compiles or it
 // doesn't, tests pass or they don't — and it blocks the PIPELINE, not the author.
 // Objective pass/fail is safe to enforce from day one.
+//
+// Speed. The gate is on the critical path of every task (and re-runs on every
+// informed retry), so it must not replay a whole monorepo matrix serially:
+//   - every runnable check under spec.checks runs CONCURRENTLY
+//     (spec.concurrency caps it; default: all at once)
+//   - a check with `paths: [glob…]` is SKIPPED when no changed file matches it
+//     (unknown changed set -> it runs; never silently skipped)
+//   - commands receive AI_SDLC_BASE + AI_SDLC_CHANGED_FILES so a project can
+//     build/test only the affected packages
+//   - `type: github-checks` delegates to CI instead of rebuilding locally
+//     (ci-checks.js: opt-in push + draft PR, then wait for the PR's checks)
+//   - `timeoutMinutes` bounds a command; the whole process group is killed
+//
+//   checks:
+//     build:  { command: "make validate-affected", enforced: true }
+//     smoke:  { command: "make smoke", paths: [deploy/, migrations/], timeoutMinutes: 30 }
+//     ci:     { type: github-checks, push: true, draftPr: true, timeoutMinutes: 60 }
+//     markers: { enforced: true }
 
 const { readFileSync, existsSync } = require('node:fs');
 const { join } = require('node:path');
 const yaml = require('js-yaml');
+const { filterByGlobs } = require('./path-glob');
+const { waitForGithubChecks } = require('./ci-checks');
 
 const MARKER_RE = /\b(TODO|FIXME|HACK|XXX)\b/;
 
@@ -44,40 +64,115 @@ function loadDodConfig(path) {
   };
 }
 
-// Default command runner — spawnSync. Injected in tests so no real build/tests run.
-function defaultRunCommand(command, projectRoot) {
-  const { spawnSync } = require('node:child_process');
-  const res = spawnSync(command, { shell: true, cwd: projectRoot, encoding: 'utf8' });
-  return { code: res.status == null ? 1 : res.status, stdout: res.stdout || '', stderr: res.stderr || '' };
+// Check names with dedicated semantics; every OTHER key under spec.checks that
+// carries a `command` (or `type: github-checks`) is a runnable check — so a
+// project can declare `catalog-integration`, `smoke`, … alongside build/test and
+// the gate actually runs them (it used to silently ignore anything but build/test).
+const RESERVED_CHECKS = new Set(['markers', 'outcomes']);
+
+// Default command runner — non-blocking `sh -c` so independent checks overlap.
+// Never rejects: a failed/timed-out command resolves to a non-zero code.
+async function defaultRunCommand(command, projectRoot, { env, timeoutMs } = {}) {
+  const { asyncExec } = require('../adapters/async-exec');
+  try {
+    const stdout = await asyncExec('sh', ['-c', command], {
+      cwd: projectRoot, env: { ...process.env, ...(env || {}) }, timeout: timeoutMs || 0, killTree: true, maxBuffer: 256 * 1024 * 1024,
+    });
+    return { code: 0, stdout, stderr: '' };
+  } catch (err) {
+    return { code: typeof err.code === 'number' ? err.code : 1, stdout: err.stdout || '', stderr: err.stderr || err.message };
+  }
+}
+
+// Default process runner for the github-checks check (git/gh, argv form).
+async function defaultProc(cmd, args, { cwd } = {}) {
+  const { asyncExec } = require('../adapters/async-exec');
+  try {
+    return { code: 0, stdout: await asyncExec(cmd, args, { cwd }), stderr: '' };
+  } catch (err) {
+    return { code: typeof err.code === 'number' ? err.code : 1, stdout: err.stdout || '', stderr: err.stderr || err.message };
+  }
+}
+
+// Run async thunks with at most `limit` in flight; results keep input order.
+async function runPool(thunks, limit) {
+  const results = new Array(thunks.length);
+  let next = 0;
+  const width = Math.max(1, Math.min(limit || thunks.length, thunks.length));
+  async function lane() {
+    while (next < thunks.length) {
+      const i = next++;
+      results[i] = await thunks[i]();
+    }
+  }
+  await Promise.all(Array.from({ length: width }, lane));
+  return results;
+}
+
+function runnableChecks(checks) {
+  return Object.entries(checks || {}).filter(([name, cfg]) =>
+    !RESERVED_CHECKS.has(name) && cfg && (cfg.command != null || cfg.type === 'github-checks'));
 }
 
 // Evaluate the Definition of Done.
 //   projectRoot   working dir for the commands
 //   config        DodConfig (loadDodConfig)
-//   runCommand    (command, projectRoot) => { code, stdout, stderr }  (injectable)
-//   changedFiles  optional string[] of paths to scan for markers (+ readFile via `read`)
+//   runCommand    (command, projectRoot, { env, timeoutMs }) => { code, stdout, stderr } | Promise  (injectable)
+//   proc          (cmd, args, { cwd }) => Promise<{ code, stdout, stderr }>  (github-checks; injectable)
+//   changedFiles  string[] of changed paths: scanned for markers, matched against a
+//                 check's `paths:` scope, and exported to commands. Empty = unknown,
+//                 in which case every check runs (fail-safe, never silently skips).
+//   base          diff base ref, exported to commands as AI_SDLC_BASE
 //   read          (path) => string   (injectable file reader, default fs)
-function evaluateDod({ projectRoot = process.cwd(), config = DEFAULT_CONFIG, runCommand = defaultRunCommand, changedFiles = [], read } = {}) {
+//   sleep / now   injectable clock for github-checks polling
+async function evaluateDod({
+  projectRoot = process.cwd(), config = DEFAULT_CONFIG, runCommand = defaultRunCommand, proc = defaultProc,
+  changedFiles = [], base, read, sleep, now,
+} = {}) {
   const spec = config.spec || DEFAULT_CONFIG.spec;
   const mode = spec.enforcementMode || 'enforce';
   const readFile = read || ((p) => readFileSync(join(projectRoot, p), 'utf8'));
-  const checks = [];
+  const scoped = Array.isArray(changedFiles) && changedFiles.length > 0;
+  const env = {
+    ...(base ? { AI_SDLC_BASE: base } : {}),
+    ...(scoped ? { AI_SDLC_CHANGED_FILES: changedFiles.join('\n') } : {}),
+  };
 
-  const runCmdCheck = (name, cfg) => {
-    if (!cfg || cfg.command == null) return;
-    const r = runCommand(cfg.command, projectRoot);
+  const runOne = async (name, cfg) => {
+    const enforced = cfg.enforced !== false;
+    if (scoped && Array.isArray(cfg.paths) && cfg.paths.length) {
+      const hit = filterByGlobs(changedFiles, cfg.paths);
+      if (hit.length === 0) {
+        return { name, enforced, passed: true, skipped: true, finding: `skipped — no changed file under ${cfg.paths.join(', ')}` };
+      }
+    }
+    const timeoutMs = cfg.timeoutMinutes ? cfg.timeoutMinutes * 60 * 1000 : undefined;
+    const t0 = Date.now();
+    if (cfg.type === 'github-checks') {
+      const r = await waitForGithubChecks({
+        proc, cwd: projectRoot, push: cfg.push === true, draftPr: cfg.draftPr === true, baseBranch: cfg.baseBranch || 'main',
+        ...(timeoutMs ? { timeoutMs } : {}),
+        ...(cfg.intervalSeconds ? { intervalMs: cfg.intervalSeconds * 1000 } : {}),
+        ...(cfg.appearTimeoutSeconds ? { appearTimeoutMs: cfg.appearTimeoutSeconds * 1000 } : {}),
+        ...(sleep ? { sleep } : {}), ...(now ? { now } : {}),
+      });
+      return { name, enforced, passed: r.passed, finding: r.finding, output: r.passed ? undefined : r.output, durationMs: Date.now() - t0 };
+    }
+    const r = await runCommand(cfg.command, projectRoot, { env, timeoutMs });
     const passed = r.code === 0;
-    checks.push({
+    return {
       name,
-      enforced: cfg.enforced !== false,
+      enforced,
       passed,
       finding: passed ? `\`${cfg.command}\` passed` : `\`${cfg.command}\` failed (exit ${r.code})`,
       output: passed ? undefined : (r.stderr || r.stdout || '').split('\n').slice(-8).join('\n'),
-    });
+      durationMs: Date.now() - t0,
+    };
   };
 
-  runCmdCheck('build', spec.checks.build);
-  runCmdCheck('test', spec.checks.test);
+  // Independent checks run concurrently (spec.concurrency caps it; default all).
+  const entries = runnableChecks(spec.checks);
+  const checks = await runPool(entries.map(([name, cfg]) => () => runOne(name, cfg)), spec.concurrency);
 
   // Markers — no TODO/FIXME/HACK/XXX in the changed files.
   const markersCfg = spec.checks.markers;
@@ -128,20 +223,38 @@ function evaluateDod({ projectRoot = process.cwd(), config = DEFAULT_CONFIG, run
   return { passed, mode, checks, advisory, reasons, blocked: mode === 'enforce' && failedEnforced.length > 0 };
 }
 
-module.exports = { evaluateDod, loadDodConfig, DEFAULT_CONFIG, MARKER_RE };
+// Changed files on this branch relative to `base` (merge-base diff, i.e. what a
+// PR against base would contain). Throws if git fails — the CLI reports it.
+function changedFilesSince(base, cwd = process.cwd()) {
+  const { execFileSync } = require('node:child_process');
+  const out = execFileSync('git', ['diff', '--name-only', '--diff-filter=d', `${base}...HEAD`], { cwd, encoding: 'utf8' });
+  return out.split('\n').map((l) => l.trim()).filter(Boolean);
+}
 
-// CLI: node decision-engine/dod-gate.js [--config path] [--file a.ts --file b.ts]
+module.exports = { evaluateDod, loadDodConfig, changedFilesSince, runPool, DEFAULT_CONFIG, MARKER_RE, RESERVED_CHECKS };
+
+// CLI: node decision-engine/dod-gate.js [--config path] [--base ref] [--file a.ts --file b.ts]
+//   --base ref   derive the changed files from `git diff ref...HEAD` (used when no
+//                --file is given) and export AI_SDLC_BASE to every check command.
 if (require.main === module) {
   const argv = process.argv.slice(2);
   const files = [];
   let cfgPath = '.ai-sdlc/dod-config.yaml';
+  let base;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--config') cfgPath = argv[++i];
     else if (argv[i] === '--file') files.push(argv[++i]);
+    else if (argv[i] === '--base') base = argv[++i];
   }
-  try {
-    const res = evaluateDod({ config: loadDodConfig(cfgPath), changedFiles: files });
-    for (const c of res.checks) console.log(`${c.passed ? 'PASS' : 'FAIL'}  ${c.name}  ${c.finding}`);
+  (async () => {
+    const changedFiles = files.length || !base ? files : changedFilesSince(base);
+    const res = await evaluateDod({ config: loadDodConfig(cfgPath), changedFiles, base });
+    for (const c of res.checks) {
+      const status = c.skipped ? 'SKIP' : c.passed ? 'PASS' : 'FAIL';
+      const took = c.durationMs != null ? ` (${Math.round(c.durationMs / 1000)}s)` : '';
+      console.log(`${status}  ${c.name}  ${c.finding}${took}`);
+      if (!c.passed && c.output) console.log(c.output.split('\n').map((l) => `      ${l}`).join('\n'));
+    }
     for (const a of res.advisory || []) console.log(`ADVISORY  ${a.code}  ${a.message}`);
     if (res.blocked) {
       console.error(`\nDoD BLOCKED — not Done. Fix and re-run:\n  - ${res.reasons.join('\n  - ')}`);
@@ -149,8 +262,8 @@ if (require.main === module) {
     }
     console.log('\nDoD passed — task may be marked Done.');
     process.exit(0);
-  } catch (err) {
+  })().catch((err) => {
     console.error(`dod-gate failed: ${err.message}`);
     process.exit(1);
-  }
+  });
 }

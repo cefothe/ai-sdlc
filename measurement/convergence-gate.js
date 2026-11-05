@@ -36,9 +36,9 @@ const { evaluateClarity } = require(path.join(ROOT, 'decision-engine', 'clarify-
 const { evaluateConsistency } = require(path.join(ROOT, 'decision-engine', 'analyze-gate.js'));
 const { evaluateDesign } = require(path.join(ROOT, 'decision-engine', 'design-gate.js'));
 
-function check(name, fn) {
+async function check(name, fn) {
   try {
-    const detail = fn();
+    const detail = await fn();
     return { name, ok: true, detail: detail || 'ok' };
   } catch (err) {
     return { name, ok: false, detail: err.message };
@@ -49,16 +49,16 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
-function runChecks() {
+async function runChecks() {
   const checks = [];
 
-  checks.push(check('schemas + instances validate', () => {
+  checks.push(await check('schemas + instances validate', () => {
     const res = validator.run({ configDir: path.join(ROOT, '.ai-sdlc') });
     assert(res.ok, [...res.errors, ...res.instanceErrors].join('; '));
     return `${Object.keys(res.schemas).length} schemas`;
   }));
 
-  checks.push(check('advisory promise gate never blocks (R5/R15 guardrail)', () => {
+  checks.push(await check('advisory promise gate never blocks (R5/R15 guardrail)', () => {
     const advisory = { kind: 'QualityGate', spec: { gates: [{ name: 'promise-verification', enforcement: 'advisory', rule: { metric: 'promise.broken_count', operator: '==', threshold: 0 } }] } };
     const g = evaluatePromiseGate([{ promise_id: 'error-handling', result: 'broken' }], { config: advisory });
     assert(g.passed === false, 'expected the gate to detect the broken promise');
@@ -66,7 +66,7 @@ function runChecks() {
     return 'advisory reports, never blocks';
   }));
 
-  checks.push(check('Pattern C enforced (worktree refused off base branch)', () => {
+  checks.push(await check('Pattern C enforced (worktree refused off base branch)', () => {
     let threw = false;
     try {
       steps.setupWorktree({ repoDir: '/r', worktreePath: '/wt', branch: 'b', baseBranch: 'main', runner: () => ({ stdout: '' }), gitState: () => ({ branch: 'feature', clean: true }) });
@@ -77,14 +77,14 @@ function runChecks() {
     return 'parent tree stays read-only on base branch';
   }));
 
-  checks.push(check('DoR enforce refuses an undecided task', () => {
+  checks.push(await check('DoR enforce refuses an undecided task', () => {
     const task = parseTask('---\nid: X\ntitle: t\nstatus: To Do\nreferences:\n  - does/not/exist.md\n---\nno criteria');
     const r = evaluateDor(task, { projectRoot: ROOT, config: { spec: { evaluationMode: 'enforce', autoPassRules: [] } } });
     assert(r.admitted === false, 'an undecided task must not be admitted in enforce mode');
     return `verdict=${r.verdict}`;
   }));
 
-  checks.push(check('capability map resolves + is cross-harness-safe', () => {
+  checks.push(await check('capability map resolves + is cross-harness-safe', () => {
     const map = caps.loadCapabilityMap(path.join(ROOT, '.ai-sdlc', 'capabilities.yaml'));
     const plan = caps.resolvePlanStage(map, {});
     const impl = caps.resolveImplementer(map, {});
@@ -99,15 +99,15 @@ function runChecks() {
     return `plan=${plan.name}, implement=${impl.name}, review team of ${team.providers.length}`;
   }));
 
-  checks.push(check('DoD gate BLOCKS a red build/test, PASSES when green (hard-enforced exit)', () => {
-    const red = evaluateDod({ config: DOD_DEFAULT, runCommand: () => ({ code: 1, stderr: 'fail' }) });
+  checks.push(await check('DoD gate BLOCKS a red build/test, PASSES when green (hard-enforced exit)', async () => {
+    const red = await evaluateDod({ config: DOD_DEFAULT, runCommand: () => ({ code: 1, stderr: 'fail' }) });
     assert(red.blocked === true, 'DoD must BLOCK when build/tests fail — the exit gate would be useless otherwise');
-    const green = evaluateDod({ config: DOD_DEFAULT, runCommand: () => ({ code: 0 }) });
+    const green = await evaluateDod({ config: DOD_DEFAULT, runCommand: () => ({ code: 0 }) });
     assert(green.passed === true && green.blocked === false, 'DoD must pass when build + tests are green');
     return 'red→blocked, green→pass';
   }));
 
-  checks.push(check('PRD gate refuses a draft/unapproved PRD (human sign-off enforced)', () => {
+  checks.push(await check('PRD gate refuses a draft/unapproved PRD (human sign-off enforced)', () => {
     const draft = ['---', 'status: draft', '---', '# PRD',
       '## Problem', 'x', '## Target user', 'x', '## Success metrics', '+5pp',
       '## Scope', 'x', '## Acceptance criteria', '- [ ] a', '## Open questions', 'None.'].join('\n');
@@ -117,20 +117,20 @@ function runChecks() {
     return 'draft blocked';
   }));
 
-  checks.push(check('clarify gate blocks unresolved open questions', () => {
+  checks.push(await check('clarify gate blocks unresolved open questions', () => {
     const md = ['---', 'status: draft', '---', '# PRD', '## Open questions', '- What is the retry policy?'].join('\n');
     const r = evaluateClarity(md);
     assert(r.clear === false && r.unresolvedQuestions.length > 0, 'clarify must block a PRD with unresolved questions');
     return 'unresolved → not clear';
   }));
 
-  checks.push(check('analyze gate blocks an inconsistent task (no PRD link / no ACs)', () => {
+  checks.push(await check('analyze gate blocks an inconsistent task (no PRD link / no ACs)', () => {
     const r = evaluateConsistency({ task: { frontmatter: {}, acceptanceCriteria: [] } });
     assert(r.consistent === false, 'analyze must block a task with no specRef and no acceptance criteria');
     return 'inconsistent blocked';
   }));
 
-  checks.push(check('design gate requires the design doc to link >=1 ADR', () => {
+  checks.push(await check('design gate requires the design doc to link >=1 ADR', () => {
     const noAdr = ['---', 'status: approved', '---', '# Design',
       '## Context', 'x', '## Architecture', 'x', '## Data model', 'x', '## Interfaces', 'x',
       '## Data flow', 'x', '## Decisions', 'none yet', '## Risks', 'x', '## Test strategy', 'x'].join('\n');
@@ -139,7 +139,7 @@ function runChecks() {
     return 'no-ADR design blocked';
   }));
 
-  checks.push(check('cross-harness attestation rejects collusion', () => {
+  checks.push(await check('cross-harness attestation rejects collusion', () => {
     const kp = att.generateKeypair();
     const env = att.signEnvelope({ commitSha: 'a'.repeat(40), headSha: 'x', privateKeyPem: kp.privateKeyPem, now: '2026-07-17T21:00:00Z', leaves: [{ reviewerName: 'code-reviewer', transcript: 't' }] });
     const trusted = { byName: new Map([['code-reviewer', { harness: 'codex', publicKeyPem: kp.publicKeyPem }]]), keys: [kp.publicKeyPem] };
@@ -156,10 +156,14 @@ function runChecks() {
 module.exports = { runChecks };
 
 if (require.main === module) {
-  const { ok, checks } = runChecks();
-  for (const c of checks) console.log(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name} — ${c.detail}`);
-  console.log(ok
-    ? 'convergence gate PASSED — architecture invariants intact. (Statistical quality A/B runs separately via measurement/mt-executor.js --promise.)'
-    : 'convergence gate FAILED — an architecture invariant regressed. See FAIL lines above.');
-  process.exit(ok ? 0 : 1);
+  runChecks().then(({ ok, checks }) => {
+    for (const c of checks) console.log(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name} — ${c.detail}`);
+    console.log(ok
+      ? 'convergence gate PASSED — architecture invariants intact. (Statistical quality A/B runs separately via measurement/mt-executor.js --promise.)'
+      : 'convergence gate FAILED — an architecture invariant regressed. See FAIL lines above.');
+    process.exit(ok ? 0 : 1);
+  }).catch((err) => {
+    console.error(`convergence gate crashed: ${err.message}`);
+    process.exit(1);
+  });
 }

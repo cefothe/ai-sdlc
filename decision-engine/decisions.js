@@ -110,27 +110,98 @@ function listDecisions(root, { lifecycle } = {}) {
   return filtered.sort((a, b) => a.metadata.id.localeCompare(b.metadata.id));
 }
 
-// Select the ADRs an implementer must honor for a task: every project-scope
-// decision (foundational constraints that apply to any change) plus any DEC id
-// the task explicitly references (its refs / specRef / description / body / ACs,
-// which reach the linked design doc's decisions). Excludes non-constraining
-// lifecycles (open/deferred/superseded/archived). This is the seam that turns
-// recorded design decisions into IMPLEMENTATION context, not just an admission
-// gate — "look at the ADRs for references" at build time.
+// Select the ADRs an implementer must honor for a task. Excludes non-
+// constraining lifecycles (open/deferred/superseded/archived). This is the seam
+// that turns recorded design decisions into IMPLEMENTATION context, not just an
+// admission gate — "look at the ADRs for references" at build time.
+//
+// Relevance filter. Injecting EVERY project-scope ADR into every plan /
+// implementer / parallel-worker / retry prompt does not scale: a repo with ~100
+// project ADRs pays ~10k tokens per dispatch, most of them about unrelated
+// features. A project-scope decision is kept when it is:
+//   - referenced by the task (DEC id in refs/references/specRef/description/ACs/body)
+//   - foundational — not sourced from a specific feature's design session
+//     (metadata.source other than `design:<slug>`, e.g. design-panel, ad-hoc)
+//   - from the task's own feature (`design:<slug>` where the slug is the task's
+//     feature / a referenced docs/design|prd/<slug>.md / a referenced DEC's feature)
+//   - lexically related: shares >= minOverlap significant terms with the task
+//     (top maxRelated by overlap)
+// Everything else is OMITTED — returned separately so the prompt can list the ids
+// (cheap) and the agent can open one if its change reaches that area.
+// `relevance: false` restores the legacy "all project-scope" behavior.
 const IMPLEMENTATION_LIFECYCLES = ['proposed', 'answered'];
+const FEATURE_SOURCE_RE = /^design:(.+)$/;
+const DOC_SLUG_RE = /docs\/(?:design|prd)\/([^/\s]+?)\.md/g;
+const STOPWORDS = new Set([
+  'that', 'this', 'with', 'from', 'into', 'than', 'then', 'they', 'them', 'their', 'there', 'these', 'those',
+  'when', 'where', 'which', 'while', 'will', 'would', 'should', 'could', 'must', 'have', 'been', 'being',
+  'each', 'every', 'only', 'also', 'more', 'most', 'other', 'over', 'under', 'per', 'via', 'and', 'the',
+  'for', 'not', 'are', 'but', 'any', 'all', 'one', 'two', 'use', 'used', 'uses', 'using', 'task', 'decision',
+  'never', 'always', 'none', 'material', 'reference', 'implement', 'implementation', 'support', 'existing',
+  'epic', 'superseded', 'done', 'todo',
+]);
 
-function selectDecisionsForTask(root, task = {}, { lifecycles = IMPLEMENTATION_LIFECYCLES } = {}) {
-  const all = listDecisions(root).filter((d) => d.status && lifecycles.includes(d.status.lifecycle));
-  const fm = (task && task.frontmatter) || {};
-  const blob = JSON.stringify([fm.refs, fm.specRef, fm.description, fm.feature, task.acceptanceCriteria, task.body]);
-  const referenced = new Set(blob.match(/DEC-\d{4}/g) || []);
-  return all.filter((d) => {
-    const m = d.metadata || {};
-    return m.scope === 'project' || referenced.has(m.id);
-  });
+function terms(text) {
+  const out = new Set();
+  for (const w of String(text || '').toLowerCase().match(/[a-z][a-z0-9_-]{3,}/g) || []) {
+    if (!STOPWORDS.has(w)) out.add(w);
+  }
+  return out;
 }
 
-module.exports = { newDecision, answerDecision, writeDecision, loadDecision, listDecisions, selectDecisionsForTask, nextId, storeDir, STORE_REL, LIFECYCLES, IMPLEMENTATION_LIFECYCLES };
+function featureOf(decision) {
+  const m = FEATURE_SOURCE_RE.exec(((decision && decision.metadata) || {}).source || '');
+  return m ? m[1] : null;
+}
+
+function taskBlob(task) {
+  const fm = (task && task.frontmatter) || {};
+  return JSON.stringify([fm.refs, fm.references, fm.specRef, fm.description, fm.feature, task.acceptanceCriteria, task.body]);
+}
+
+function partitionDecisionsForTask(root, task = {}, { lifecycles = IMPLEMENTATION_LIFECYCLES, relevance = true, minOverlap = 3, maxRelated = 15 } = {}) {
+  const live = listDecisions(root).filter((d) => d.status && lifecycles.includes(d.status.lifecycle));
+  const fm = (task && task.frontmatter) || {};
+  const blob = taskBlob(task);
+  const referenced = new Set(blob.match(/DEC-\d{4}/g) || []);
+  const isReferenced = (d) => referenced.has((d.metadata || {}).id);
+  const candidates = live.filter((d) => (d.metadata || {}).scope === 'project' || isReferenced(d));
+  if (!relevance) return { selected: candidates, omitted: [] };
+
+  const features = new Set();
+  if (fm.feature) features.add(String(fm.feature));
+  for (const m of blob.matchAll(DOC_SLUG_RE)) features.add(m[1]);
+  for (const d of live) if (isReferenced(d) && featureOf(d)) features.add(featureOf(d));
+
+  const taskTerms = terms([fm.title, (fm.labels || []).join(' '), blob].join(' '));
+  const selected = [];
+  const related = [];
+  const omitted = [];
+  for (const d of candidates) {
+    const feature = featureOf(d);
+    if (isReferenced(d) || !feature || features.has(feature)) {
+      selected.push(d);
+      continue;
+    }
+    const s = d.spec || {};
+    let overlap = 0;
+    for (const t of terms([s.summary, s.context].join(' '))) if (taskTerms.has(t)) overlap++;
+    if (overlap >= minOverlap) related.push({ d, overlap });
+    else omitted.push(d);
+  }
+  related.sort((a, b) => b.overlap - a.overlap || a.d.metadata.id.localeCompare(b.d.metadata.id));
+  selected.push(...related.slice(0, maxRelated).map((r) => r.d));
+  omitted.push(...related.slice(maxRelated).map((r) => r.d));
+
+  const byId = (a, b) => a.metadata.id.localeCompare(b.metadata.id);
+  return { selected: selected.sort(byId), omitted: omitted.sort(byId) };
+}
+
+function selectDecisionsForTask(root, task = {}, opts = {}) {
+  return partitionDecisionsForTask(root, task, opts).selected;
+}
+
+module.exports = { newDecision, answerDecision, writeDecision, loadDecision, listDecisions, selectDecisionsForTask, partitionDecisionsForTask, nextId, storeDir, STORE_REL, LIFECYCLES, IMPLEMENTATION_LIFECYCLES };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);

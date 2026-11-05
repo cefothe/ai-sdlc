@@ -41,10 +41,12 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
 3b. **Load the architectural decisions (ADRs).** The design-time decisions are
    CONSTRAINTS on this build, not just an admission gate — carry them into the plan
    (step 4) and the implementer (step 5) so the code honors the recorded architecture
-   instead of re-deriving or contradicting it. Read the project-scope decisions plus
-   any the task references:
+   instead of re-deriving or contradicting it. Render the **relevant** decisions —
+   task-referenced, foundational (not from a single feature's design), the task's own
+   feature, and lexically related ones; unrelated project ADRs are listed by id only
+   (injecting all ~100 project ADRs into every prompt cost ~10k tokens per dispatch):
    ```bash
-   node -e "const R=process.env.CLAUDE_PLUGIN_ROOT;const{loadTaskFile}=require(R+'/decision-engine/backlog-task');const{selectDecisionsForTask}=require(R+'/decision-engine/decisions');const t=loadTaskFile(process.argv[1]);for(const d of selectDecisionsForTask(process.cwd(),t)){const s=d.status||{};console.log(\`\${d.metadata.id} [\${s.lifecycle}/\${d.metadata.scope}] \${d.spec.summary}\${s.answeredOptionId?' (chosen: '+s.answeredOptionId+')':''}\`)}" "backlog/tasks/$1"*.md
+   node -e "const R=process.env.CLAUDE_PLUGIN_ROOT;const{loadTaskFile}=require(R+'/decision-engine/backlog-task');const{partitionDecisionsForTask}=require(R+'/decision-engine/decisions');const{formatDecisionsContext}=require(R+'/pipeline/steps');const t=loadTaskFile(process.argv[1]);console.log(formatDecisionsContext(partitionDecisionsForTask(process.cwd(),t))||'(no ADRs)')" "backlog/tasks/$1"*.md
    ```
    Pass these into the plan and implementer prompts as "Architectural decisions
    (ADRs) — CONSTRAINTS: honor them, cite the DEC id where you implement one, and if
@@ -139,6 +141,18 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
      findings.
    - `TeamDelete` the team.
 
+   **Codex-harness reviewers** (`harness: codex`) do not run through the Task tool —
+   dispatch each one through the bridge so it genuinely runs on Codex, **all in
+   parallel** (one `Bash` call per reviewer with `run_in_background: true`, sent in a
+   single message; wait for all completions — never one after another):
+   ```bash
+   printf '%s' "$REVIEW_PROMPT" | node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-dispatch.mjs" \
+     --type reviewer --role <role> --name <name> --cwd .worktrees/$1 \
+     --reasoning-effort <provider.reasoningEffort or high>
+   ```
+   Use the provider's `reasoningEffort` from capabilities.yaml (secondary lenses at
+   `medium` finish much faster); default `high` when unset.
+
    When `useTeam` is false (1–2 reviewers), just dispatch parallel `Task` calls.
    Either way, feed each reviewer the diff plus the advisory promise-verification
    findings as read-only context. If CHANGES_REQUESTED, re-dispatch the
@@ -148,13 +162,18 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    in `steps.capabilities.design.teamPlan`.
 
 6b. **Validate (Definition-of-Done gate — HARD ENFORCED).** Before finalizing, run
-   the DoD gate over the branch's changed files:
+   the DoD gate from the worktree against the base branch:
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/dod-gate.js" --config .ai-sdlc/dod-config.yaml \
-     $(git diff --name-only ${1:+main}...HEAD | sed 's/^/--file /')
+   (cd .worktrees/$1 && node "${CLAUDE_PLUGIN_ROOT}/decision-engine/dod-gate.js" \
+     --config .ai-sdlc/dod-config.yaml --base main)
    ```
-   It runs the project's **build** and **full test suite** (each must pass) and scans
-   for incomplete-work markers. **If it exits non-zero (BLOCKED), STOP** — do NOT flip
+   It runs **every** check declared in dod-config (build, test, and any extra named
+   check) **concurrently**, skips a check whose `paths:` scope no changed file
+   touches, exports `AI_SDLC_BASE` / `AI_SDLC_CHANGED_FILES` so a project command can
+   build/test only what changed, and scans changed files for incomplete-work markers.
+   A `type: github-checks` check delegates to CI: (opt-in) pushes the branch, opens a
+   **draft** PR, and waits for the PR's checks — run it with `run_in_background: true`
+   and wait for completion rather than blocking the session. **If it exits non-zero (BLOCKED), STOP** — do NOT flip
    status to Done, do NOT open the PR. Route the failures back to the implementer as an
    informed retry and re-run until the gate passes. There is no override in enforce
    mode: a task with a red build or failing tests is not Done. (Objective gate — blocks
@@ -165,7 +184,9 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    task file to `backlog/completed/`, sign the attestation, and remove the
    sentinel.
 
-8. **PR (human in the loop).** Push the branch and open the PR (`gh pr create`).
+8. **PR (human in the loop).** Push the branch and open the PR (`gh pr create`). If
+   the DoD `github-checks` gate already opened a **draft** PR for this branch, don't
+   create a second one — `gh pr ready` it and add the reviewer (`gh pr edit --add-reviewer`).
    You never merge. Always put a human on the PR:
    - request a reviewer — `gh pr create --reviewer <handle>` (or the `CODEOWNERS`
      owner is auto-requested on protected repos), and

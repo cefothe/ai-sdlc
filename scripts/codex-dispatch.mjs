@@ -9,7 +9,11 @@
 //
 // Usage (prompt on stdin):
 //   printf '%s' "$PROMPT" | node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-dispatch.mjs" \
-//     --type design --role solution-architect-codex --name architect-review
+//     --type design --role solution-architect-codex --name architect-review \
+//     [--reasoning-effort high|medium|…] [--cwd <worktree>]
+//
+// --cwd roots Codex in the task worktree so a reviewer can read every file in
+// the change. Several invocations can run concurrently (one per reviewer).
 //
 // Prints the agent's proposal text to stdout (prose for design/plan; JSON for a
 // reviewer). Exit 1 on dispatch failure, 2 on empty prompt. Requires codex
@@ -30,6 +34,7 @@ const type = arg('--type', 'design');
 const role = arg('--role', 'architect');
 const name = arg('--name', 'architect-review');
 const reasoningEffort = arg('--reasoning-effort', 'high');
+const cwd = arg('--cwd', undefined);
 
 let prompt = '';
 try {
@@ -43,7 +48,7 @@ if (!prompt.trim()) {
   process.exit(2);
 }
 
-makeCodexSpawner({ reasoningEffort })({ type, provider: { role, name, harness: 'codex' }, prompt })
+makeCodexSpawner({ reasoningEffort })({ type, provider: { role, name, harness: 'codex' }, prompt, cwd })
   .then((out) => {
     const text =
       typeof out === 'string'

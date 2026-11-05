@@ -4,15 +4,15 @@ const ROOT = path.join(__dirname, '..', '..', '..');
 const { runChecks } = require(path.join(ROOT, 'measurement', 'convergence-gate.js'));
 
 describe('convergence gate', () => {
-  test('all architecture invariants hold', () => {
-    const { ok, checks } = runChecks();
+  test('all architecture invariants hold', async () => {
+    const { ok, checks } = await runChecks();
     const failed = checks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.detail}`);
     expect(failed).toEqual([]);
     expect(ok).toBe(true);
   });
 
-  test('covers each load-bearing invariant', () => {
-    const names = runChecks().checks.map((c) => c.name);
+  test('covers each load-bearing invariant', async () => {
+    const names = (await runChecks()).checks.map((c) => c.name);
     expect(names).toEqual(
       expect.arrayContaining([
         'schemas + instances validate',

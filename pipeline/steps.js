@@ -93,8 +93,13 @@ function beginTask({ taskFilePath, worktreePath, taskId }) {
 // output (the proven d=1.82 lever); passed through when available.
 // Render the selected ADRs as an implementation-constraint block. Returns null
 // when there are none, so callers can omit the section.
-function formatDecisionsContext(decisions) {
-  if (!Array.isArray(decisions) || decisions.length === 0) return null;
+// Accepts the selected decisions array, or a partition { selected, omitted } from
+// decisions.partitionDecisionsForTask — omitted (unrelated) project ADRs are named
+// by id only, so the agent can still open one without paying for all of them.
+function formatDecisionsContext(input) {
+  const decisions = Array.isArray(input) ? input : (input && input.selected) || [];
+  const omitted = Array.isArray(input) ? [] : (input && input.omitted) || [];
+  if (decisions.length === 0 && omitted.length === 0) return null;
   const lines = decisions.map((d) => {
     const m = d.metadata || {};
     const s = d.spec || {};
@@ -103,11 +108,15 @@ function formatDecisionsContext(decisions) {
     const why = s.rationale ? ` — ${String(s.rationale).split('\n')[0].trim()}` : '';
     return `  - ${m.id} [${st.lifecycle || 'proposed'}${m.scope ? `/${m.scope}` : ''}]: ${s.summary}${chosen}${why}`;
   });
+  const tail = omitted.length
+    ? [`Other project-scope ADRs judged unrelated to this task (open .ai-sdlc/_decisions/<id>.yaml if your change reaches their area): ${omitted.map((d) => (d.metadata || {}).id).join(', ')}`]
+    : [];
   return [
     'Architectural decisions (ADRs) — CONSTRAINTS for this implementation.',
     'Honor these; cite the DEC id where you implement one. If an ADR blocks the task or',
     'you must diverge, STOP and flag it — do not silently contradict a recorded decision.',
     ...lines,
+    ...tail,
   ].join('\n');
 }
 
