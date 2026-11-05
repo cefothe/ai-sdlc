@@ -155,3 +155,40 @@ describe('makeHarnessSpawner (router)', () => {
     await expect(spawn({ provider: { harness: 'gemini' } })).rejects.toThrow(/no spawner registered/);
   });
 });
+
+describe('per-provider reasoning effort + non-blocking dispatch', () => {
+  const ok = () => '{"type":"item.completed","item":{"type":"agent_message","text":"{\\"approved\\":true,\\"findings\\":[]}"}}\n';
+
+  test("a provider's reasoningEffort overrides the spawner default", async () => {
+    const seen = [];
+    const spawn = codex.makeCodexSpawner({ exec: (cmd, args) => { seen.push(args); return ok(); }, reasoningEffort: 'high' });
+    await spawn({ type: 'reviewer', provider: { name: 'test-automator', role: 'test-reviewer', reasoningEffort: 'medium' }, prompt: 'p' });
+    await spawn({ type: 'reviewer', provider: { name: 'code-reviewer', role: 'code-reviewer' }, prompt: 'p' });
+    expect(seen[0]).toContain('model_reasoning_effort="medium"');
+    expect(seen[1]).toContain('model_reasoning_effort="high"');
+  });
+
+  test('an unknown effort is rejected instead of silently passed to codex', () => {
+    expect(() => codex.buildCodexArgs({ name: 'x' }, 'p', { type: 'reviewer', reasoningEffort: 'turbo' })).toThrow(/unknown codex reasoning effort/);
+  });
+
+  test('default exec is non-blocking: parallel reviewers overlap', async () => {
+    expect(codex.defaultExec).toBe(require(path.join(ROOT, 'adapters', 'async-exec.js')).asyncExec);
+  });
+
+  test('an async exec seam lets Promise.all reviewers run concurrently', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const exec = async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      inFlight--;
+      return ok();
+    };
+    const spawn = codex.makeCodexSpawner({ exec });
+    const verdicts = await Promise.all(['a', 'b', 'c'].map((name) => spawn({ type: 'reviewer', provider: { name }, prompt: 'p' })));
+    expect(peak).toBe(3);
+    expect(verdicts.every((v) => v.approved)).toBe(true);
+  });
+});

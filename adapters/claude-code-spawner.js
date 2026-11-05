@@ -10,11 +10,20 @@
 //        a CapabilityMap provider to a `claude -p` invocation and parses the
 //        agent's JSON return into the shape the pipeline expects.
 //
-// `exec(cmd, args, opts) -> stdout` is injected (default: child_process
-// execFileSync) so the whole adapter is unit-testable without spawning claude.
+// `exec(cmd, args, opts) -> stdout | Promise<stdout>` is injected so the whole
+// adapter is unit-testable without spawning claude. git/gh stay synchronous
+// (steps.js consumes their stdout inline); the agent spawners default to the
+// non-blocking asyncExec so Promise.all over a panel/team truly runs in parallel.
 
 const { execFileSync } = require('node:child_process');
+const { existsSync, readFileSync } = require('node:fs');
+const { join } = require('node:path');
 const { makeCodexSpawner } = require('./codex-spawner');
+const { asyncExec } = require('./async-exec');
+
+// MCP servers every headless agent gets regardless of its stage grant — cxpak is
+// the mandated pre-action context source (CLAUDE.md "Context Acquisition").
+const ALWAYS_MCP = ['cxpak'];
 
 function defaultExec(cmd, args, opts = {}) {
   return execFileSync(cmd, args, { encoding: 'utf8', ...opts });
@@ -34,7 +43,7 @@ function makeGhRunner({ exec = defaultExec } = {}) {
 //   - skill provider -> the prompt is prefixed with `/<skill>` so the session
 //     invokes that skill
 //   - JSON output is requested so we can parse a structured return
-function buildClaudeArgs(provider, prompt, { model, extraArgs = [], tools = [] } = {}) {
+function buildClaudeArgs(provider, prompt, { model, extraArgs = [], tools = [], mcpConfig } = {}) {
   const isSkill = provider && provider.type === 'skill';
   const finalPrompt = isSkill ? `/${provider.name}\n${prompt}` : prompt;
   const args = ['-p', finalPrompt, '--output-format', 'json'];
@@ -47,7 +56,46 @@ function buildClaudeArgs(provider, prompt, { model, extraArgs = [], tools = [] }
   // Skill invoker as --allowedTools is what actually lets a headless design/review
   // agent call them without a permission prompt. Empty grant -> no restriction added.
   if (Array.isArray(tools) && tools.length) args.push('--allowedTools', tools.join(','));
+  // Per-stage MCP scoping: a headless `claude -p` otherwise boots EVERY server in
+  // .mcp.json + the plugin (npx firecrawl, uv clickhouse, postgres…) on each
+  // spawn, paying their cold start even when the stage can't use them.
+  // --strict-mcp-config + an inline config limits it to the granted subset.
+  // ${VAR} placeholders are left unexpanded — Claude Code expands them from the
+  // child's env, so no secret ever lands in argv.
+  if (mcpConfig) args.push('--strict-mcp-config', '--mcp-config', JSON.stringify(mcpConfig));
   return args.concat(extraArgs);
+}
+
+// Load MCP server definitions from .mcp.json files (later files win on a name
+// clash, so pass plugin-level first and project-level last). Missing or
+// unparseable files are skipped — scoping then simply has fewer servers to offer.
+function loadMcpServers(paths = []) {
+  const servers = {};
+  for (const p of paths) {
+    if (!p || !existsSync(p)) continue;
+    try {
+      const raw = JSON.parse(readFileSync(p, 'utf8'));
+      Object.assign(servers, (raw && raw.mcpServers) || {});
+    } catch {
+      /* malformed .mcp.json — skip it */
+    }
+  }
+  return servers;
+}
+
+// The MCP subset a spawn is entitled to: servers named by its tool grant
+// (`mcp__<server>` or `mcp__<server>__<tool>`) plus ALWAYS_MCP, restricted to
+// servers that are actually defined. Returns { mcpServers } (possibly empty —
+// an empty strict config is the point: a stage with no grant boots no servers).
+function scopeMcpConfig(servers, tools = [], always = ALWAYS_MCP) {
+  const wanted = new Set(always);
+  for (const t of tools || []) {
+    const m = /^mcp__(.+?)(?:__|$)/.exec(t);
+    if (m) wanted.add(m[1]);
+  }
+  const mcpServers = {};
+  for (const name of wanted) if (servers[name]) mcpServers[name] = servers[name];
+  return { mcpServers };
 }
 
 // Parse claude -p --output-format json. The outer envelope carries a `result`
@@ -71,10 +119,13 @@ function parseClaudeResult(stdout) {
   }
 }
 
-function makeClaudeSpawner({ exec = defaultExec, model, timeoutMs = 600000 } = {}) {
+// mcpServers: server definitions (loadMcpServers) to scope per spawn; null keeps
+// the legacy behavior (the child loads every configured server).
+function makeClaudeSpawner({ exec = asyncExec, model, timeoutMs = 600000, mcpServers = null, alwaysMcp = ALWAYS_MCP } = {}) {
   return async function spawn({ type, provider, prompt, tools, cwd }) {
     const effectiveProvider = provider || { type: 'agent', name: 'claude' };
-    const args = buildClaudeArgs(effectiveProvider, prompt, { model, tools });
+    const mcpConfig = mcpServers ? scopeMcpConfig(mcpServers, tools, alwaysMcp) : undefined;
+    const args = buildClaudeArgs(effectiveProvider, prompt, { model, tools, mcpConfig });
     // cwd roots the agent in the worktree so the implementer mutates the right
     // tree and a reviewer can read every file in the change. Omitted -> process cwd.
     const execOpts = { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 };
@@ -136,13 +187,15 @@ function makeCxpakFetcher({ exec = defaultExec, workDir = process.cwd(), tokens 
 // referenced DECs) from the on-disk decision store. The UNATTENDED counterpart
 // to execute.md's "load architectural decisions" step. Any failure degrades to
 // an empty set — advisory input, never blocks the run.
+// Returns the relevance partition { selected, omitted } (see
+// partitionDecisionsForTask) — formatDecisionsContext renders both.
 function makeDecisionsFetcher({ root = process.cwd() } = {}) {
-  const { selectDecisionsForTask } = require('../decision-engine/decisions');
+  const { partitionDecisionsForTask } = require('../decision-engine/decisions');
   return async function fetchDecisions(task) {
     try {
-      return selectDecisionsForTask(root, task);
+      return partitionDecisionsForTask(root, task);
     } catch {
-      return [];
+      return { selected: [], omitted: [] };
     }
   };
 }
@@ -151,20 +204,28 @@ function makeDecisionsFetcher({ root = process.cwd() } = {}) {
 // seam is harness-aware: claude-harness providers (implementer + advisory
 // stages) run on `claude -p`; codex-harness providers (the cross-harness review
 // team) run on `codex exec`. codexModel overrides the Codex model.
-function makeClaudeCodeSeams({ exec = defaultExec, model, codexModel, codexReasoningEffort = 'high', workDir } = {}) {
-  const claudeSpawn = makeClaudeSpawner({ exec, model });
+//
+// `exec` (when injected, e.g. by tests) drives everything; otherwise git/gh use
+// the synchronous runner and the agent spawners the non-blocking one.
+// scopeMcp (default true) boots only each stage's granted MCP servers.
+function makeClaudeCodeSeams({ exec, model, codexModel, codexReasoningEffort = 'high', workDir, scopeMcp = true, pluginRoot = join(__dirname, '..') } = {}) {
+  const syncExec = exec || defaultExec;
+  const agentExec = exec || asyncExec;
+  const root = workDir || process.cwd();
+  const mcpServers = scopeMcp ? loadMcpServers([join(pluginRoot, '.mcp.json'), join(root, '.mcp.json')]) : null;
+  const claudeSpawn = makeClaudeSpawner({ exec: agentExec, model, mcpServers });
   // codexModel stays unset by default — a ChatGPT-login account rejects explicit
   // models (HTTP 400). codexReasoningEffort defaults to 'high': reviewers are the
   // only codex-harness stage and Codex's own default effort ('none') is too weak
   // to reliably surface bugs. This knob IS allowed on a ChatGPT account.
-  const codexSpawn = makeCodexSpawner({ exec, model: codexModel, reasoningEffort: codexReasoningEffort });
+  const codexSpawn = makeCodexSpawner({ exec: agentExec, model: codexModel, reasoningEffort: codexReasoningEffort });
   return {
-    runner: makeGitRunner({ exec }),
-    gh: makeGhRunner({ exec }),
+    runner: makeGitRunner({ exec: syncExec }),
+    gh: makeGhRunner({ exec: syncExec }),
     spawn: makeHarnessSpawner({ spawners: { claude: claudeSpawn, codex: codexSpawn } }),
-    fetchCxpak: makeCxpakFetcher({ exec, workDir }),
-    fetchDecisions: makeDecisionsFetcher({ root: workDir || process.cwd() }),
+    fetchCxpak: makeCxpakFetcher({ exec: syncExec, workDir }),
+    fetchDecisions: makeDecisionsFetcher({ root }),
   };
 }
 
-module.exports = { makeGitRunner, makeGhRunner, makeClaudeSpawner, makeHarnessSpawner, makeCxpakFetcher, makeDecisionsFetcher, makeClaudeCodeSeams, buildClaudeArgs, parseClaudeResult, defaultExec };
+module.exports = { makeGitRunner, makeGhRunner, makeClaudeSpawner, makeHarnessSpawner, makeCxpakFetcher, makeDecisionsFetcher, makeClaudeCodeSeams, buildClaudeArgs, parseClaudeResult, loadMcpServers, scopeMcpConfig, defaultExec, ALWAYS_MCP };

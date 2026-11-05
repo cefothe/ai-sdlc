@@ -140,3 +140,84 @@ describe('selectDecisionsForTask (ADRs as implementation constraints)', () => {
     }
   });
 });
+
+describe('partitionDecisionsForTask (relevance filter)', () => {
+  const opt = [{ id: 'a', description: 'x' }];
+  function seed(root) {
+    const w = (id, over) => dec.writeDecision(root, dec.newDecision({ id, options: opt, created: 't', scope: 'project', lifecycle: 'answered', ...over }));
+    w('DEC-0001', { summary: 'foundational: Decimal money types everywhere', source: 'design-panel' });
+    w('DEC-0002', { summary: 'own feature: catalog search ranking', source: 'design:unified-catalog' });
+    w('DEC-0003', { summary: 'other feature: arbitrage opportunity scoring windows', source: 'design:arbitrage-engine' });
+    w('DEC-0004', { summary: 'other feature but related: clickhouse catalog materialized views refresh', source: 'design:market-hierarchy', context: 'catalog materialized views clickhouse refresh' });
+    w('DEC-0005', { summary: 'other feature referenced explicitly', source: 'design:trading-backoffice' });
+    w('DEC-0006', { summary: 'feature-scope from own feature, not referenced', source: 'design:unified-catalog', scope: 'feature' });
+  }
+  const task = {
+    frontmatter: {
+      id: 'T-9', title: 'Catalog API: clickhouse materialized views refresh',
+      labels: ['clickhouse', 'catalog'],
+      references: ['docs/design/unified-catalog.md', '.ai-sdlc/_decisions/DEC-0005.yaml'],
+    },
+  };
+
+  test('keeps referenced, foundational, own-feature and lexically related; omits the rest', () => {
+    const root = tmp();
+    try {
+      seed(root);
+      const { selected, omitted } = dec.partitionDecisionsForTask(root, task);
+      expect(selected.map((d) => d.metadata.id)).toEqual(['DEC-0001', 'DEC-0002', 'DEC-0004', 'DEC-0005']);
+      expect(omitted.map((d) => d.metadata.id)).toEqual(['DEC-0003']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('`references:` frontmatter counts as a DEC reference (not only refs)', () => {
+    const root = tmp();
+    try {
+      seed(root);
+      const ids = dec.selectDecisionsForTask(root, task).map((d) => d.metadata.id);
+      expect(ids).toContain('DEC-0005');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a referenced DEC pulls in its feature as the task feature', () => {
+    const root = tmp();
+    try {
+      seed(root);
+      const t = { frontmatter: { id: 'T-1', title: 'x', refs: ['DEC-0003'] } };
+      const sameFeature = dec.writeDecision(root, dec.newDecision({ id: 'DEC-0007', summary: 'arbitrage fee model', options: opt, created: 't', scope: 'project', lifecycle: 'answered', source: 'design:arbitrage-engine' }));
+      expect(sameFeature).toBeTruthy();
+      const ids = dec.selectDecisionsForTask(root, t).map((d) => d.metadata.id);
+      expect(ids).toEqual(expect.arrayContaining(['DEC-0003', 'DEC-0007']));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('maxRelated caps the lexical tier; overflow goes to omitted', () => {
+    const root = tmp();
+    try {
+      seed(root);
+      const { selected, omitted } = dec.partitionDecisionsForTask(root, task, { maxRelated: 0 });
+      expect(selected.map((d) => d.metadata.id)).not.toContain('DEC-0004');
+      expect(omitted.map((d) => d.metadata.id)).toContain('DEC-0004');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('relevance:false restores the legacy all-project-scope selection', () => {
+    const root = tmp();
+    try {
+      seed(root);
+      const { selected, omitted } = dec.partitionDecisionsForTask(root, task, { relevance: false });
+      expect(selected.map((d) => d.metadata.id).sort()).toEqual(['DEC-0001', 'DEC-0002', 'DEC-0003', 'DEC-0004', 'DEC-0005']);
+      expect(omitted).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

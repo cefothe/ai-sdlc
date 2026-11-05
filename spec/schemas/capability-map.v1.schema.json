@@ -31,7 +31,8 @@
         "type": { "type": "string", "enum": ["skill", "agent"], "description": "skill = an existing slash-command skill (code-plan, code-review-pr); agent = a specialized subagent." },
         "name": { "type": "string", "minLength": 1, "description": "Skill or agent name, e.g. 'code-plan', 'java-pro', 'qa-code-reviewer'." },
         "role": { "type": "string", "description": "Reviewer role label for review-stage providers (code-reviewer / test-reviewer / security-reviewer)." },
-        "harness": { "type": "string", "description": "Execution harness (e.g. claude, codex). For review providers this must differ from the implementer harness — enforced at resolve time." }
+        "harness": { "type": "string", "description": "Execution harness (e.g. claude, codex). For review providers this must differ from the implementer harness — enforced at resolve time." },
+        "reasoningEffort": { "type": "string", "enum": ["none", "minimal", "low", "medium", "high", "xhigh"], "description": "Codex-harness only: per-provider model_reasoning_effort. Overrides the spawner default (high for the review stage) so secondary lenses can run cheaper/faster." }
       },
       "additionalProperties": false
     },

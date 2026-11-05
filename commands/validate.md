@@ -13,18 +13,19 @@ pipeline (not the author), so they are enforced, unlike the advisory promise gat
 
 ## Steps
 
-1. **Determine changed files** (for the marker scan): `git diff --name-only <base>...HEAD`
-   (base defaults to `main`). Pass each as `--file` below.
-
-2. **Run the DoD gate** using `.ai-sdlc/dod-config.yaml`:
+1. **Run the DoD gate** against the base branch (default `main`) using
+   `.ai-sdlc/dod-config.yaml`:
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/dod-gate.js" --config .ai-sdlc/dod-config.yaml \
-     $(git diff --name-only main...HEAD | sed 's/^/--file /')
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/dod-gate.js" --config .ai-sdlc/dod-config.yaml --base main
    ```
-   The gate runs the configured `build` and `test` commands (each must exit 0) and
-   the marker scan. It prints PASS/FAIL per check.
+   `--base` derives the changed files (`git diff --name-only main...HEAD`) for the
+   marker scan and `paths:` scoping, and exports `AI_SDLC_BASE` /
+   `AI_SDLC_CHANGED_FILES` to every check command. The gate runs **every** declared
+   check concurrently (each must exit 0) plus the marker scan, printing
+   PASS/FAIL/SKIP and the duration per check. A `type: github-checks` check waits for
+   CI on the branch's PR — run the gate in the background and wait for it.
 
-3. **Gate the outcome (non-negotiable):**
+2. **Gate the outcome (non-negotiable):**
    - Exit 0 → all enforced checks passed → the task **may** be marked Done / the PR opened.
    - Exit 2 → **BLOCKED**. Do NOT mark the task Done, do NOT open the PR. Report the
      failing check(s) and their output; fix the code (or route back to the implementer
@@ -35,4 +36,7 @@ pipeline (not the author), so they are enforced, unlike the advisory promise gat
   real ones (e.g. `npm run typecheck` / `npx vitest run`, `mvn verify`, etc.).
 - Set `spec.evaluationMode: warn` to report-without-blocking during adoption; flip to
   `enforce` once the suite is green — objective gates are safe to enforce immediately.
-- This runs the FULL suite, not a subset — "tests pass" means the whole project is green.
+- "Tests pass" means the whole project is green — but the gate need not replay the whole
+  matrix locally to prove it. Scope local checks to what changed (`paths:`, or a command
+  that reads `AI_SDLC_CHANGED_FILES`, e.g. a changed-packages planner) and let a
+  `type: github-checks` check hold the authoritative CI result.

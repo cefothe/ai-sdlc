@@ -29,6 +29,14 @@ describe('ADRs as implementation context', () => {
     expect(steps.formatDecisionsContext(undefined)).toBeNull();
   });
 
+  test('formatDecisionsContext renders a { selected, omitted } partition, omitted by id only', () => {
+    const out = steps.formatDecisionsContext({ selected: decisions, omitted: [{ metadata: { id: 'DEC-0099' }, spec: { summary: 'long unrelated text' } }] });
+    expect(out).toMatch(/DEC-0099/);
+    expect(out).not.toMatch(/long unrelated text/);
+    expect(out).toMatch(/judged unrelated/);
+    expect(steps.formatDecisionsContext({ selected: [], omitted: [] })).toBeNull();
+  });
+
   test('the developer prompt carries the ADR constraints block', () => {
     const task = { frontmatter: { id: 'AISDLC-1', title: 'x' }, acceptanceCriteria: [{ text: 'do it' }] };
     const { prompt } = steps.buildDeveloperPrompt({ task, branch: 'b', decisionsContext: steps.formatDecisionsContext(decisions) });

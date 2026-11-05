@@ -132,6 +132,17 @@ files) + the ADR constraints + its plan section — then a **serial integration 
 build/test** over the merged tree (a green per-stream worker doesn't prove the whole
 compiles). A too-small/too-coupled task yields one stream and the single path.
 
+## Gate & dispatch speed
+
+| Piece | Where |
+|---|---|
+| DoD runs **every** declared check concurrently (`spec.concurrency` caps), skips a check whose `paths:` no changed file matches, exports `AI_SDLC_BASE`/`AI_SDLC_CHANGED_FILES`, kills on `timeoutMinutes`; CLI `--base main` derives the changed set | `decision-engine/dod-gate.js`, `path-glob.js` |
+| `type: github-checks` DoD check delegates to CI: opt-in `push`/`draftPr`, then waits on `gh pr checks` | `decision-engine/ci-checks.js` |
+| Agent spawners are non-blocking (`asyncExec`) — `Promise.all` over a panel/team genuinely overlaps | `adapters/async-exec.js` |
+| Per-provider codex `reasoningEffort` (capabilities.yaml) overrides the `high` review default | `adapters/codex-spawner.js` |
+| Headless `claude -p` boots only the stage's granted MCP servers + cxpak (`--strict-mcp-config`) | `claude-code-spawner.js` `scopeMcpConfig` |
+| ADR injection is relevance-filtered (referenced / foundational / own feature / lexical top-N); the rest listed by id | `decisions.js` `partitionDecisionsForTask` |
+
 ## Cross-Harness Execution (claude ↔ codex)
 
 Reviewers are declared `harness: codex` so they never share the implementer's

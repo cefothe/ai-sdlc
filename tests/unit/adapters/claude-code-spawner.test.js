@@ -204,3 +204,83 @@ describe('makeCxpakFetcher', () => {
     expect(typeof seams.fetchCxpak).toBe('function');
   });
 });
+
+describe('per-stage MCP scoping', () => {
+  const servers = {
+    cxpak: { type: 'stdio', command: 'cxpak', args: ['serve', '--mcp', '.'] },
+    firecrawl: { type: 'stdio', command: 'npx', args: ['-y', 'firecrawl-mcp'], env: { FIRECRAWL_API_KEY: '${FIRECRAWL_API_KEY}' } },
+    'postgres-ro': { type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-postgres', '${DATABASE_URL_RO}'] },
+    'clickhouse-ro': { type: 'stdio', command: 'uv', args: ['run'] },
+  };
+
+  test('scopeMcpConfig keeps granted servers + cxpak, drops the rest', () => {
+    const cfg = adapter.scopeMcpConfig(servers, ['mcp__firecrawl', 'WebSearch', 'mcp__clickhouse-ro__run_query']);
+    expect(Object.keys(cfg.mcpServers).sort()).toEqual(['clickhouse-ro', 'cxpak', 'firecrawl']);
+  });
+
+  test('a stage with no MCP grant boots only cxpak', () => {
+    expect(Object.keys(adapter.scopeMcpConfig(servers, []).mcpServers)).toEqual(['cxpak']);
+  });
+
+  test('granted-but-undefined servers are ignored', () => {
+    expect(Object.keys(adapter.scopeMcpConfig({}, ['mcp__firecrawl']).mcpServers)).toEqual([]);
+  });
+
+  test('spawner passes --strict-mcp-config with the scoped subset; ${VAR} placeholders stay unexpanded', async () => {
+    let argv;
+    const spawn = adapter.makeClaudeSpawner({ exec: (cmd, args) => { argv = args; return JSON.stringify({ result: '{"summary":"ok"}' }); }, mcpServers: servers });
+    await spawn({ type: 'design', provider: { type: 'agent', name: 'architect-review' }, prompt: 'p', tools: ['mcp__postgres-ro'] });
+    expect(argv).toContain('--strict-mcp-config');
+    const cfg = JSON.parse(argv[argv.indexOf('--mcp-config') + 1]);
+    expect(Object.keys(cfg.mcpServers).sort()).toEqual(['cxpak', 'postgres-ro']);
+    expect(cfg.mcpServers['postgres-ro'].args).toContain('${DATABASE_URL_RO}');
+  });
+
+  test('mcpServers null keeps legacy behavior (no MCP flags)', async () => {
+    let argv;
+    const spawn = adapter.makeClaudeSpawner({ exec: (cmd, args) => { argv = args; return '{}'; } });
+    await spawn({ type: 'developer', prompt: 'p', tools: ['mcp__firecrawl'] });
+    expect(argv).not.toContain('--strict-mcp-config');
+  });
+
+  test('loadMcpServers merges files (later wins) and skips missing/malformed ones', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'a.json'), JSON.stringify({ mcpServers: { cxpak: { command: 'old' }, firecrawl: { command: 'npx' } } }));
+      fs.writeFileSync(path.join(dir, 'b.json'), JSON.stringify({ mcpServers: { cxpak: { command: 'new' } } }));
+      fs.writeFileSync(path.join(dir, 'bad.json'), '{ nope');
+      const merged = adapter.loadMcpServers([path.join(dir, 'a.json'), path.join(dir, 'missing.json'), path.join(dir, 'bad.json'), path.join(dir, 'b.json')]);
+      expect(merged).toEqual({ cxpak: { command: 'new' }, firecrawl: { command: 'npx' } });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('makeClaudeCodeSeams scopes MCP from plugin + project .mcp.json by default', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seams-'));
+    try {
+      fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { 'clickhouse-ro': { command: 'uv' } } }));
+      const calls = [];
+      const exec = (cmd, args) => { calls.push({ cmd, args }); return JSON.stringify({ result: '{"summary":"ok"}' }); };
+      const seams = adapter.makeClaudeCodeSeams({ exec, workDir: dir });
+      await seams.spawn({ type: 'design', provider: { type: 'agent', name: 'x', harness: 'claude' }, prompt: 'p', tools: ['mcp__clickhouse-ro'] });
+      const argv = calls[0].args;
+      const cfg = JSON.parse(argv[argv.indexOf('--mcp-config') + 1]);
+      expect(Object.keys(cfg.mcpServers)).toEqual(expect.arrayContaining(['cxpak', 'clickhouse-ro']));
+      expect(cfg.mcpServers.firecrawl).toBeUndefined();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('makeDecisionsFetcher returns the relevance partition', () => {
+  test('missing store -> empty partition, never throws', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dec-fetch-'));
+    try {
+      await expect(adapter.makeDecisionsFetcher({ root: dir })({ frontmatter: {} })).resolves.toEqual({ selected: [], omitted: [] });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
