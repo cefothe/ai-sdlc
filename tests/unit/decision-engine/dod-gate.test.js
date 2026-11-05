@@ -239,3 +239,57 @@ describe('defaultRunCommand (real shell, no injection)', () => {
     expect(build.durationMs).toBeLessThan(4000);
   });
 });
+
+describe('exclusive groups + interrupt cleanup', () => {
+  test('checks sharing an exclusive group never overlap; others still run alongside', async () => {
+    const active = new Set();
+    let dockerOverlap = false;
+    let buildOverlappedDocker = false;
+    const runCommand = async (command) => {
+      active.add(command);
+      if (active.has('make smoke') && active.has('make catalog-integration')) dockerOverlap = true;
+      if (active.has('make validate') && (active.has('make smoke') || active.has('make catalog-integration'))) buildOverlappedDocker = true;
+      await new Promise((r) => setTimeout(r, 20));
+      active.delete(command);
+      return { code: command === 'make smoke' ? 1 : 0 };
+    };
+    const r = await evaluateDod({
+      config: cfg({
+        checks: {
+          build: { command: 'make validate' },
+          test: { command: 'make smoke', exclusive: 'docker' },
+          'catalog-integration': { command: 'make catalog-integration', exclusive: 'docker' },
+        },
+      }),
+      runCommand,
+    });
+    expect(dockerOverlap).toBe(false);
+    expect(buildOverlappedDocker).toBe(true);
+    // a failure in the group does not stop the next check of the group from running
+    expect(r.checks.find((c) => c.name === 'catalog-integration').passed).toBe(true);
+    expect(r.checks.find((c) => c.name === 'test').passed).toBe(false);
+  });
+
+  test('interrupting the CLI kills the running checks (no orphaned children)', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { spawn } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dod-int-'));
+    const marker = path.join(dir, 'survived');
+    fs.writeFileSync(path.join(dir, 'dod.yaml'), [
+      'apiVersion: ai-sdlc.io/v1alpha1', 'kind: DodConfig', 'spec:', '  checks:',
+      `    build: { command: "sleep 3 && touch ${marker}" }`, '    test: null', '    markers: { enforced: false }', '',
+    ].join('\n'));
+    try {
+      const child = spawn(process.execPath, [path.join(ROOT, 'decision-engine', 'dod-gate.js'), '--config', path.join(dir, 'dod.yaml')], { cwd: dir });
+      await new Promise((r) => setTimeout(r, 700));
+      child.kill('SIGINT');
+      const code = await new Promise((r) => child.on('exit', r));
+      expect(code).toBe(130);
+      await new Promise((r) => setTimeout(r, 3500));
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10000);
+});
