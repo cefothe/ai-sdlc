@@ -20,6 +20,9 @@
 //   - `type: github-checks` delegates to CI instead of rebuilding locally
 //     (ci-checks.js: opt-in push + draft PR, then wait for the PR's checks)
 //   - `timeoutMinutes` bounds a command; the whole process group is killed
+//   - checks sharing an `exclusive: <group>` never overlap (e.g. docker-heavy ones)
+//   - interrupting the gate (SIGINT/SIGTERM) kills every running check's process
+//     group, so no make/go/docker children are orphaned
 //
 //   checks:
 //     build:  { command: "make validate-affected", enforced: true }
@@ -109,6 +112,24 @@ async function runPool(thunks, limit) {
   return results;
 }
 
+// Serialize thunks that share an `exclusive` group: a check waits for the previous
+// check of its group to settle before starting, so e.g. two docker-heavy checks
+// (a kind cluster and a ClickHouse container) never compete for the docker VM while
+// unrelated checks still overlap them. Ungrouped thunks pass through untouched.
+function serializeGroups(thunks, groups) {
+  const tails = new Map();
+  return thunks.map((thunk, i) => {
+    const group = groups[i];
+    if (!group) return thunk;
+    return () => {
+      const prev = tails.get(group) || Promise.resolve();
+      const run = prev.then(thunk, thunk);
+      tails.set(group, run.catch(() => undefined));
+      return run;
+    };
+  });
+}
+
 function runnableChecks(checks) {
   return Object.entries(checks || {}).filter(([name, cfg]) =>
     !RESERVED_CHECKS.has(name) && cfg && (cfg.command != null || cfg.type === 'github-checks'));
@@ -172,7 +193,8 @@ async function evaluateDod({
 
   // Independent checks run concurrently (spec.concurrency caps it; default all).
   const entries = runnableChecks(spec.checks);
-  const checks = await runPool(entries.map(([name, cfg]) => () => runOne(name, cfg)), spec.concurrency);
+  const thunks = serializeGroups(entries.map(([name, cfg]) => () => runOne(name, cfg)), entries.map(([, cfg]) => cfg.exclusive));
+  const checks = await runPool(thunks, spec.concurrency);
 
   // Markers — no TODO/FIXME/HACK/XXX in the changed files.
   const markersCfg = spec.checks.markers;
@@ -231,7 +253,7 @@ function changedFilesSince(base, cwd = process.cwd()) {
   return out.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
-module.exports = { evaluateDod, loadDodConfig, changedFilesSince, runPool, DEFAULT_CONFIG, MARKER_RE, RESERVED_CHECKS };
+module.exports = { evaluateDod, loadDodConfig, changedFilesSince, runPool, serializeGroups, DEFAULT_CONFIG, MARKER_RE, RESERVED_CHECKS };
 
 // CLI: node decision-engine/dod-gate.js [--config path] [--base ref] [--file a.ts --file b.ts]
 //   --base ref   derive the changed files from `git diff ref...HEAD` (used when no
@@ -245,6 +267,14 @@ if (require.main === module) {
     if (argv[i] === '--config') cfgPath = argv[++i];
     else if (argv[i] === '--file') files.push(argv[++i]);
     else if (argv[i] === '--base') base = argv[++i];
+  }
+  const { killAllTrees } = require('../adapters/async-exec');
+  for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+    process.once(sig, () => {
+      console.error(`\ndod-gate interrupted (${sig}) — stopping running checks`);
+      killAllTrees();
+      process.exit(code);
+    });
   }
   (async () => {
     const changedFiles = files.length || !base ? files : changedFilesSince(base);

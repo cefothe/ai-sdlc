@@ -49,3 +49,21 @@ describe('asyncExec', () => {
     await expect(asyncExec('pwd', [], { cwd: dir })).resolves.toBe(`${dir}\n`);
   });
 });
+
+describe('killAllTrees', () => {
+  const { killAllTrees } = require(path.join(ROOT, 'adapters', 'async-exec.js'));
+
+  test('kills every live killTree group and reports how many', async () => {
+    const pending = [1, 2].map(() => asyncExec('sh', ['-c', 'sleep 5'], { killTree: true }).catch((e) => e));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(killAllTrees()).toBe(2);
+    const errs = await Promise.all(pending);
+    expect(errs.every((e) => e.signal === 'SIGTERM')).toBe(true);
+    expect(killAllTrees()).toBe(0);
+  });
+
+  test('a finished command is no longer tracked', async () => {
+    await asyncExec('sh', ['-c', 'true'], { killTree: true });
+    expect(killAllTrees()).toBe(0);
+  });
+});

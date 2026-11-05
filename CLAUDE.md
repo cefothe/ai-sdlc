@@ -136,7 +136,7 @@ compiles). A too-small/too-coupled task yields one stream and the single path.
 
 | Piece | Where |
 |---|---|
-| DoD runs **every** declared check concurrently (`spec.concurrency` caps), skips a check whose `paths:` no changed file matches, exports `AI_SDLC_BASE`/`AI_SDLC_CHANGED_FILES`, kills on `timeoutMinutes`; CLI `--base main` derives the changed set | `decision-engine/dod-gate.js`, `path-glob.js` |
+| DoD runs **every** declared check concurrently (`spec.concurrency` caps), skips a check whose `paths:` no changed file matches, exports `AI_SDLC_BASE`/`AI_SDLC_CHANGED_FILES`, kills on `timeoutMinutes`; checks sharing `exclusive: <group>` never overlap; Ctrl-C kills every running check's process group; CLI `--base main` derives the changed set | `decision-engine/dod-gate.js`, `path-glob.js` |
 | `type: github-checks` DoD check delegates to CI: opt-in `push`/`draftPr`, then waits on `gh pr checks` | `decision-engine/ci-checks.js` |
 | Agent spawners are non-blocking (`asyncExec`) — `Promise.all` over a panel/team genuinely overlaps | `adapters/async-exec.js` |
 | Per-provider codex `reasoningEffort` (capabilities.yaml) overrides the `high` review default | `adapters/codex-spawner.js` |

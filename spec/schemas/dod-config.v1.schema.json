@@ -113,6 +113,11 @@
           },
           "description": "Repo-relative globs (dir/, **, *, ?). The check is skipped when the changed set is known and no changed file matches."
         },
+        "exclusive": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Serialization group: checks sharing a group never run at the same time (e.g. `docker` for a kind cluster and a ClickHouse container); other checks still overlap them."
+        },
         "timeoutMinutes": {
           "type": "number",
           "exclusiveMinimum": 0,

@@ -18,6 +18,22 @@ const { spawn } = require('node:child_process');
 
 const DEFAULT_MAX_BUFFER = 64 * 1024 * 1024;
 
+// Live killTree process groups, so a caller interrupted mid-run (the DoD gate on
+// Ctrl-C) can take its whole subprocess tree down with it.
+const liveTrees = new Set();
+
+function killAllTrees(signal = 'SIGTERM') {
+  let killed = 0;
+  for (const pid of liveTrees) {
+    try {
+      process.kill(-pid, signal);
+      killed++;
+    } catch { /* group already gone */ }
+  }
+  liveTrees.clear();
+  return killed;
+}
+
 function asyncExec(cmd, args = [], opts = {}) {
   const { cwd, env, timeout = 0, maxBuffer = DEFAULT_MAX_BUFFER, input, killTree = false } = opts;
   return new Promise((resolve, reject) => {
@@ -28,6 +44,8 @@ function asyncExec(cmd, args = [], opts = {}) {
       reject(err);
       return;
     }
+
+    if (killTree && child.pid) liveTrees.add(child.pid);
 
     const out = [];
     const errChunks = [];
@@ -41,6 +59,7 @@ function asyncExec(cmd, args = [], opts = {}) {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (child.pid) liveTrees.delete(child.pid);
       fn(value);
     };
 
@@ -96,4 +115,4 @@ function asyncExec(cmd, args = [], opts = {}) {
   });
 }
 
-module.exports = { asyncExec, DEFAULT_MAX_BUFFER };
+module.exports = { asyncExec, killAllTrees, DEFAULT_MAX_BUFFER };
