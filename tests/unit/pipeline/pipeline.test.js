@@ -37,11 +37,57 @@ describe('ADRs as implementation context', () => {
     expect(steps.formatDecisionsContext({ selected: [], omitted: [] })).toBeNull();
   });
 
+  test('primary ADRs get full detail (context/rationale/consequences/rejected); others one line', () => {
+    const primary = {
+      metadata: { id: 'DEC-0002', scope: 'feature' },
+      spec: { summary: 'cursor pagination', context: 'lists exceed 10k rows', rationale: 'stable under inserts', consequences: 'no random page access', options: [{ id: 'cursor', description: 'chosen' }, { id: 'offset', description: 'drifts under concurrent inserts' }] },
+      status: { lifecycle: 'answered', answeredOptionId: 'cursor' },
+    };
+    const out = steps.formatDecisionsContext({ selected: [decisions[0], primary], omitted: [], primary: ['DEC-0002'] });
+    expect(out).toMatch(/implements these decisions directly/);
+    expect(out).toMatch(/Context: lists exceed 10k rows/);
+    expect(out).toMatch(/Decision\/rationale: stable under inserts/);
+    expect(out).toMatch(/Consequences: no random page access/);
+    expect(out).toMatch(/Rejected: offset — drifts under concurrent inserts/);
+    expect(out).toMatch(/Other decisions in force:\n  - DEC-0001 \[answered\/project\]: ed25519 signing \(chosen: ed25519\) — small keys/);
+  });
+
   test('the developer prompt carries the ADR constraints block', () => {
     const task = { frontmatter: { id: 'AISDLC-1', title: 'x' }, acceptanceCriteria: [{ text: 'do it' }] };
     const { prompt } = steps.buildDeveloperPrompt({ task, branch: 'b', decisionsContext: steps.formatDecisionsContext(decisions) });
     expect(prompt).toMatch(/DEC-0001/);
     expect(prompt).toMatch(/cite the DEC id/);
+  });
+});
+
+describe('spec + description in prompts', () => {
+  const task = {
+    frontmatter: { id: 'AISDLC-1', title: 'SSO' },
+    body: '## Description\n\n<!-- SECTION:DESCRIPTION:BEGIN -->\nAdd OAuth login for admins.\n<!-- SECTION:DESCRIPTION:END -->\n',
+    acceptanceCriteria: [{ text: 'logs in' }],
+  };
+
+  test('taskDescription reads the marker block or a Description section', () => {
+    expect(steps.taskDescription(task)).toBe('Add OAuth login for admins.');
+    expect(steps.taskDescription({ body: '## Description\nPlain text.\n## Acceptance Criteria\n- [ ] x' })).toBe('Plain text.');
+    expect(steps.taskDescription({ body: '' })).toBe('');
+  });
+
+  test('the developer prompt carries the description and the spec block', () => {
+    const { prompt } = steps.buildDeveloperPrompt({ task, branch: 'b', specContext: 'SPECIFICATION — PRD body here' });
+    expect(prompt).toMatch(/Description:\nAdd OAuth login for admins\./);
+    expect(prompt).toMatch(/SPECIFICATION — PRD body here/);
+  });
+
+  test('every reviewer prompt carries the spec and the review-against-spec instruction', () => {
+    const { prompts } = steps.buildReviewPrompts({ task, diff: 'diff', specContext: 'SPECIFICATION — X' });
+    expect(prompts).toHaveLength(3);
+    for (const p of prompts) {
+      expect(p.prompt).toMatch(/SPECIFICATION — X/);
+      expect(p.prompt).toMatch(/acceptance criterion not implemented/);
+    }
+    const bare = steps.buildReviewPrompts({ task, diff: 'diff' });
+    expect(bare.prompts[0].prompt).not.toMatch(/SPECIFICATION/);
   });
 });
 
@@ -377,6 +423,59 @@ describe('executePipeline', () => {
         const firstImpl = spawn.calls.findIndex((c) => c.type === 'developer');
         const firstDesign = spawn.calls.findIndex((c) => c.type === 'design');
         expect(firstDesign).toBeLessThan(firstImpl);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test('an approved design doc replaces the design panel and the spec reaches plan, developer and reviewers', async () => {
+      const { dir, taskFilePath, task, completedDir } = setup();
+      try {
+        const calls = [];
+        const spawn = async (a) => {
+          calls.push(a);
+          if (a.type === 'plan') return { plan: 'do X then Y' };
+          if (a.type === 'developer') return validDevReturn;
+          return { approved: true, findings: [] };
+        };
+        const fetchSpec = async () => ({ text: 'SPECIFICATION — approved contract', prdPath: 'docs/prd/a.md', designPath: 'docs/design/a.md', designApproved: true });
+        const r = await executePipeline(baseOpts({
+          task, taskFilePath, completedDir, spawn, fetchSpec, worktreePath: path.join(dir, '.worktrees', 'spec'),
+          capabilityMap: MAP, taskContext: { labels: ['cloud'], files: [] }, implementerHarness: 'claude',
+        }));
+        expect(r.ok).toBe(true);
+        expect(calls.filter((c) => c.type === 'design')).toHaveLength(0);
+        expect(r.steps.design).toEqual({ skipped: true, reason: 'approved design doc docs/design/a.md is the design input' });
+        expect(r.steps.spec).toEqual({ injected: true, kind: 'feature', prdPath: 'docs/prd/a.md', designPath: 'docs/design/a.md' });
+        for (const type of ['plan', 'developer', 'reviewer']) {
+          const c = calls.filter((x) => x.type === type);
+          expect(c.length).toBeGreaterThan(0);
+          expect(c.every((x) => x.prompt.includes('SPECIFICATION — approved contract'))).toBe(true);
+        }
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test('an unapproved design doc keeps the design panel; a failing fetchSpec degrades to no spec', async () => {
+      const { dir, taskFilePath, task, completedDir } = setup();
+      try {
+        const spawn = recordingSpawn();
+        const draft = await executePipeline(baseOpts({
+          task, taskFilePath, completedDir, spawn, worktreePath: path.join(dir, '.worktrees', 'draft'),
+          fetchSpec: async () => ({ text: 'SPEC', prdPath: 'p', designPath: 'd', designApproved: false }),
+          capabilityMap: MAP, taskContext: { labels: ['cloud'], files: [] }, implementerHarness: 'claude',
+        }));
+        expect(draft.ok).toBe(true);
+        expect(spawn.calls.some((c) => c.type === 'design')).toBe(true);
+
+        const failing = await executePipeline(baseOpts({
+          task, taskFilePath, completedDir, spawn: recordingSpawn(), worktreePath: path.join(dir, '.worktrees', 'fail'),
+          fetchSpec: async () => { throw new Error('disk'); },
+          capabilityMap: MAP, taskContext: { files: [] }, implementerHarness: 'claude',
+        }));
+        expect(failing.ok).toBe(true);
+        expect(failing.steps.spec.injected).toBe(false);
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }

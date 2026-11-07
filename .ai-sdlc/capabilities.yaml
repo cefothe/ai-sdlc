@@ -40,6 +40,13 @@ spec:
           addProvider: { role: cmo, type: agent, name: cmo }
         - when: { labels: [strategic, roadmap, platform] }
           addProvider: { role: cpo, type: agent, name: cpo }
+        # Domain advisors join the product panel for deep-rule domains: they
+        # supply the domain edge cases, risk and regulatory requirements a
+        # generic PM/PO misses (roles differ so both can join one panel).
+        - when: { labels: [trading, execution, risk] }
+          addProvider: { role: trading-advisor, type: agent, name: grizzled-trader }
+        - when: { labels: [compliance, regulatory] }
+          addProvider: { role: compliance-advisor, type: agent, name: qa-compliance-engineer }
 
     # Clarify runs between discovery and PRD approval: it surfaces latent
     # ambiguity in the drafted PRD so a human resolves it before sign-off. The

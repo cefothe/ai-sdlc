@@ -6,11 +6,15 @@ const { evaluateConsistency } = require(path.join(ROOT, 'decision-engine', 'anal
 function approvedPrd(acLines) {
   return [
     '---', 'status: approved', 'featureId: sso', '---', '', '# PRD: SSO', '',
-    '## Problem', 'Users cannot SSO.', '',
-    '## Target user', 'Enterprise admins.', '',
-    '## Success metrics', 'activation +5pp.', '',
-    '## Scope', 'OAuth only.', '',
+    '## Problem', 'Users cannot SSO and abandon onboarding.', '',
+    '## Target user', 'Enterprise admins at first-run setup.', '',
+    '## Success metrics', 'activation +5pp within 30 days.', '',
+    '## Scope', 'OAuth login only; SAML deferred to a follow-up.', '',
+    '## Non-goals', 'No SAML, no SCIM provisioning, no MFA changes.', '',
+    '## User flows', '1. Admin clicks Sign in with SSO', '2. Returns signed in', '',
     '## Acceptance criteria', ...acLines, '',
+    '## Edge cases', 'IdP down shows a retry banner; expired nonce restarts login.', '',
+    '## Non-functional requirements', 'p95 login under 2s; no tokens in local storage.', '',
     '## Open questions', 'None.', '',
   ].join('\n');
 }

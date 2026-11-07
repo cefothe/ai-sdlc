@@ -13,6 +13,7 @@
 //   - resolveTestStage   -> the test provider (e.g. agent: test-runner)
 
 const { existsSync, readFileSync } = require('node:fs');
+const { join } = require('node:path');
 const yaml = require('js-yaml');
 const { isJavaTestFile } = require('../promise/java-test-file-pattern');
 
@@ -89,6 +90,31 @@ function capabilityToolNames(grant) {
   return tools;
 }
 
+// Granted tools a plugin agent's own `tools:` allowlist would silently drop.
+// An explicit allowlist excludes every unlisted tool — MCP servers included —
+// so a repo binding a stage's grant to an agent the plugin did not provision
+// for it gets no capability and no error. [] when the agent has no allowlist
+// (it inherits everything), is not a plugin agent, or covers the grant.
+function allowlistGaps(provider, grant, { agentsDir = join(__dirname, '..', 'agents'), plugin = 'ai-sdlc' } = {}) {
+  if (!provider || provider.type !== 'agent' || !provider.name || !grant) return [];
+  const file = join(agentsDir, `${provider.name}.md`);
+  if (!existsSync(file)) return [];
+  const fm = readFileSync(file, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fm) return [];
+  let tools;
+  try { tools = (yaml.load(fm[1]) || {}).tools; } catch { return []; }
+  if (tools === undefined || tools === null) return [];
+  const list = new Set((Array.isArray(tools) ? tools : String(tools).split(',')).map((t) => String(t).trim()));
+  const gaps = [];
+  for (const server of grant.mcp || []) {
+    const covered = [`mcp__${server}`, `mcp__${server}__*`, `mcp__plugin_${plugin}_${server}__*`].some((t) => list.has(t));
+    if (!covered) gaps.push(`mcp__${server}`);
+  }
+  for (const w of grant.web || []) if (!list.has(w)) gaps.push(w);
+  if ((grant.skills || []).length && !list.has('Skill')) gaps.push('Skill');
+  return gaps;
+}
+
 // One-line human-readable guidance appended to a stage's dispatch prompt.
 // Returns null when the stage grants nothing (so callers can omit the line).
 function formatCapabilityGuidance(grant) {
@@ -145,15 +171,27 @@ function applyTeamRouting(binding, ctx) {
   return providers;
 }
 
+// An advisory, collaborative panel stage (no cross-harness constraint): base
+// providers + routing, dispatched as a panel when declared or 2+ providers.
+function resolvePanel(map, name, ctx = {}) {
+  const binding = stage(map, name);
+  if (!binding) return { providers: [], panel: false };
+  const providers = applyTeamRouting(binding, ctx);
+  return { providers, panel: binding.panel === true || providers.length >= 2 };
+}
+
+// Discovery stage: the product PANEL (PM/PO, + CMO/CPO and domain advisors by
+// label) that shapes the PRD.
+function resolveDiscoveryPanel(map, ctx = {}) {
+  return resolvePanel(map, 'discovery', ctx);
+}
+
 // Design stage: a PANEL of architect agents (solution / backend / cloud …) that
 // shape the design BEFORE implementation. Advisory + collaborative, so there is
 // no cross-harness constraint. Their output feeds the plan and should be
 // recorded as an ADR (Decision) by the operator.
 function resolveDesignPanel(map, ctx = {}) {
-  const binding = stage(map, 'design');
-  if (!binding) return { providers: [], panel: false };
-  const providers = applyTeamRouting(binding, ctx);
-  return { providers, panel: binding.panel === true || providers.length >= 2 };
+  return resolvePanel(map, 'design', ctx);
 }
 
 // Review stage: build the reviewer team, apply routing (incl. the architect
@@ -177,4 +215,4 @@ function resolveReviewTeam(map, ctx = {}, { implementerHarness } = {}) {
   return { providers, team, umbrellaSkill: binding.skill || null };
 }
 
-module.exports = { loadCapabilityMap, resolvePlanStage, resolveImplementer, resolveTestStage, resolveDesignPanel, resolveReviewTeam, applyTeamRouting, matchesWhen, ctxHasJavaTests, resolveStageCapabilities, capabilityToolNames, formatCapabilityGuidance };
+module.exports = { loadCapabilityMap, resolvePlanStage, resolveImplementer, resolveTestStage, resolveDiscoveryPanel, resolveDesignPanel, resolveReviewTeam, allowlistGaps, applyTeamRouting, matchesWhen, ctxHasJavaTests, resolveStageCapabilities, capabilityToolNames, formatCapabilityGuidance };

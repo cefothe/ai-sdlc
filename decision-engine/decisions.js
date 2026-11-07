@@ -67,6 +67,42 @@ function newDecision({ id, summary, options, body, source = 'ad-hoc', scope = 'p
   return decision;
 }
 
+// Enrich an existing ADR with reasoning it lacks — append-only, for migrating
+// decisions recorded before the completeness rules. Only ABSENT fields are
+// filled and only undescribed options described; anything already recorded is
+// never overwritten (that would be a new decision, which supersedes instead).
+// Throws when an amendment would overwrite, so the caller sees the conflict.
+function amendDecision(decision, { context, rationale, consequences, confidence, addOptions = [], describeOptions = {}, amendedAt } = {}) {
+  const spec = decision.spec;
+  const filled = [];
+  for (const [key, value] of Object.entries({ context, rationale, consequences, confidence })) {
+    if (value === undefined || value === null || value === '') continue;
+    if (spec[key] && String(spec[key]).trim()) throw new Error(`${decision.metadata.id}: ${key} is already recorded — amend fills gaps only`);
+    if (key === 'confidence' && !CONFIDENCE.includes(value)) throw new Error(`confidence must be one of ${CONFIDENCE.join('/')}`);
+    spec[key] = value;
+    filled.push(key);
+  }
+  spec.options = spec.options || [];
+  for (const [id, description] of Object.entries(describeOptions)) {
+    const opt = spec.options.find((o) => o.id === id);
+    if (!opt) throw new Error(`${decision.metadata.id}: no option "${id}" to describe`);
+    if (opt.description && String(opt.description).trim() !== String(opt.id).trim()) throw new Error(`${decision.metadata.id}: option "${id}" already has a description`);
+    opt.description = description;
+    filled.push(`option:${id}`);
+  }
+  for (const o of addOptions) {
+    if (!o || !o.id || !o.description) throw new Error('each added option needs id + description');
+    if (spec.options.some((x) => x.id === o.id)) throw new Error(`${decision.metadata.id}: option "${o.id}" already exists`);
+    spec.options.push({ id: o.id, description: o.description });
+    filled.push(`+option:${o.id}`);
+  }
+  if (filled.length) {
+    decision.metadata.updated = amendedAt || decision.metadata.updated;
+    decision.metadata.amendments = [...(decision.metadata.amendments || []), { at: amendedAt || '', filled }];
+  }
+  return { decision, filled };
+}
+
 // Mark a decision answered with the chosen option.
 function answerDecision(decision, { optionId, answeredBy, answeredAt }) {
   const known = (decision.spec.options || []).some((o) => o.id === optionId);
@@ -159,19 +195,50 @@ function taskBlob(task) {
   return JSON.stringify([fm.refs, fm.references, fm.specRef, fm.description, fm.feature, task.acceptanceCriteria, task.body]);
 }
 
-function partitionDecisionsForTask(root, task = {}, { lifecycles = IMPLEMENTATION_LIFECYCLES, relevance = true, minOverlap = 3, maxRelated = 15 } = {}) {
+// Feature slugs are interpolated into a docs/design/<slug>.md path; anything
+// that is not a plain kebab/word slug (e.g. "../x") is ignored.
+const SAFE_SLUG_RE = /^[a-z0-9][a-z0-9_.-]*$/i;
+
+// DEC ids the feature's design doc links. The design doc is where a feature's
+// ADRs — including feature-scope ones — are listed, so they are the decisions
+// the task implements even when the task file never names them.
+function designLinkedDecisionIds(root, features, designDir) {
+  const ids = new Set();
+  for (const slug of features) {
+    if (!SAFE_SLUG_RE.test(slug) || slug.includes('..')) continue;
+    const file = join(root, designDir, `${slug}.md`);
+    if (!existsSync(file)) continue;
+    try {
+      for (const m of readFileSync(file, 'utf8').match(/\bDEC-\d{4}\b/g) || []) ids.add(m);
+    } catch {
+      /* unreadable design doc contributes no links */
+    }
+  }
+  return ids;
+}
+
+function partitionDecisionsForTask(root, task = {}, { lifecycles = IMPLEMENTATION_LIFECYCLES, relevance = true, minOverlap = 3, maxRelated = 15, designDir = join('docs', 'design') } = {}) {
   const live = listDecisions(root).filter((d) => d.status && lifecycles.includes(d.status.lifecycle));
   const fm = (task && task.frontmatter) || {};
   const blob = taskBlob(task);
   const referenced = new Set(blob.match(/DEC-\d{4}/g) || []);
   const isReferenced = (d) => referenced.has((d.metadata || {}).id);
-  const candidates = live.filter((d) => (d.metadata || {}).scope === 'project' || isReferenced(d));
-  if (!relevance) return { selected: candidates, omitted: [] };
 
   const features = new Set();
   if (fm.feature) features.add(String(fm.feature));
+  if (fm.specRef && fm.specRef.featureId) features.add(String(fm.specRef.featureId));
   for (const m of blob.matchAll(DOC_SLUG_RE)) features.add(m[1]);
   for (const d of live) if (isReferenced(d) && featureOf(d)) features.add(featureOf(d));
+  for (const id of designLinkedDecisionIds(root, features, designDir)) referenced.add(id);
+
+  const candidates = live.filter((d) => (d.metadata || {}).scope === 'project' || isReferenced(d));
+  // Primary = the decisions this task directly implements (named by the task or
+  // its design doc, or recorded by its own feature's design session). These get
+  // full detail in the prompt; the rest are rendered as one-line constraints.
+  const isPrimary = (d) => isReferenced(d) || (featureOf(d) !== null && features.has(featureOf(d)));
+  const byId = (a, b) => a.metadata.id.localeCompare(b.metadata.id);
+  const primaryIds = (list) => list.filter(isPrimary).map((d) => d.metadata.id);
+  if (!relevance) return { selected: candidates.sort(byId), omitted: [], primary: primaryIds(candidates) };
 
   const taskTerms = terms([fm.title, (fm.labels || []).join(' '), blob].join(' '));
   const selected = [];
@@ -193,15 +260,64 @@ function partitionDecisionsForTask(root, task = {}, { lifecycles = IMPLEMENTATIO
   selected.push(...related.slice(0, maxRelated).map((r) => r.d));
   omitted.push(...related.slice(maxRelated).map((r) => r.d));
 
-  const byId = (a, b) => a.metadata.id.localeCompare(b.metadata.id);
-  return { selected: selected.sort(byId), omitted: omitted.sort(byId) };
+  selected.sort(byId);
+  return { selected, omitted: omitted.sort(byId), primary: primaryIds(selected) };
+}
+
+// ADR substance check — the reasoning a decision must carry to be usable as an
+// implementation constraint: the forces (context), why this option (rationale),
+// the trade-offs accepted (consequences), and the alternatives considered (>=2
+// options, each described so a rejected one says why it lost). Each section may
+// live in its spec field or as a "## <Heading>" section of spec.body (imported
+// and hand-written ADRs use the body form).
+const ADR_SECTIONS = {
+  context: ['context'],
+  rationale: ['rationale', 'decision'],
+  consequences: ['consequences'],
+};
+
+function bodySection(body, heading) {
+  const re = new RegExp(`^#{2,}\\s+${heading}\\b[^\\n]*\\n([\\s\\S]*?)(?=^#{2,}\\s|(?![\\s\\S]))`, 'im');
+  const m = String(body || '').match(re);
+  return m ? m[1].trim() : '';
+}
+
+function adrSectionText(decision, key) {
+  const spec = (decision && decision.spec) || {};
+  if (spec[key] && String(spec[key]).trim()) return String(spec[key]).trim();
+  for (const h of ADR_SECTIONS[key]) {
+    const t = bodySection(spec.body, h);
+    if (t) return t;
+  }
+  return '';
+}
+
+function evaluateAdrQuality(decision) {
+  const spec = (decision && decision.spec) || {};
+  const id = ((decision && decision.metadata) || {}).id || '<unknown>';
+  const issues = [];
+  for (const key of Object.keys(ADR_SECTIONS)) {
+    if (!adrSectionText(decision, key)) issues.push(`${id}: missing ${key}`);
+  }
+  const options = Array.isArray(spec.options) ? spec.options : [];
+  if (options.length < 2) issues.push(`${id}: ${options.length} option(s) — record at least one rejected alternative`);
+  for (const o of options) {
+    // The CLI falls back to description = id when none is given ("a" or "a:"),
+    // which records the option's name but not why it won or lost.
+    if (!o || !o.description || String(o.description).trim() === String(o.id).trim()) {
+      issues.push(`${id}: option "${o && o.id}" has no description of why it was chosen/rejected`);
+    }
+  }
+  const chosen = decision && decision.status && decision.status.answeredOptionId;
+  if (chosen && !options.some((o) => o && o.id === chosen)) issues.push(`${id}: chosen option "${chosen}" is not among its options`);
+  return { id, valid: issues.length === 0, issues };
 }
 
 function selectDecisionsForTask(root, task = {}, opts = {}) {
   return partitionDecisionsForTask(root, task, opts).selected;
 }
 
-module.exports = { newDecision, answerDecision, writeDecision, loadDecision, listDecisions, selectDecisionsForTask, partitionDecisionsForTask, nextId, storeDir, STORE_REL, LIFECYCLES, IMPLEMENTATION_LIFECYCLES };
+module.exports = { newDecision, amendDecision, answerDecision, writeDecision, loadDecision, listDecisions, selectDecisionsForTask, partitionDecisionsForTask, evaluateAdrQuality, adrSectionText, terms, nextId, storeDir, STORE_REL, LIFECYCLES, IMPLEMENTATION_LIFECYCLES };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -230,10 +346,26 @@ if (require.main === module) {
       });
       const file = writeDecision(root, decision);
       console.log(`created ${id} -> ${file}`);
-      // Nudge toward non-anemic ADRs (Fowler/AWS): a bare summary+options record
-      // loses the reasoning. Warn (do not block) when the canonical sections are absent.
-      const missing = ['context', 'rationale', 'consequences', 'confidence'].filter((k) => !decision.spec[k]);
-      if (missing.length) console.error(`note: ${id} is missing ADR section(s): ${missing.join(', ')} — add --${missing.join(' / --')} so the decision records its reasoning, not just the choice.`);
+      // Anemic ADRs are recorded (the store is append-only) but a design that
+      // links one fails design-gate / DoR gate 9 — say so now, not at dispatch.
+      const quality = evaluateAdrQuality(decision);
+      if (!quality.valid) console.error(`warning: ${id} would fail the design gate: ${quality.issues.join('; ')}. Re-record it with --context/--rationale/--consequences and >=2 described --options.`);
+      if (!decision.spec.confidence) console.error(`note: ${id} has no --confidence.`);
+    } else if (cmd === 'amend') {
+      const id = flag('id');
+      if (!id) throw new Error('amend requires --id DEC-NNNN');
+      const pairs = (raw) => (raw || '').split(',').filter(Boolean).map((pair) => {
+        const [oid, ...d] = pair.split(':');
+        return { id: oid.trim(), description: d.join(':').trim() };
+      });
+      const describeOptions = Object.fromEntries(pairs(flag('describe')).map((o) => [o.id, o.description]));
+      const { decision, filled } = amendDecision(loadDecision(root, id), {
+        context: flag('context'), rationale: flag('rationale'), consequences: flag('consequences'), confidence: flag('confidence'),
+        addOptions: pairs(flag('add-options')), describeOptions, amendedAt: now,
+      });
+      writeDecision(root, decision);
+      const quality = evaluateAdrQuality(decision);
+      console.log(`amended ${id}: ${filled.join(', ') || 'nothing to fill'}${quality.valid ? ' — now complete' : ` — still incomplete: ${quality.issues.join('; ')}`}`);
     } else if (cmd === 'list') {
       const rows = listDecisions(root, { lifecycle: flag('lifecycle') });
       if (rows.length === 0) console.log('no decisions recorded yet.');
@@ -254,7 +386,7 @@ if (require.main === module) {
       const r = bootstrapAdrs(root, { created: now });
       console.log(r.summary);
     } else {
-      console.log('usage: decisions new --summary "..." --options a:desc,b:desc \\\n                     [--context ...] [--rationale ...] [--consequences ...] [--confidence high|medium|low] [--body ...]\n       decisions list [--lifecycle open]\n       decisions import       (import existing ADRs from docs/adr etc.)\n       decisions detect       (reverse-engineer proposed ADRs from code)\n       decisions bootstrap    (import + detect)');
+      console.log('usage: decisions new --summary "..." --options a:desc,b:desc \\\n                     [--context ...] [--rationale ...] [--consequences ...] [--confidence high|medium|low] [--body ...]\n       decisions amend --id DEC-NNNN [--context ...] [--rationale ...] [--consequences ...] [--confidence ...] [--add-options b:why-rejected] [--describe a:why-chosen]   (fills gaps only)\n       decisions list [--lifecycle open]\n       decisions import       (import existing ADRs from docs/adr etc.)\n       decisions detect       (reverse-engineer proposed ADRs from code)\n       decisions bootstrap    (import + detect)');
     }
     process.exit(0);
   } catch (err) {

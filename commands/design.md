@@ -16,8 +16,22 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
 
 ## Steps
 
-1. **Read the contract.** Read `docs/prd/$1.md` (must be `status: approved`) and any
-   existing `docs/design/$1.md`. If the PRD isn't approved, stop — design follows
+1. **Read the contract.** Read `docs/prd/$1.md` (must be `status: approved`), any
+   existing `docs/design/$1.md`, and `docs/product/context.md` (its Glossary,
+   Regulatory constraints and Current capabilities bind the design too — pass those
+   sections to the architects).
+   **Read the architecture overview** `docs/architecture/overview.md` and pass it to
+   every architect: the design must place each change in the component that owns it
+   and connect components only through the listed contracts.
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/architecture-context.js" --validate || true
+   ```
+   Missing → run `/ai-sdlc:architecture` first (offer it to the operator). Invalid → the
+   design gate fails every design until it is fixed; surface the reasons. Architects
+   can query it (and the product context, ADRs) on demand with the ai-sdlc-context MCP
+   tools (`architecture_lookup`, `architecture_contracts`, `product_lookup`,
+   `decision_lookup`). In a monorepo, also read the touched subprojects'
+   `<subproject>/docs/architecture/overview.md`. If the PRD isn't approved, stop — design follows
    an approved PRD, not a draft.
 
 1b. **Ground the external contracts BEFORE proposing (integration features).** If the
@@ -181,14 +195,30 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
      --options "a:…,b:…" --context "…" --rationale "…" --consequences "…" --confidence high|medium|low
    ```
    (`scope: project` for foundational/platform decisions; feature scope for
-   feature-internal ones.) The CLI warns if a decision is anemic — fill the sections.
+   feature-internal ones.) **Every ADR must be complete** — `--context`, `--rationale`,
+   `--consequences`, and **>= 2 options each with a description** (for the rejected
+   ones, *why* they lost). The design gate (and DoR gate 9) fails a design that links an
+   incomplete ADR, and the CLI warns at record time. The implementer receives the full
+   context/rationale/consequences/rejected options of every ADR its task implements.
    For many ADRs, a one-off Node script using `newDecision`+`writeDecision` in a
    loop is cleaner than N shell calls.
 
 5. **Synthesize the design doc.** Write `docs/design/$1.md` from
    `docs/design/_template.md` — reflecting the **agreed** architecture: the detailed
    schema/DDL, module boundaries, data flow, interfaces, risks, test strategy — and
-   link every recorded ADR in its Decisions section. Validate:
+   link every recorded ADR in its Decisions section. Set `relatedPrd: docs/prd/$1.md`
+   and `architecture: docs/architecture/overview.md`. The Architecture section names
+   the components it changes **by their names in the overview** and the contracts that
+   connect them; anything new is declared `New component: <name>` — and the overview is
+   **updated in the same change** (new component with its code path, new contract edge,
+   new data owner, new invariant), then re-validated.
+   The doc is handed **verbatim** to the planner, implementer and reviewers, and an
+   approved design doc *replaces* the executor's ad-hoc design panel — so it must be
+   buildable as written. The gate enforces: Data model has real DDL / a schema code
+   block / a field table; Interfaces gives concrete signatures, endpoints, flags or
+   env vars; Data flow states failure/retry behaviour; Test strategy maps **every PRD
+   acceptance criterion by number** (`AC1 — integration: …`); every linked ADR is
+   complete. Validate:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/design-gate.js" "docs/design/$1.md" || true
    ```
@@ -211,15 +241,17 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
 7. **Scaffold the backlog task — from the PRD *and* the design.** Now that the
    architecture exists, fold both the product contract and the technical decisions
    into one DoR-shaped task. The `--prd` flag emits the `specRef` block (gate 3 +
-   gate 8 resolve it); seed `--refs` with the **design doc** and the concrete
-   surfaces the ADRs name, so gate 9's design link and gate 3's ≥3 references are
-   both satisfied. Allocate the id first:
+   gate 8 resolve it) **and copies the PRD's acceptance criteria into the task
+   verbatim** — do not re-type them; `--ac` only adds *extra* criteria the design
+   introduces (non-functional / resource-budget ACs). Seed `--refs` with the
+   **design doc** and the concrete surfaces the ADRs name, so gate 9's design link
+   and gate 3's ≥3 references are both satisfied. Allocate the id first:
    ```bash
    ID=$(node -e "console.log(require(process.env.CLAUDE_PLUGIN_ROOT+'/decision-engine/backlog-task-new').nextTaskId(process.cwd()))")
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/backlog-task-new.js" "<title>" --id "$ID" \
      --prd "docs/prd/$1.md" --feature-id "$1" \
      --labels <a,b> --refs "docs/design/$1.md,<surface1>,<surface2>" \
-     --ac "<criterion 1>" --ac "<criterion 2>" \
+     --ac "<extra non-functional criterion, if any>" \
      --metric "<success metric 1>" --metric "<success metric 2>" \
      --priority <low|medium|high> --desc "<one-paragraph problem+scope, grounded in the ADRs>"
    ```

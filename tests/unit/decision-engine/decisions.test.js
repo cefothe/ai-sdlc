@@ -221,3 +221,111 @@ describe('partitionDecisionsForTask (relevance filter)', () => {
     }
   });
 });
+
+describe('partitionDecisionsForTask — primary tier + design-doc links', () => {
+  const opt = [{ id: 'a', description: 'x' }];
+  function seed(root) {
+    const w = (id, over) => dec.writeDecision(root, dec.newDecision({ id, options: opt, created: 't', scope: 'project', lifecycle: 'answered', ...over }));
+    w('DEC-0001', { summary: 'foundational money types', source: 'design-panel' });
+    w('DEC-0002', { summary: 'own feature ranking', source: 'design:unified-catalog' });
+    w('DEC-0005', { summary: 'referenced explicitly', source: 'design:trading-backoffice' });
+    w('DEC-0006', { summary: 'feature-scope, linked only from the design doc', source: 'design:unified-catalog', scope: 'feature' });
+    fs.mkdirSync(path.join(root, 'docs', 'design'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'docs', 'design', 'unified-catalog.md'), '## Decisions\n- DEC-0002 ranking\n- DEC-0006 cache key\n');
+  }
+  const task = {
+    frontmatter: {
+      id: 'T-1', title: 'catalog search',
+      references: ['.ai-sdlc/_decisions/DEC-0005.yaml'],
+      specRef: { source: 'prd', featureId: 'unified-catalog', artifactPath: 'docs/prd/unified-catalog.md' },
+    },
+  };
+
+  test('ADRs linked from the feature design doc are selected even when feature-scope', () => {
+    const root = tmp();
+    try {
+      seed(root);
+      const { selected } = dec.partitionDecisionsForTask(root, task);
+      expect(selected.map((d) => d.metadata.id)).toEqual(['DEC-0001', 'DEC-0002', 'DEC-0005', 'DEC-0006']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('primary = referenced / design-linked / own-feature, never foundational', () => {
+    const root = tmp();
+    try {
+      seed(root);
+      expect(dec.partitionDecisionsForTask(root, task).primary).toEqual(['DEC-0002', 'DEC-0005', 'DEC-0006']);
+      expect(dec.partitionDecisionsForTask(root, task, { relevance: false }).primary).toEqual(['DEC-0002', 'DEC-0005', 'DEC-0006']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an unsafe featureId never reads outside docs/design', () => {
+    const root = tmp();
+    try {
+      seed(root);
+      const evil = { frontmatter: { id: 'T-2', title: 'x', specRef: { featureId: '../../etc' } } };
+      expect(dec.partitionDecisionsForTask(root, evil).selected.map((d) => d.metadata.id)).toEqual(['DEC-0001']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('evaluateAdrQuality', () => {
+  const two = [{ id: 'pg', description: 'Chosen: relational joins needed' }, { id: 'mongo', description: 'Rejected: no joins' }];
+  const full = (over = {}) => dec.newDecision({ id: 'DEC-0010', summary: 'Postgres', created: 't', options: two, context: 'c', rationale: 'r', consequences: 'q', ...over });
+
+  test('a decision with context/rationale/consequences and two described options is valid', () => {
+    expect(dec.evaluateAdrQuality(full())).toEqual({ id: 'DEC-0010', valid: true, issues: [] });
+  });
+
+  test('sections may live in spec.body headings instead of spec fields', () => {
+    const d = dec.newDecision({ id: 'DEC-0011', summary: 's', created: 't', options: two, body: '## Context\nforces\n\n## Decision\nwhy\n\n## Consequences\ntrade-offs\n' });
+    expect(dec.evaluateAdrQuality(d).valid).toBe(true);
+    expect(dec.adrSectionText(d, 'rationale')).toBe('why');
+  });
+
+  test('reports each missing section, a lone option, and an undescribed option', () => {
+    const d = dec.newDecision({ id: 'DEC-0012', summary: 's', created: 't', options: [{ id: 'pg', description: 'pg' }] });
+    const { valid, issues } = dec.evaluateAdrQuality(d);
+    expect(valid).toBe(false);
+    expect(issues.join(' ')).toMatch(/missing context/);
+    expect(issues.join(' ')).toMatch(/missing rationale/);
+    expect(issues.join(' ')).toMatch(/missing consequences/);
+    expect(issues.join(' ')).toMatch(/1 option/);
+    expect(issues.join(' ')).toMatch(/"pg" has no description/);
+  });
+
+  test('a chosen option that is not among the options is reported', () => {
+    const d = full();
+    d.status = { lifecycle: 'answered', answeredOptionId: 'sqlite' };
+    expect(dec.evaluateAdrQuality(d).issues.join(' ')).toMatch(/chosen option "sqlite"/);
+  });
+});
+
+describe('amendDecision (append-only migration)', () => {
+  const anemic = () => dec.newDecision({ id: 'DEC-0020', summary: 'Postgres', created: 't', options: [{ id: 'pg', description: 'pg' }], context: 'existing context' });
+
+  test('fills absent sections, describes and adds options, and makes the ADR complete', () => {
+    const { decision, filled } = dec.amendDecision(anemic(), {
+      rationale: 'joins + transactions', consequences: 'ops must run Postgres', confidence: 'high',
+      describeOptions: { pg: 'Chosen: relational integrity' }, addOptions: [{ id: 'mongo', description: 'Rejected: no multi-doc transactions' }], amendedAt: '2026-11-07T00:00:00Z',
+    });
+    expect(filled).toEqual(['rationale', 'consequences', 'confidence', 'option:pg', '+option:mongo']);
+    expect(dec.evaluateAdrQuality(decision).valid).toBe(true);
+    expect(decision.metadata.amendments).toEqual([{ at: '2026-11-07T00:00:00Z', filled }]);
+    expect(decision.spec.context).toBe('existing context');
+  });
+
+  test('never overwrites recorded reasoning or options', () => {
+    expect(() => dec.amendDecision(anemic(), { context: 'new' })).toThrow(/already recorded/);
+    const described = dec.newDecision({ id: 'DEC-0021', summary: 's', created: 't', options: [{ id: 'a', description: 'why a' }, { id: 'b', description: 'why not b' }] });
+    expect(() => dec.amendDecision(described, { describeOptions: { a: 'other' } })).toThrow(/already has a description/);
+    expect(() => dec.amendDecision(described, { addOptions: [{ id: 'b', description: 'x' }] })).toThrow(/already exists/);
+    expect(() => dec.amendDecision(described, { describeOptions: { z: 'x' } })).toThrow(/no option "z"/);
+  });
+});

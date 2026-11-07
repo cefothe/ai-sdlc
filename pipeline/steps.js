@@ -8,6 +8,7 @@
 
 const { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, renameSync, rmSync, unlinkSync } = require('node:fs');
 const { join, dirname, basename } = require('node:path');
+const { adrSectionText } = require('../decision-engine/decisions');
 
 const DEFAULT_BRANCH_PATTERN = 'ai-sdlc/{issueIdLower}-{slug}';
 const FALLBACK_SLUG = 'task';
@@ -96,18 +97,56 @@ function beginTask({ taskFilePath, worktreePath, taskId }) {
 // Accepts the selected decisions array, or a partition { selected, omitted } from
 // decisions.partitionDecisionsForTask — omitted (unrelated) project ADRs are named
 // by id only, so the agent can still open one without paying for all of them.
+// Per-field cap for a primary ADR's detail block — enough for the reasoning,
+// bounded so one verbose ADR cannot crowd out the rest of the prompt.
+const ADR_FIELD_MAX = 1200;
+
+function clip(text, max = ADR_FIELD_MAX) {
+  const t = String(text || '').trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+// Full reasoning for an ADR the task directly implements: what was decided and
+// why, the consequences to respect, and the rejected alternatives (so the
+// implementer does not "improve" the code back into an option that lost).
+function renderDecisionDetail(d) {
+  const m = d.metadata || {};
+  const s = d.spec || {};
+  const st = d.status || {};
+  const out = [`  - ${m.id} [${st.lifecycle || 'proposed'}${m.scope ? `/${m.scope}` : ''}]: ${s.summary}${st.answeredOptionId ? ` (chosen: ${st.answeredOptionId})` : ''}`];
+  for (const [label, key] of [['Context', 'context'], ['Decision/rationale', 'rationale'], ['Consequences', 'consequences']]) {
+    const text = adrSectionText(d, key);
+    if (text) out.push(`      ${label}: ${clip(text).replace(/\n+/g, ' ')}`);
+  }
+  const rejected = (s.options || []).filter((o) => o && o.id !== st.answeredOptionId);
+  if (st.answeredOptionId && rejected.length) {
+    out.push(`      Rejected: ${rejected.map((o) => `${o.id} — ${clip(o.description, 300)}`).join('; ')}`);
+  }
+  return out.join('\n');
+}
+
+function renderDecisionLine(d) {
+  const m = d.metadata || {};
+  const s = d.spec || {};
+  const st = d.status || {};
+  const chosen = st.answeredOptionId ? ` (chosen: ${st.answeredOptionId})` : '';
+  const why = s.rationale ? ` — ${String(s.rationale).split('\n')[0].trim()}` : '';
+  return `  - ${m.id} [${st.lifecycle || 'proposed'}${m.scope ? `/${m.scope}` : ''}]: ${s.summary}${chosen}${why}`;
+}
+
+// Accepts a plain decision list (all one-line) or a partitionDecisionsForTask
+// result { selected, omitted, primary }: primary ids get full detail, other
+// selected ADRs one line each, omitted ones by id only.
 function formatDecisionsContext(input) {
   const decisions = Array.isArray(input) ? input : (input && input.selected) || [];
   const omitted = Array.isArray(input) ? [] : (input && input.omitted) || [];
+  const primary = new Set(Array.isArray(input) ? [] : (input && input.primary) || []);
   if (decisions.length === 0 && omitted.length === 0) return null;
-  const lines = decisions.map((d) => {
-    const m = d.metadata || {};
-    const s = d.spec || {};
-    const st = d.status || {};
-    const chosen = st.answeredOptionId ? ` (chosen: ${st.answeredOptionId})` : '';
-    const why = s.rationale ? ` — ${String(s.rationale).split('\n')[0].trim()}` : '';
-    return `  - ${m.id} [${st.lifecycle || 'proposed'}${m.scope ? `/${m.scope}` : ''}]: ${s.summary}${chosen}${why}`;
-  });
+  const direct = decisions.filter((d) => primary.has((d.metadata || {}).id));
+  const general = decisions.filter((d) => !primary.has((d.metadata || {}).id));
+  const body = [];
+  if (direct.length) body.push('This task implements these decisions directly:', ...direct.map(renderDecisionDetail));
+  if (general.length) body.push(...(direct.length ? ['Other decisions in force:'] : []), ...general.map(renderDecisionLine));
   const tail = omitted.length
     ? [`Other project-scope ADRs judged unrelated to this task (open .ai-sdlc/_decisions/<id>.yaml if your change reaches their area): ${omitted.map((d) => (d.metadata || {}).id).join(', ')}`]
     : [];
@@ -115,27 +154,47 @@ function formatDecisionsContext(input) {
     'Architectural decisions (ADRs) — CONSTRAINTS for this implementation.',
     'Honor these; cite the DEC id where you implement one. If an ADR blocks the task or',
     'you must diverge, STOP and flag it — do not silently contradict a recorded decision.',
-    ...lines,
+    ...body,
     ...tail,
   ].join('\n');
 }
 
-function buildDeveloperPrompt({ task, branch, cxpakContext, capabilityGuidance, decisionsContext }) {
+// On-demand context the pushed slices could not predict — served to every
+// stage by the ai-sdlc-context MCP server (mcp/context-server.js).
+const CONTEXT_TOOLS_GUIDANCE = 'Look-ups (ai-sdlc-context MCP tools): architecture_lookup (which component owns a path / what a component is, its contracts and invariants), architecture_contracts, product_lookup (personas, glossary terms, capabilities, baselines), spec_lookup (a task\'s full spec), decision_lookup (an ADR in full). Use them whenever your change reaches beyond the context above — never guess ownership or a contract.';
+
+// The task's own description (the scaffolder's SECTION:DESCRIPTION block, or a
+// "## Description" section), or '' when the task has none.
+const DESCRIPTION_BLOCK_RE = /<!--\s*SECTION:DESCRIPTION:BEGIN\s*-->([\s\S]*?)<!--\s*SECTION:DESCRIPTION:END\s*-->/i;
+function taskDescription(task) {
+  const body = String((task && task.body) || '');
+  const block = body.match(DESCRIPTION_BLOCK_RE);
+  if (block) return block[1].trim();
+  const heading = body.match(/^##+\s*Description\s*$/im);
+  if (!heading) return '';
+  const rest = body.slice(heading.index + heading[0].length);
+  const next = rest.search(/^##+\s+/m);
+  return (next === -1 ? rest : rest.slice(0, next)).trim();
+}
+
+function buildDeveloperPrompt({ task, branch, cxpakContext, capabilityGuidance, decisionsContext, specContext }) {
   const fm = task.frontmatter || {};
   const acs = (task.acceptanceCriteria || []).map((a, i) => `  ${i + 1}. ${a.text}`).join('\n');
+  const description = taskDescription(task);
   const lines = [
     `You are implementing backlog task ${fm.id} on branch ${branch}.`,
     `Title: ${fm.title}`,
     '',
-    'Acceptance criteria (all must be satisfied):',
-    acs || '  (none specified)',
-    '',
   ];
+  if (description) lines.push('Description:', description, '');
+  lines.push('Acceptance criteria (all must be satisfied):', acs || '  (none specified)', '');
+  if (specContext) lines.push(specContext, '');
+  if (decisionsContext) lines.push(decisionsContext, '');
   if (cxpakContext) {
     lines.push('Structured context (cxpak — read this before exploring):', cxpakContext, '');
   }
-  if (decisionsContext) lines.push(decisionsContext, '');
   if (capabilityGuidance) lines.push(capabilityGuidance, '');
+  lines.push(CONTEXT_TOOLS_GUIDANCE, '');
   lines.push('Implement the contract exactly. Return JSON: { commitSha, filesChanged[], filesChangedExternal[], verifications[], summary }.');
   return { prompt: lines.join('\n') };
 }
@@ -212,7 +271,7 @@ function computeReviewDiff({ runner, cwd, baseBranch = 'main', commitSha, fallba
 // advisory promise-verification string (read-only reviewer input). `team` is an
 // optional resolved reviewer set (from the CapabilityMap) — each entry may
 // carry { role, name, harness }; when omitted, the default 3 roles are used.
-function buildReviewPrompts({ task, diff, promiseContext, team, capabilityGuidance }) {
+function buildReviewPrompts({ task, diff, promiseContext, team, capabilityGuidance, specContext, reviewContract }) {
   const fm = task.frontmatter || {};
   const roster = (team && team.length ? team : ['code-reviewer', 'test-reviewer', 'security-reviewer']).map((r) =>
     typeof r === 'string' ? { role: r, name: r } : { role: r.role || r.name, name: r.name || r.role, harness: r.harness },
@@ -222,6 +281,9 @@ function buildReviewPrompts({ task, diff, promiseContext, team, capabilityGuidan
       `You are the ${r.role} for task ${fm.id}${r.name && r.name !== r.role ? ` (agent: ${r.name})` : ''}. Review the diff below independently.`,
       promiseContext ? `\n${promiseContext}\n` : '',
       capabilityGuidance ? `${capabilityGuidance}\n` : '',
+      `${CONTEXT_TOOLS_GUIDANCE}\n`,
+      reviewContract ? `${reviewContract}\n` : '',
+      specContext ? `${specContext}\n\nReview the diff AGAINST this spec as well as for code quality: flag any PRD acceptance criterion not implemented, any divergence from the design's data model/interfaces/data flow, and any scope creep into Non-goals (severity major).\n` : '',
       'Diff:',
       diff || '(diff omitted)',
       '',
@@ -270,12 +332,14 @@ function finalizeTask({ taskFilePath, completedDir, requireAllAcChecked, task })
 }
 
 // Step 11 — push branch + open PR (injected gh).
-function pushAndPr({ branch, task, baseBranch = 'main', runner, gh, worktreePath }) {
+// draft: a slow-pace change opens as a draft — a human marks it ready.
+// body: the validation report (gates, ACs, review, degraded seams) — defaults to a one-liner.
+function pushAndPr({ branch, task, baseBranch = 'main', runner, gh, worktreePath, draft = false, body }) {
   if (runner) runner(['push', '-u', 'origin', branch], { cwd: worktreePath });
   const fm = task.frontmatter || {};
-  const out = gh(['pr', 'create', '--head', branch, '--base', baseBranch, '--title', `${fm.id}: ${fm.title}`, '--body', `Implements ${fm.id}.`]);
+  const out = gh(['pr', 'create', '--head', branch, '--base', baseBranch, '--title', `${fm.id}: ${fm.title}`, '--body', body || `Implements ${fm.id}.`, ...(draft ? ['--draft'] : [])]);
   const url = (out && out.stdout ? out.stdout : String(out || '')).trim();
-  return { url, branch };
+  return { url, branch, draft };
 }
 
 // Step 12 — sibling PRs for cross-repo external changes (workspace / external paths).
@@ -308,7 +372,7 @@ function cleanupTask({ worktreePath }) {
 
 module.exports = {
   slugify, sweepMergedWorktrees, validateTaskStep, computeBranchName, setupWorktree,
-  beginTask, buildDeveloperPrompt, formatDecisionsContext, parseDeveloperReturn, computeReviewDiff, buildReviewPrompts,
+  beginTask, buildDeveloperPrompt, formatDecisionsContext, taskDescription, CONTEXT_TOOLS_GUIDANCE, parseDeveloperReturn, computeReviewDiff, buildReviewPrompts,
   aggregateVerdicts, finalizeTask, pushAndPr, siblingPrs, cleanupTask,
   DEFAULT_BRANCH_PATTERN, FALLBACK_SLUG, SEVERITIES, ACTIVE_TASK_SENTINEL,
 };

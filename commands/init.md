@@ -50,6 +50,14 @@ Target directory is `$1` (defaults to the current working directory). Pass
    - triage seeded tasks against the DoR gate (`.ai-sdlc/dor-config.yaml`),
    - review `.ai-sdlc/capabilities.yaml` to confirm the stage→agent bindings,
    - ratify or reject the proposed ADRs.
+   - fill `docs/product/context.md` (PRDs cannot pass until it is valid),
+   - build `docs/architecture/overview.md` with `/ai-sdlc:architecture` (design docs
+     cannot pass until it is valid),
+   - review `.ai-sdlc/flow.yaml`, `checkpoints.yaml` (what always stops for a human)
+     and `pace.yaml`,
+   - on a brownfield repo with existing PRDs/designs/ADRs, run `/ai-sdlc:migrate`
+     to bring them up to the current gates;
+   - report bugs through `/ai-sdlc:bug` (features through `/ai-sdlc:new`).
 
 ## Notes
 - Idempotent: re-running only fills in missing files; it will not clobber an

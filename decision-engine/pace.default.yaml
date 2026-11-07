@@ -1,0 +1,35 @@
+# Pace layers — ceremony matched to blast radius (after conductr ADR-0061).
+# A repo replaces this file wholesale with .ai-sdlc/pace.yaml.
+#
+# Rules the registry cannot opt out of (enforced in pace.js):
+#   1. A path no layer claims is `normal` and is reported as unclassified, so this
+#      file can only LOWER ceremony, and only for paths someone classified.
+#   2. A path any HITL checkpoint claims (path or content mode) is `slow`.
+#   3. Highest rank wins across the change set; an empty change set is `normal`.
+#   4. Trust can only RAISE ceremony: a low/critical-trust implementer moves the
+#      verdict up one layer; high trust never lowers it.
+#
+# `normal` and `slow` are mandatory; `fast` is optional. Regex, case-insensitive.
+#
+# Ceremony knobs per layer:
+#   designPanel   run the architect design panel when no approved design doc exists
+#   maxReviewers  cap the cross-harness review team (0 = the full resolved team)
+#   draftPr       open the PR as a draft (a human must mark it ready)
+version: "1"
+layers:
+  fast:
+    ceremony: { designPanel: false, maxReviewers: 1, draftPr: false }
+    paths:
+      - "^docs/"
+      - "(^|/)README\\.md$"
+      - "(^|/)CHANGELOG\\.md$"
+      - "\\.(md|txt|rst|adoc)$"
+  normal:
+    ceremony: { designPanel: true, maxReviewers: 0, draftPr: false }
+    paths: []
+  slow:
+    ceremony: { designPanel: true, maxReviewers: 0, draftPr: true }
+    paths:
+      - "^docs/adrs?/"
+      - "(^|/)\\.ai-sdlc/_decisions/"
+      - "(^|/)docs/(prd|design|product|architecture)/"

@@ -66,6 +66,32 @@ describe('resolveReviewTeam', () => {
   });
 });
 
+describe('resolveDiscoveryPanel (product panel)', () => {
+  test('core panel is PM + PO', () => {
+    const { providers, panel } = cap.resolveDiscoveryPanel(MAP, {});
+    expect(providers.map((p) => p.name)).toEqual(['product-manager', 'product-owner']);
+    expect(panel).toBe(true);
+  });
+
+  test('trading labels add the trading advisor; compliance labels add the compliance advisor', () => {
+    for (const label of ['trading', 'execution', 'risk']) {
+      expect(cap.resolveDiscoveryPanel(MAP, { labels: [label] }).providers.find((p) => p.role === 'trading-advisor').name).toBe('grizzled-trader');
+    }
+    for (const label of ['compliance', 'regulatory']) {
+      expect(cap.resolveDiscoveryPanel(MAP, { labels: [label] }).providers.find((p) => p.role === 'compliance-advisor').name).toBe('qa-compliance-engineer');
+    }
+    const both = cap.resolveDiscoveryPanel(MAP, { labels: ['trading', 'compliance', 'strategic'] }).providers.map((p) => p.role);
+    expect(both).toEqual(['product-manager', 'product-owner', 'cmo', 'cpo', 'trading-advisor', 'compliance-advisor']);
+  });
+
+  test('the init capabilities stub routes the same discovery advisors', () => {
+    const yaml = require('js-yaml');
+    const stub = yaml.load(require(path.join(ROOT, 'init', 'config-stubs.js')).capabilities());
+    const roles = cap.resolveDiscoveryPanel(stub, { labels: ['trading', 'compliance'] }).providers.map((p) => p.role);
+    expect(roles).toEqual(['product-manager', 'product-owner', 'trading-advisor', 'compliance-advisor']);
+  });
+});
+
 describe('resolveDesignPanel (architects)', () => {
   test('default panel is the solution + backend architects', () => {
     const { providers, panel } = cap.resolveDesignPanel(MAP, {});
@@ -272,5 +298,51 @@ describe('matchesWhen helper', () => {
     expect(cap.matchesWhen({ languages: ['rust'] }, { languages: ['java'] })).toBe(false);
     expect(cap.matchesWhen({ javaTestFiles: true }, { files: ['XTest.java'] })).toBe(true);
     expect(cap.matchesWhen({ javaTestFiles: true }, { files: ['x.ts'] })).toBe(false);
+  });
+});
+
+describe('allowlistGaps', () => {
+  const fs = require('fs');
+  const os = require('os');
+  function agentsDir(files) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-'));
+    for (const [name, fm] of Object.entries(files)) fs.writeFileSync(path.join(dir, `${name}.md`), `---\n${fm}\n---\nbody\n`);
+    return dir;
+  }
+  const grant = { mcp: ['firecrawl'], web: ['WebSearch'], skills: ['deep-research'], poc: false };
+
+  test('reports granted tools an explicit allowlist would drop', () => {
+    const dir = agentsDir({ narrow: 'name: narrow\ntools:\n  - Read' });
+    try {
+      expect(cap.allowlistGaps({ type: 'agent', name: 'narrow' }, grant, { agentsDir: dir })).toEqual(['mcp__firecrawl', 'WebSearch', 'Skill']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('plugin-scoped, headless and server-level names all cover an MCP grant', () => {
+    const dir = agentsDir({
+      plugin: 'name: plugin\ntools:\n  - "mcp__plugin_ai-sdlc_firecrawl__*"\n  - WebSearch\n  - Skill',
+      headless: 'name: headless\ntools: mcp__firecrawl__*, WebSearch, Skill',
+      inherit: 'name: inherit\nmodel: opus',
+    });
+    try {
+      for (const name of ['plugin', 'headless', 'inherit']) expect(cap.allowlistGaps({ type: 'agent', name }, grant, { agentsDir: dir })).toEqual([]);
+      expect(cap.allowlistGaps({ type: 'agent', name: 'not-a-plugin-agent' }, grant, { agentsDir: dir })).toEqual([]);
+      expect(cap.allowlistGaps({ type: 'skill', name: 'code-plan' }, grant, { agentsDir: dir })).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('the plugin default map leaves no bound agent without its stage grant', () => {
+    for (const stageName of ['discovery', 'design', 'review']) {
+      for (const labels of [[], ['db'], ['analytics'], ['cloud'], ['security'], ['trading', 'compliance', 'strategic']]) {
+        const grant = cap.resolveStageCapabilities(MAP, stageName, { labels });
+        const panel = stageName === 'review' ? cap.resolveReviewTeam(MAP, { labels }, { implementerHarness: 'claude' }).providers
+          : stageName === 'design' ? cap.resolveDesignPanel(MAP, { labels }).providers : cap.resolveDiscoveryPanel(MAP, { labels }).providers;
+        for (const p of panel) expect([p.name, cap.allowlistGaps(p, grant)]).toEqual([p.name, []]);
+      }
+    }
   });
 });

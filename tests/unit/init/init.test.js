@@ -45,6 +45,12 @@ describe('scaffold (non-destructive)', () => {
       const r = scaffold(dir);
       expect(r.skipped).toContain(path.join('.ai-sdlc', 'dor-config.yaml'));
       expect(r.created).toContain(path.join('.ai-sdlc', 'quality-gate.yaml'));
+      expect(r.created).toContain(path.join('docs', 'product', 'context.md'));
+      expect(r.created).toEqual(expect.arrayContaining([
+        path.join('.ai-sdlc', 'flow.yaml'), path.join('.ai-sdlc', 'checkpoints.yaml'), path.join('.ai-sdlc', 'pace.yaml'),
+        path.join('docs', 'architecture', 'overview.md'),
+      ]));
+      expect(fs.readFileSync(path.join(dir, 'docs', 'product', 'context.md'), 'utf8')).toMatch(/## Metric baselines/);
       // existing file untouched
       expect(fs.readFileSync(path.join(dir, '.ai-sdlc', 'dor-config.yaml'), 'utf8')).toMatch(/name: existing/);
     } finally {
