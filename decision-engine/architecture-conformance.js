@@ -16,9 +16,9 @@ const { loadOverviews, ownerOf, mentions } = require('./architecture-context');
 const { collectGitInputs, parseNameStatus, addedLinesByFile } = require('./hitl-gate');
 
 const DEPENDENCY_MANIFEST_RE = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|pyproject\.toml|Pipfile(\.lock)?|poetry\.lock|go\.(mod|sum)|Cargo\.(toml|lock)|pom\.xml|build\.gradle(\.kts)?|Gemfile(\.lock)?|composer\.(json|lock))$/;
-// Files that are not component code: docs, governance, CI, tests at the repo
-// root, and manifests (handled by dependency-change).
-const EXEMPT_RE = /(^|\/)(docs?|\.ai-sdlc|\.github|\.claude|backlog|tests?|__tests__)\/|\.(md|txt|adoc|rst)$|(^|\/)(LICENSE[^/]*|README[^/]*|CHANGELOG[^/]*|\.gitignore|\.editorconfig)$/i;
+// Files that are not component code: docs, governance, CI, tests and fixtures,
+// throwaway spike scripts, and manifests (handled by dependency-change).
+const EXEMPT_RE = /(^|\/)(docs?|\.ai-sdlc|\.github|\.claude|backlog|tests?|__tests__|testdata|fixtures|spikes)\/|\.(md|txt|adoc|rst)$|(^|\/)(LICENSE[^/]*|README[^/]*|CHANGELOG[^/]*|\.gitignore|\.editorconfig)$/i;
 const IMPORT_RE = /\b(import|require|from|include|using|use)\b/;
 
 function escapeRe(s) {

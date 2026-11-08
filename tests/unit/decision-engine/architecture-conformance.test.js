@@ -27,7 +27,7 @@ describe('checkConformance', () => {
   });
 
   test('a file no component owns is a major unowned-file finding; docs/tests are exempt', () => {
-    const r = conf.checkConformance({ files: ['scripts/hack.js', 'docs/x.md', 'tests/a.test.js'], overviews: overviewsOf(dir) });
+    const r = conf.checkConformance({ files: ['scripts/hack.js', 'docs/x.md', 'tests/a.test.js', 'spikes/s1.mjs', 'testdata/k.json', 'fixtures/p.json'], overviews: overviewsOf(dir) });
     expect(codes(r)).toEqual(['unowned-file:scripts/hack.js']);
     expect(r.findings[0].severity).toBe('major');
   });

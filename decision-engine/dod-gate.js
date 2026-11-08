@@ -52,17 +52,39 @@ const DEFAULT_CONFIG = {
   },
 };
 
-function loadDodConfig(path) {
-  if (!path || !existsSync(path)) return DEFAULT_CONFIG;
+// The build/test commands the repo's own stack implies, so a Go or Python repo
+// is not judged by `npx tsc` / `npm test`. With no recognizable stack (a
+// greenfield repo before its first code) only the markers check applies.
+function stackDefaultChecks(root) {
+  const has = (f) => existsSync(join(root, f));
+  if (has('go.mod')) return { build: { command: 'go build ./...', enforced: true }, test: { command: 'go test ./...', enforced: true } };
+  if (has('Cargo.toml')) return { build: { command: 'cargo build --quiet', enforced: true }, test: { command: 'cargo test --quiet', enforced: true } };
+  if (has('pyproject.toml') || has('setup.py')) return { test: { command: 'python -m pytest -q', enforced: true } };
+  if (has('pom.xml')) return { test: { command: 'mvn -q verify', enforced: true } };
+  if (has('build.gradle') || has('build.gradle.kts')) return { build: { command: './gradlew build -q', enforced: true } };
+  if (has('package.json')) {
+    const checks = { test: { command: 'npm test', enforced: true } };
+    if (has('tsconfig.json')) checks.build = { command: 'npx tsc --noEmit', enforced: true };
+    return checks;
+  }
+  return {};
+}
+
+// root: when given, defaults come from the repo's stack instead of the JS defaults.
+function loadDodConfig(path, { root } = {}) {
+  const base = root
+    ? { ...DEFAULT_CONFIG, spec: { ...DEFAULT_CONFIG.spec, checks: { ...stackDefaultChecks(root), markers: { enforced: true } } } }
+    : DEFAULT_CONFIG;
+  if (!path || !existsSync(path)) return base;
   const raw = yaml.load(readFileSync(path, 'utf8')) || {};
   const spec = raw.spec || {};
   return {
-    ...DEFAULT_CONFIG,
+    ...base,
     ...raw,
     spec: {
-      ...DEFAULT_CONFIG.spec,
+      ...base.spec,
       ...spec,
-      checks: { ...DEFAULT_CONFIG.spec.checks, ...(spec.checks || {}) },
+      checks: { ...base.spec.checks, ...(spec.checks || {}) },
     },
   };
 }
@@ -253,7 +275,8 @@ function changedFilesSince(base, cwd = process.cwd()) {
   return out.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
-module.exports = { evaluateDod, loadDodConfig, changedFilesSince, runPool, serializeGroups, DEFAULT_CONFIG, MARKER_RE, RESERVED_CHECKS };
+module.exports = {
+  stackDefaultChecks, evaluateDod, loadDodConfig, changedFilesSince, runPool, serializeGroups, DEFAULT_CONFIG, MARKER_RE, RESERVED_CHECKS };
 
 // CLI: node decision-engine/dod-gate.js [--config path] [--base ref] [--file a.ts --file b.ts]
 //   --base ref   derive the changed files from `git diff ref...HEAD` (used when no
@@ -278,7 +301,7 @@ if (require.main === module) {
   }
   (async () => {
     const changedFiles = files.length || !base ? files : changedFilesSince(base);
-    const res = await evaluateDod({ config: loadDodConfig(cfgPath), changedFiles, base });
+    const res = await evaluateDod({ config: loadDodConfig(cfgPath, { root: process.cwd() }), changedFiles, base });
     for (const c of res.checks) {
       const status = c.skipped ? 'SKIP' : c.passed ? 'PASS' : 'FAIL';
       const took = c.durationMs != null ? ` (${Math.round(c.durationMs / 1000)}s)` : '';

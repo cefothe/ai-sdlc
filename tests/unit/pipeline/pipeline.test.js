@@ -131,6 +131,11 @@ describe('steps: pure primitives', () => {
     expect(b).toBe('ai-sdlc/aisdlc-1-fix-the-bug');
   });
 
+  test('aggregateVerdicts: a reviewer with no structured verdict is not approval', () => {
+    const r = steps.aggregateVerdicts({ verdicts: [{ approved: true, findings: [] }, { summary: 'prose, no JSON' }, null] });
+    expect(r).toMatchObject({ decision: 'CHANGES_REQUESTED', approved: false, invalidVerdicts: 2 });
+  });
+
   test('aggregateVerdicts: APPROVED only when all approve and no critical/major', () => {
     expect(steps.aggregateVerdicts({ verdicts: [{ approved: true, findings: [{ severity: 'minor' }] }, { approved: true, findings: [] }] }).decision).toBe('APPROVED');
     expect(steps.aggregateVerdicts({ verdicts: [{ approved: true, findings: [{ severity: 'major' }] }] }).decision).toBe('CHANGES_REQUESTED');

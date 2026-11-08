@@ -30,8 +30,13 @@ const { detectProjects, projectsForPaths } = require('../decision-engine/monorep
 // read-only ai-sdlc context lookups (architecture / product / spec / ADRs).
 const ALWAYS_MCP = ['cxpak', 'ai-sdlc-context'];
 
+// Diffs of real branches (committed fixtures, evidence) exceed Node's 1 MB
+// default stdout buffer — that surfaced as ENOBUFS and made the HITL gate fail
+// closed on a change that fired no checkpoint.
+const EXEC_MAX_BUFFER = 256 * 1024 * 1024;
+
 function defaultExec(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { encoding: 'utf8', ...opts });
+  return execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: EXEC_MAX_BUFFER, ...opts });
 }
 
 function makeGitRunner({ exec = defaultExec } = {}) {

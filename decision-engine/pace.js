@@ -93,8 +93,9 @@ if (require.main === module) {
     const { execFileSync } = require('node:child_process');
     const { parseNameStatus, addedLinesByFile } = require('./hitl-gate');
     const base = flag('base') || 'main';
-    const files = parseNameStatus(execFileSync('git', ['diff', '--name-status', `${base}...HEAD`], { encoding: 'utf8' }));
-    const addedLines = addedLinesByFile(execFileSync('git', ['diff', '--unified=0', `${base}...HEAD`], { encoding: 'utf8' }));
+    const git = (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+    const files = parseNameStatus(git(['diff', '--name-status', `${base}...HEAD`]));
+    const addedLines = addedLinesByFile(git(['diff', '--unified=0', `${base}...HEAD`]));
     console.log(JSON.stringify(evaluatePaceForRoot(process.cwd(), { files, addedLines, trustTier: flag('trust') || null }), null, 2));
     process.exit(0);
   } catch (err) {

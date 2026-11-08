@@ -296,11 +296,16 @@ function buildReviewPrompts({ task, diff, promiseContext, team, capabilityGuidan
 
 // Step 8 — aggregate reviewer verdicts. APPROVED iff all approved and no
 // critical/major findings (reference semantics).
+// A reviewer that returned no structured verdict (approved missing / not a
+// boolean) counts as NOT approved and is reported — silence is not approval.
 function aggregateVerdicts({ verdicts }) {
   const counts = { critical: 0, major: 0, minor: 0, suggestion: 0 };
   let allApproved = true;
+  let invalid = 0;
   for (const v of verdicts || []) {
-    if (!v.approved) allApproved = false;
+    if (!v || typeof v.approved !== 'boolean') invalid += 1;
+    if (!v || v.approved !== true) allApproved = false;
+    if (!v) continue;
     for (const f of v.findings || []) {
       const sev = SEVERITIES.includes(f.severity) ? f.severity : 'suggestion';
       counts[sev] += 1;
@@ -308,7 +313,7 @@ function aggregateVerdicts({ verdicts }) {
   }
   const blocking = counts.critical > 0 || counts.major > 0;
   const decision = allApproved && !blocking ? 'APPROVED' : 'CHANGES_REQUESTED';
-  return { decision, approved: decision === 'APPROVED', counts, blocking };
+  return { decision, approved: decision === 'APPROVED', counts, blocking, invalidVerdicts: invalid };
 }
 
 // Step 10 — finalize: check ACs, flip to Done, move tasks/ -> completed/.

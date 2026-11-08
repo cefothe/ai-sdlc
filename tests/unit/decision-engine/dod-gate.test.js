@@ -293,3 +293,41 @@ describe('exclusive groups + interrupt cleanup', () => {
     }
   }, 10000);
 });
+
+describe('stack-derived DoD defaults', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const { stackDefaultChecks, loadDodConfig } = require(path.join(ROOT, 'decision-engine', 'dod-gate.js'));
+  function repoWith(files) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dod-stack-'));
+    for (const f of files) fs.writeFileSync(path.join(dir, f), '');
+    return dir;
+  }
+
+  test('go.mod → go build/test; pyproject → pytest; package.json+tsconfig → tsc + npm test; nothing → none', () => {
+    const cases = [[['go.mod'], { build: 'go build ./...', test: 'go test ./...' }], [['pyproject.toml'], { test: 'python -m pytest -q' }], [['package.json', 'tsconfig.json'], { build: 'npx tsc --noEmit', test: 'npm test' }], [[], {}]];
+    for (const [files, want] of cases) {
+      const dir = repoWith(files);
+      try {
+        const got = Object.fromEntries(Object.entries(stackDefaultChecks(dir)).map(([k, v]) => [k, v.command]));
+        expect(got).toEqual(want);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test('loadDodConfig with root uses the stack defaults; a config file still overrides them', () => {
+    const dir = repoWith(['go.mod']);
+    try {
+      expect(loadDodConfig(null, { root: dir }).spec.checks.test.command).toBe('go test ./...');
+      fs.writeFileSync(path.join(dir, 'dod.yaml'), 'spec:\n  checks:\n    test:\n      command: make test\n      enforced: true\n');
+      const cfg = loadDodConfig(path.join(dir, 'dod.yaml'), { root: dir });
+      expect(cfg.spec.checks.test.command).toBe('make test');
+      expect(cfg.spec.checks.build.command).toBe('go build ./...');
+      expect(loadDodConfig(null).spec.checks.build.command).toBe('npx tsc --noEmit');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

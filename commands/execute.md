@@ -274,6 +274,11 @@ A ticket should finish **as fast as possible with enough confidence** — not wa
    The **design panel** (step 4) dispatches the same way — its own team plan is
    in `steps.capabilities.design.teamPlan`.
 
+   **Fixes are re-reviewed.** When reviewers request changes and you fix them, re-dispatch
+   the reviewers that requested changes on the NEW diff before moving on — an unreviewed fix
+   is not reviewed code. A reviewer that returns no structured verdict counts as **changes
+   requested**: re-dispatch it once; if it still returns none, report it.
+
 6b. **Validate (Definition-of-Done gate — HARD ENFORCED).** Before finalizing, run
    the DoD gate from the worktree against the base branch:
    ```bash
