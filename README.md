@@ -37,6 +37,11 @@ whole pipeline in a few seconds.
 - [The big picture](#the-big-picture)
 - [Install in your Claude Code](#install-in-your-claude-code)
 - [End-to-end lifecycle](#end-to-end-lifecycle)
+- [Governed context: product, architecture, spec](#governed-context-product-architecture-spec)
+- [Speed contract](#speed-contract)
+- [Harness components and the HITL gate](#harness-components-and-the-hitl-gate)
+- [Bugs and migration](#bugs-and-migration)
+- [Evidence, measurement and the maintain loop](#evidence-measurement-and-the-maintain-loop)
 - [The Step 0–13 pipeline](#the-step-013-pipeline)
 - [Capability map: skills, agents & teams as stages](#capability-map-skills-agents--teams-as-stages)
 - [Cross-harness review & attestation](#cross-harness-review--attestation)
@@ -84,13 +89,18 @@ Operator entry points, all sharing the same tested core:
 
 | Command | What it does |
 |---|---|
-| `/ai-sdlc:init [dir] [--workspace]` | Scaffold `.ai-sdlc/` + backlog into a repo (brownfield-safe) |
-| `/ai-sdlc:new "<title>"` | Product panel (PM/PO, +CMO/CPO if strategic) shapes a **product-only** PRD |
-| `/ai-sdlc:design <slug>` | Architect panel → design doc + comprehensive ADRs (the technical *how*) |
-| `/ai-sdlc:execute <task-id>` | Full lifecycle for one backlog task |
-| `/ai-sdlc:validate [task-id]` | Definition-of-Done gate — build + full tests must pass (hard-enforced) |
+| `/ai-sdlc:init [dir] [--workspace]` | Scaffold `.ai-sdlc/` + backlog + product context, architecture, flow/pace/checkpoint config (brownfield-safe) |
+| `/ai-sdlc:architecture [refresh]` | Build the architecture from the code: overview + one doc per component, with diagrams |
+| `/ai-sdlc:new "<title>"` | Product panel (PM/PO, +CMO/CPO if strategic) shapes a **product-only** PRD against the product context |
+| `/ai-sdlc:design <slug>` | Architect panel → design doc (diagrams, schema, interfaces, AC test map) + load-bearing ADRs + dependency-ordered tasks |
+| `/ai-sdlc:bug "<title>"` | Triage a bug into a confirmed report with a runnable reproduction, then a fix task |
+| `/ai-sdlc:execute <task-id>` | Full lifecycle for one backlog task, within the speed contract |
+| `/ai-sdlc:validate [task-id]` | Definition-of-Done gate — every configured check must pass (hard-enforced) |
 | `/ai-sdlc:review [base]` | Just the cross-harness review team on a branch |
-| `npm run …` | `init`, `validate-schemas`, `convergence-gate`, `decisions` |
+| `/ai-sdlc:migrate [--apply]` | Re-check every PRD, design, ADR, the context docs and open tasks against the current gates |
+| `/ai-sdlc:metrics` · `/ai-sdlc:evals` | Delivery metrics vs baseline · agent-config evals from past runs |
+| `/ai-sdlc:maintain` · `/ai-sdlc:lessons` | Control bands → diagnosis → bounded jobs · recurring review findings → CLAUDE.md proposals |
+| `npm run …` | `init`, `validate-schemas`, `convergence-gate`, `decisions`, `dod`, `task` |
 
 ## Install in your Claude Code
 
@@ -192,27 +202,120 @@ Point Claude Code at your repository, scaffold the framework, then run a task:
 
 ```mermaid
 flowchart TD
-    IDEA[Idea / feature] --> PRD["PRD (docs/prd/*.md)"]
-    PRD --> TASK["Backlog task<br/>backlog/tasks/&lt;ID&gt;.md"]
-    TASK --> DOR{"Definition-of-Ready gate<br/>7 rubric gates + PRD/design sign-off"}
-    DOR -- "not ready" --> FIX["Refuse + reasons →<br/>operator resolves open questions"]
-    FIX --> TASK
-    DOR -- "ready (admitted)" --> DESIGN["Design panel<br/>(architects) → ADR"]
-    DESIGN --> PLAN["Plan (/code-plan)"]
-    PLAN --> IMPL["Implement<br/>(language specialist, in a worktree)"]
-    IMPL --> PROMISE["Promise verification<br/>(advisory signal)"]
-    PROMISE --> REVIEW["Cross-harness review team<br/>(Native Team)"]
-    REVIEW -- "changes requested" --> IMPL2["Informed retry<br/>(fresh dev + feedback)"]
-    IMPL2 --> REVIEW
-    REVIEW -- "approved" --> ATTEST["Sign attestation<br/>(implementer ≠ reviewer harness)"]
-    ATTEST --> PR["Open PR"]
+    CTX["Product context + architecture<br/>docs/product · docs/architecture (+ components/)"] -.-> NEW
+    IDEA[Idea / feature] --> NEW["/ai-sdlc:new → PRD<br/>(PRD gate, human approves)"]
+    BUG[Bug] --> BR["/ai-sdlc:bug → confirmed report<br/>(bug gate, runnable repro)"]
+    NEW --> DES["/ai-sdlc:design → design doc + ADRs<br/>(design gate: diagrams, schema, AC map)"]
+    DES --> TASKS["Dependency-ordered tasks<br/>backlog/tasks/&lt;ID&gt;.md"]
+    BR --> TASKS
+    TASKS --> DOR{"Definition-of-Ready<br/>gates 1–11 (PRD / design / bug,<br/>time-boxed ACs)"}
+    DOR -- "not ready" --> FIX["Refuse + reasons"] --> TASKS
+    DOR -- "admitted" --> PLAN["Plan + execution manifest<br/>(spec, ADRs, architecture slice injected)"]
+    PLAN --> IMPL["RED tests → node implementers<br/>(worktree, sandboxed accepts)"]
+    IMPL --> CONF["Conformance vs architecture"]
+    CONF --> REVIEW["Cross-harness review team<br/>(Codex, full findings)"]
+    REVIEW -- "changes requested" --> IMPL2["Fix + re-review"] --> REVIEW
+    REVIEW -- "approved" --> DOD["DoD gate (build, tests,<br/>integration, architecture docs)"]
+    DOD --> HITL{"HITL checkpoints<br/>(always a human)"}
+    HITL --> PR["PR with validation report<br/>+ run record"]
     PR --> MERGE["Human merges"]
-    MERGE --> SHIP[Shipped]
 ```
+
+Every ticket runs under the [speed contract](#speed-contract): a wall-clock budget
+(60 min by default), stage timings in the run record and the PR, and no waiting on
+long observations inside a ticket.
 
 The aspirational target (inherited from the reference architecture): a
 well-front-loaded task passes this pipeline **unattended ~95% of the time**; the
 other 5% surface as decisions the operator missed and feed back into the gate.
+
+---
+
+## Governed context: product, architecture, spec
+
+Agents never guess what the product is or how the system fits together; that knowledge
+lives once per repo, is **gated** (it must be complete to be used) and is **injected** into
+the stages that need it.
+
+| Document | Gate | Who gets it |
+|---|---|---|
+| `docs/product/context.md` — vision, personas, capabilities, glossary, metric baselines, regulatory constraints | `product-context.js` | discovery panel, clarify; PRDs must name a persona and cite a baseline |
+| `docs/architecture/overview.md` — components + code paths, contracts (`A → B`), data ownership, deployment, invariants; component diagram + sequence diagrams | `architecture-context.js` | architects (in full); every task gets the slice it reaches |
+| `docs/architecture/components/<slug>.md` — one per component: responsibility, code, interfaces, dependencies, data, internal structure + diagram, key flows + sequence diagram, failure modes, decisions, testing | `component-docs.js` | the task's touched components (≤3, budgeted); `architecture_lookup` |
+| `docs/prd/<feature>.md` — 10 sections, measurable metrics, ACs, no open questions | `prd-gate.js` (DoR gate 8) | plan, implementer, reviewers |
+| `docs/design/<feature>.md` — component diagram, sequence with failure path, ER diagram, concrete schema + interfaces, every PRD AC mapped to a test | `design-gate.js` (DoR gate 9) | plan, implementer, reviewers; replaces the ad-hoc design panel |
+| `.ai-sdlc/_decisions/DEC-*.yaml` — ADRs | `decisions.js` quality check | injected as constraints ("cite the DEC id, stop if one blocks") |
+
+- **Diagrams are enforced**, drawn by each doc's author with the `mermaid-diagrams` skill
+  (`node decision-engine/mermaid.js <doc> --require component,sequence,er` checks one doc).
+- **Pull, not only push:** the `ai-sdlc-context` MCP server (`mcp/context-server.js`) serves
+  `architecture_lookup`, `architecture_contracts`, `product_lookup`, `spec_lookup` and
+  `decision_lookup` to every agent mid-task; cxpak gives token-budgeted code context.
+- **Kept current:** a PRD adds new personas/terms/baselines to the product context; a design
+  that adds a component (`New component: <name>`) must list it in the overview with its own
+  component doc; the DoD gate re-validates `docs/architecture/` whenever a change touches it;
+  `architecture-conformance.js` checks the real diff against the declared components and contracts.
+- **Monorepo:** each subproject may carry its own overview; cxpak and the slices are scoped
+  per touched subproject.
+
+## Speed contract
+
+A ticket should finish fast with enough confidence, not wait for hours.
+
+- `flow.budget.maxMinutes` (default 60) and `maxCalls` are enforced on every dispatch
+  (abort `budget`); per-stage seconds land in `result.steps.timings`, the run record and
+  the PR's Time row.
+- **DoR gate 11** rejects acceptance criteria that demand long wall-clock observation
+  ("over 24 h", "for a venue-day") — those become maintain jobs, not ticket work.
+- `kind: spike` tasks skip the design panel and the RED-oracle machinery.
+- Design sizes its panel to the risk, records only load-bearing ADRs in one batch, and
+  splits work into tasks with real dependencies only; `task-order.js --waves` lists the
+  tasks that can run in parallel.
+- Secondary reviewers run at medium reasoning effort; the primary code and security
+  reviewers at high.
+
+On the pm-data-bench benchmark this took a spike ticket from ~9 h to 14 min, and a full
+implementation ticket to 38 min plus a 15 min fix round.
+
+## Harness components and the HITL gate
+
+`/ai-sdlc:execute` plugs in published components behind their contracts, configured by
+`.ai-sdlc/flow.yaml` (defaults apply without it; each runs as a pinned image with an
+in-process fallback recorded as degraded):
+
+| Piece | Behaviour |
+|---|---|
+| Pace layers (`pace.js`) | fast / normal / slow by path, raised by HITL claims and low trust, never lowered; slow opens draft PRs with the full review team |
+| Execution manifest (slicr contract) | the plan emits file-scoped nodes; validated before any code is written |
+| RED-oracle executor | tests are written and committed RED first; each node's implementer edits only its files and must turn its accept GREEN |
+| Sandbox (cordon) | accept commands run sandboxed when configured |
+| HITL gate (commitward contract) | before push, checkpoints (gate self-modification, DB migrations, CI, secrets, destructive ops, …) **always stop for a human**; an ack is recorded only in the human's words; an unevaluable registry blocks |
+
+## Bugs and migration
+
+- **Bugs** enter through `/ai-sdlc:bug`: a triaged report at `docs/bugs/<id>.md` with
+  numbered repro steps, severity and a runnable Reproduction, confirmed by a human
+  (DoR gate 10). At execute, the fix node accepts on the reproduction test (RED → GREEN).
+- **Migration** (`/ai-sdlc:migrate`) scans every PRD, design doc, ADR, the context docs,
+  component docs and open tasks against the current gates; `--apply` adds structure only
+  (skeletons, links, placeholders that still count as empty), so nothing passes by
+  migration alone.
+
+## Evidence, measurement and the maintain loop
+
+- Each run commits its plan (`docs/plans/<task>.md`), records plan drift for reviewers,
+  and writes the PR body as a validation report (gates, ACs + evidence, review,
+  conformance, pace, time, degraded seams).
+- Every run appends a record to `.ai-sdlc/runs.jsonl`; `/ai-sdlc:metrics` reports agent
+  success rate, cost per success, rework, lead time and change-failure rate against a
+  baseline, each with an owner.
+- `/ai-sdlc:evals` re-runs harvested tasks headless to gate agent-config changes.
+- `/ai-sdlc:maintain` watches control bands (Western Electric rules) and turns signals
+  into a read-only diagnosis, a draft bug report, or a capped maintenance job.
+- `REVIEW.md` sets the review contract (skip paths, nit cap); `/ai-sdlc:lessons` turns
+  findings that recur across runs into proposed CLAUDE.md lines.
+- `scripts/lint-agents-skills.js` and the usage-telemetry hook keep the agent and skill
+  library healthy.
 
 ---
 
@@ -582,10 +685,19 @@ Capture must be safe to retry; a duplicate capture returns the original result.
 | `npm run outcomes -- <runs.jsonl>` | Level-1 scorecard: completion/regression/review-loops/blast-radius |
 | `npm run decisions -- new\|list\|import\|detect\|bootstrap` | Manage ADRs (`--context/--rationale/--consequences/--confidence`) |
 | `npm run adr-coverage -- <root>` | Report foundational decision areas with no ADR (advisory) |
+| `node decision-engine/architecture-context.js --validate` | Architecture gate: overview + every component doc |
+| `node decision-engine/component-docs.js <doc>` | Gate one component doc |
+| `node decision-engine/mermaid.js <doc> --require component,sequence,er` | List a doc's diagrams; fail if a required kind is missing |
+| `node decision-engine/task-order.js --waves` | Tasks that can run in parallel |
+| `node decision-engine/migrate.js [--apply]` | Migration report / structural fixes |
 | `/ai-sdlc:init [dir] [--workspace]` | Scaffold `.ai-sdlc/` + backlog (wraps `npm run init`) |
-| `/ai-sdlc:new "<title>"` | Discovery panel → PRD → DoR-ready task + readiness check |
+| `/ai-sdlc:architecture [refresh]` | Overview + component docs from the code |
+| `/ai-sdlc:new "<title>"` | Discovery panel → PRD |
+| `/ai-sdlc:design <slug>` | Design doc + ADRs + tasks |
+| `/ai-sdlc:bug "<title>"` | Bug report → fix task |
 | `/ai-sdlc:execute <task-id>` | Run a task through the full pipeline |
 | `/ai-sdlc:review [base]` | Standalone cross-harness review team |
+| `/ai-sdlc:migrate`, `/ai-sdlc:metrics`, `/ai-sdlc:evals`, `/ai-sdlc:maintain`, `/ai-sdlc:lessons` | Migration, metrics, evals, maintain loop, lessons |
 
 ---
 
@@ -595,8 +707,12 @@ Capture must be safe to retry; a duplicate capture returns the original result.
 spec/schemas/          # 13 JSON-Schema resources (Pipeline, DorConfig, QualityGate,
                        #   Workspace, CapabilityMap, Decision, attestation-envelope …)
 spec/validate-schemas.js
-decision-engine/       # backlog-task, dor-gate, decisions, adr-import/detect/bootstrap
-pipeline/              # steps, execute, capabilities, team-plan, review-only
+decision-engine/       # gates (dor, prd, design, bug, dod, hitl), context (product,
+                       #   architecture, component-docs, spec-context, context-lookup),
+                       #   decisions, pace, mermaid, migrate, task-order, control-bands
+pipeline/              # steps, execute, capabilities, manifest, node-executor,
+                       #   plan-artifact, validation-report, maintain, flow-config
+mcp/                   # ai-sdlc-context MCP server (architecture/product/spec/decision lookups)
 quality-gate/          # promise-gate (advisory promise signal)
 attestation/           # ed25519 + Merkle v6 cross-harness attestation
 workspace/             # multi-repo loader + cross-repo dep graph
@@ -604,11 +720,16 @@ init/                  # brownfield init + config stubs
 adapters/              # claude-code-spawner (binds seams to claude/git/gh)
 measurement/           # convergence-gate + the statistical A/B harness (mt-executor)
 promise/ hooks/ contexts/   # kept strengths: promise verification, hooks, tech guides
-commands/              # /ai-sdlc:init, /ai-sdlc:execute, /ai-sdlc:review (+ qa/)
+commands/              # /ai-sdlc:init, architecture, new, design, bug, execute, review,
+                       #   validate, migrate, metrics, evals, maintain, lessons (+ qa/)
+agents/ skills/        # specialized agents; skills (code-*, qa-*, mermaid-diagrams, …)
+rules/                 # context-protocol.md, synced into every agent and skill
 .ai-sdlc/              # config-as-data: dor-config, quality-gate, capabilities,
                        #   workspace, _decisions/, attestations/
 backlog/               # tasks/ + completed/
-docs/prd/  docs/operations/
+docs/                  # templates: prd/, design/, bugs/, product/, architecture/
+                       #   (+ components/), operations/
+templates/             # REVIEW.md, maintain runbooks, CI workflows
 ```
 
 ## Testing & gates
