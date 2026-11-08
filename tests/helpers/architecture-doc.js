@@ -20,4 +20,36 @@ function architectureDoc() {
   ].join('\n');
 }
 
-module.exports = { architectureDoc };
+const COMPONENTS = {
+  Storefront: { slug: 'storefront', paths: ['web/'] },
+  Orders: { slug: 'orders', paths: ['services/orders/'] },
+  Payments: { slug: 'payments', paths: ['services/payments/'] },
+};
+
+// A complete component doc (the component-doc gate's happy path).
+function componentDoc(name, paths = (COMPONENTS[name] || { paths: [] }).paths) {
+  return [
+    '---', `component: ${name}`, 'owner: platform', 'updated: 2026-11-08', '---', '', `# Component: ${name}`, '',
+    '## Responsibility', `${name} owns its slice of the shop end to end and nothing outside it; neighbours are reached only through declared contracts.`, '',
+    '## Code', ...paths.map((p) => `- \`${p}\` — the ${name} module: handlers, domain types and the store adapter.`), '',
+    '## Interfaces', `- \`POST /${name.toLowerCase()}\` — create; \`GET /${name.toLowerCase()}/:id\` — read. Env: \`${name.toUpperCase()}_DB_URL\`.`, '',
+    '## Dependencies', 'Calls the next component only through the contract listed in the overview; Postgres through the shared driver.', '',
+    '## Data', `Owns the ${name.toLowerCase()} tables (only writer); reads nothing else directly. Rows are kept for 7 years.`, '',
+    '## Internal structure', '```mermaid', 'flowchart LR', '  Handler --> Service --> Repo', '```', '- Handler — HTTP; Service — rules; Repo — SQL.', '',
+    '## Key flows', '```mermaid', 'sequenceDiagram', '  Client->>Handler: POST', '  Handler->>Repo: insert', '  alt conflict', '    Repo-->>Handler: 409', '  end', '```', '',
+    '## Failure modes', 'DB timeouts retry twice with backoff then return 503; validation errors return 400 and are counted in a metric.', '',
+    '## Decisions', '- DEC-0001 — Postgres is the only datastore, so the Repo speaks SQL directly.', '',
+    '## Testing', 'Unit tests next to the code; integration tests against a Postgres container via `npm run test:int`.', '',
+  ].join('\n');
+}
+
+// Writes every component doc of architectureDoc() under <root>/<base>/components/.
+function writeComponentDocs(root, base = 'docs/architecture') {
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(root, base, 'components');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [name, c] of Object.entries(COMPONENTS)) fs.writeFileSync(path.join(dir, `${c.slug}.md`), componentDoc(name));
+}
+
+module.exports = { architectureDoc, componentDoc, writeComponentDocs };

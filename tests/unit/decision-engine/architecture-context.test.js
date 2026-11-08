@@ -4,7 +4,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const ac = require(path.join(ROOT, 'decision-engine', 'architecture-context.js'));
-const { architectureDoc } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
+const { architectureDoc, writeComponentDocs } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
 const codes = (r) => r.substanceIssues.map((i) => i.code);
 
 function withArch(body, fn) {
@@ -44,6 +44,33 @@ describe('evaluateArchitecture', () => {
   test('evaluateArchitectureRoot is null without the doc', () => {
     withArch(null, (root) => expect(ac.evaluateArchitectureRoot(root)).toBeNull());
   });
+
+  test('evaluateArchitectureRoot requires a valid doc per component', () => {
+    withArch(architectureDoc(), (root) => {
+      const missing = ac.evaluateArchitectureRoot(root);
+      expect(missing.valid).toBe(false);
+      expect(codes(missing).filter((c) => c === 'missing-component-doc')).toHaveLength(3);
+      expect(missing.reasons.join('\n')).toContain('docs/architecture/components/orders.md');
+
+      writeComponentDocs(root);
+      const ok = ac.evaluateArchitectureRoot(root);
+      expect(ok.reasons).toEqual([]);
+      expect(ok.componentDocs.map((d) => d.valid)).toEqual([true, true, true]);
+
+      fs.writeFileSync(path.join(root, 'docs/architecture/components/payments.md'), '# Component: Payments\n\n## Responsibility\nCharges.\n');
+      const bad = ac.evaluateArchitectureRoot(root);
+      expect(codes(bad)).toContain('component-doc-invalid');
+      expect(bad.valid).toBe(false);
+    });
+  });
+
+  test('the untouched scaffold asks for no component docs', () => {
+    withArch(fs.readFileSync(path.join(ROOT, 'docs', 'architecture', '_template.md'), 'utf8'), (root) => {
+      const r = ac.evaluateArchitectureRoot(root);
+      expect(r.scaffold).toBe(true);
+      expect(r.componentDocs).toEqual([]);
+    });
+  });
 });
 
 describe('formatArchitectureContext', () => {
@@ -73,6 +100,20 @@ describe('formatArchitectureContext', () => {
 
   test('null without an overview', () => {
     withArch(null, (root) => expect(ac.formatArchitectureContext(root, {})).toBeNull());
+  });
+
+  test('the touched components\' docs follow the overview slice, within the budget', () => {
+    withArch(architectureDoc(), (root) => {
+      writeComponentDocs(root);
+      const out = ac.formatArchitectureContext(root, { paths: ['services/orders/cancel.ts'] });
+      expect(out).toMatch(/COMPONENT DOC — docs\/architecture\/components\/orders\.md\n# Component: Orders/);
+      expect(out).toContain('## Key flows');
+      expect(out).not.toContain('component: Orders'); // frontmatter stripped
+      expect(out).not.toContain('components/payments.md');
+      const small = ac.formatArchitectureContext(root, { paths: ['services/orders/cancel.ts'], maxChars: 1500 });
+      expect(small.length).toBeLessThan(1700);
+      expect(small).toContain('COMPONENT DOC — docs/architecture/components/orders.md');
+    });
   });
 });
 

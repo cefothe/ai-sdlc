@@ -18,7 +18,7 @@ const SERVER_INFO = { name: 'ai-sdlc-context', version: '1.0.0' };
 const TOOLS = [
   {
     name: 'architecture_lookup',
-    description: 'Which architecture component owns a file path, or what a named component is: its responsibility, code paths, contracts, data ownership and the invariants that apply. With no arguments, lists every component. Use before changing code outside the components your task was given, or before calling into another component.',
+    description: 'Which architecture component owns a file path, or what a named component is: its responsibility, code paths, contracts, data ownership, the invariants that apply, and its full component doc (docs/architecture/components/<slug>.md: interfaces, dependencies, internal structure, key flows, failure modes, tests). With no arguments, lists every component. Use before changing code outside the components your task was given, or before calling into another component.',
     inputSchema: { type: 'object', properties: { component: { type: 'string', description: 'Component name as in docs/architecture/overview.md' }, path: { type: 'string', description: 'Repo-relative file path' } } },
     run: (root, args, opts) => lookup.architectureLookup(root, args, opts),
   },

@@ -21,7 +21,9 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    Regulatory constraints and Current capabilities bind the design too — pass those
    sections to the architects).
    **Read the architecture overview** `docs/architecture/overview.md` and pass it to
-   every architect: the design must place each change in the component that owns it
+   every architect, plus the component docs (`docs/architecture/components/<slug>.md`)
+   of every component the PRD reaches: the design must place each change in the
+   component that owns it, work with that component's real interfaces and internals,
    and connect components only through the listed contracts.
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/architecture-context.js" --validate || true
@@ -219,7 +221,11 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    the components it changes **by their names in the overview** and the contracts that
    connect them; anything new is declared `New component: <name>` — and the overview is
    **updated in the same change** (new component with its code path, new contract edge,
-   new data owner, new invariant), then re-validated.
+   new data owner, new invariant), then re-validated. The component docs change with it:
+   a new component gets `docs/architecture/components/<slug>.md` from
+   `${CLAUDE_PLUGIN_ROOT}/docs/architecture/components/_template.md` (linked from its
+   Components entry), and every component whose interfaces, dependencies, data or internal
+   structure the design changes has its doc updated — diagrams included.
    The doc is handed **verbatim** to the planner, implementer and reviewers, and an
    approved design doc *replaces* the executor's ad-hoc design panel — so it must be
    buildable as written. The gate enforces: Data model has real DDL / a schema code

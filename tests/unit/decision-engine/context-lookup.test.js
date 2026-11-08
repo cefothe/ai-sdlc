@@ -4,7 +4,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..', '..');
 const lk = require(path.join(ROOT, 'decision-engine', 'context-lookup.js'));
 const dec = require(path.join(ROOT, 'decision-engine', 'decisions.js'));
-const { architectureDoc } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
+const { architectureDoc, componentDoc } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
 const repo = require(path.join(ROOT, 'tests', 'helpers', 'git-repo.js'));
 
 const CONTEXT = '## Personas\n- **Active trader**: trades daily\n\n## Glossary\n- Fill: an execution of an order\n\n## Current capabilities\nOrders and payments.\n';
@@ -14,6 +14,7 @@ describe('context lookups', () => {
   beforeEach(() => {
     dir = repo.makeRepo({
       'docs/architecture/overview.md': architectureDoc(),
+      'docs/architecture/components/orders.md': componentDoc('Orders'),
       'docs/product/context.md': CONTEXT,
       'backlog/tasks/AISDLC-0007 - refund.md': '---\nid: AISDLC-0007\ntitle: refund via Payments\nreferences:\n  - services/payments/refund.ts\n---\n',
     });
@@ -27,6 +28,8 @@ describe('context lookups', () => {
     expect(out).toMatch(/Storefront → Orders: REST/);
     expect(out).toMatch(/Orders owns the orders and order_items tables/);
     expect(out).toMatch(/No component reads another/);
+    expect(out).toMatch(/Component doc \(docs\/architecture\/components\/orders\.md\):\n# Component: Orders/);
+    expect(lk.architectureLookup(dir, { component: 'Payments' })).toMatch(/Component doc: none at docs\/architecture\/components\/payments\.md/);
   });
 
   test('architectureLookup by name, unknown names/paths, and the component list', () => {

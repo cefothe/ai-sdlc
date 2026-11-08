@@ -44,18 +44,34 @@ design docs.
 3. **Write** `docs/architecture/overview.md` from
    `${CLAUDE_PLUGIN_ROOT}/docs/architecture/_template.md`, keeping every `##` section.
    On a refresh, edit in place: add new components/contracts, remove ones the code no
-   longer has, and keep the doc's own history in git.
+   longer has, and keep the doc's own history in git. The overview is the **general
+   level** — what the components are, how they connect, who owns what data.
+
+3a. **One doc per component.** For every component in the list, write
+   `docs/architecture/components/<slug>.md` from
+   `${CLAUDE_PLUGIN_ROOT}/docs/architecture/components/_template.md` and link it from the
+   component's entry (`Details: [components/<slug>.md](components/<slug>.md)`). It is the
+   **detailed level**, grounded in that component's code (`cxpak_graph` api_surface /
+   call_graph on its paths): responsibility and non-responsibilities, every code path the
+   overview gives it, concrete interfaces, dependencies (through which contracts), owned
+   data, internal structure, key flows, failure modes, the ADRs that bind it, and how it is
+   tested. Components are independent, so draft their docs in parallel (one architect per
+   few components via the Task tool). Missing docs can be scaffolded with
+   `node "${CLAUDE_PLUGIN_ROOT}/decision-engine/migrate.js" --apply` — scaffolds count as
+   empty until filled.
 
 3b. **Diagrams (required).** Whoever writes the doc draws its diagrams in the same pass —
    load the `mermaid-diagrams` skill (Skill tool) and add fenced mermaid blocks: a component
    diagram (flowchart or C4Container) in **Components** showing every component and the
    contracts between them, and at least one `sequenceDiagram` per critical cross-component
-   flow in **Integration contracts**. Diagrams match the text — the gate fails a component
+   flow in **Integration contracts**; in each component doc, a flowchart or classDiagram in
+   **Internal structure** and a `sequenceDiagram` with the failure path in **Key flows**.
+   Diagrams match the text — the gate fails a component
    diagram that leaves out a listed component (`diagram-missing-component`). Only a large
    brownfield refresh (many components drawn from the code) is delegated, to the
    `mermaid-expert` agent following the same skill.
 
-4. **Validate** until clean:
+4. **Validate** until clean — the overview and every component doc:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/architecture-context.js" --validate
    ```
@@ -71,5 +87,7 @@ design docs.
 ## Keeping it current
 - `/ai-sdlc:design`: a design that adds or changes a component, contract or data owner
   updates this overview in the same change.
-- Changes under `docs/architecture/` are `slow` pace (draft PR, full review).
+- Changes under `docs/architecture/` are `slow` pace (draft PR, full review), and the DoD
+  gate re-runs the architecture validation whenever a change touches `docs/architecture/`
+  (an execute that edits the overview or a component doc cannot leave it invalid).
 - Re-run `/ai-sdlc:architecture refresh` after large refactors.

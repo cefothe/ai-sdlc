@@ -20,6 +20,7 @@ describe('mermaid diagram checks', () => {
     expect(m.hasDiagram(fence('flowchart LR\n A --> B'), 'component')).toBe(true);
     expect(m.hasDiagram(fence('flowchart LR\n A\n B'), 'component')).toBe(false);
     expect(m.hasDiagram(fence('C4Container\n Rel(api, db, "reads")'), 'component')).toBe(true);
+    expect(m.hasDiagram(fence('classDiagram\n Animal <|-- Duck'), 'component')).toBe(true);
     expect(m.hasDiagram(fence('sequenceDiagram\n participant A'), 'sequence')).toBe(false);
     expect(m.hasDiagram(fence('sequenceDiagram\n A-->>B: reply'), 'sequence')).toBe(true);
     expect(m.hasDiagram(fence('erDiagram\n CUSTOMER {\n string id\n }'), 'er')).toBe(true);

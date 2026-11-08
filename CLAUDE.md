@@ -170,7 +170,14 @@ unattended design panel get it; `/ai-sdlc:design` hands the full doc to the arch
 When it exists, `design-gate` fails designs while it is invalid, and requires each design to
 reference it (`architecture:` frontmatter) and name its components or declare
 `New component: <name>` (added to the overview in the same change). Shared section checks
-live in `decision-engine/doc-sections.js`. **Diagrams are enforced** (`decision-engine/mermaid.js`): the
+live in `decision-engine/doc-sections.js`. **Two levels:** the overview is the general map; every listed
+component has its own detailed doc `docs/architecture/components/<slug>.md` (template
+`docs/architecture/components/_template.md`, gate `decision-engine/component-docs.js`: Responsibility, Code
+naming the overview's paths, concrete Interfaces, Dependencies, Data, Internal structure + diagram, Key flows +
+sequenceDiagram, Failure modes, Decisions, Testing). `evaluateArchitectureRoot` fails while one is missing or
+invalid; spec-context appends the touched components' docs (≤3, budgeted) to the slice; `architecture_lookup`
+returns a component's doc; `migrate --apply` scaffolds missing ones; the DoD gate re-validates whenever a change
+touches `docs/architecture/`. **Diagrams are enforced** (`decision-engine/mermaid.js`): the
 overview needs a component diagram + a sequence diagram; a design needs a component diagram
 (Architecture), a sequenceDiagram with the failure path (Data flow) and an erDiagram (Data model,
 unless stateless) — real fenced mermaid blocks with edges, and the overview's component diagram must

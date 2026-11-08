@@ -93,6 +93,20 @@ describe('applyStructuralFixes', () => {
     expect(after.designs[0].ok).toBe(false);
   });
 
+  test('scaffolds a doc for every component of an existing overview — still not ok', () => {
+    const { architectureDoc } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
+    fs.mkdirSync(path.join(root, 'docs', 'architecture'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'docs', 'architecture', 'overview.md'), architectureDoc());
+    const changes = mig.applyStructuralFixes(root, mig.scanArtifacts(root));
+    expect(changes.filter((c) => /component doc scaffold/.test(c.change)).map((c) => c.path).sort()).toEqual([
+      'docs/architecture/components/orders.md', 'docs/architecture/components/payments.md', 'docs/architecture/components/storefront.md',
+    ]);
+    expect(fs.readFileSync(path.join(root, 'docs/architecture/components/orders.md'), 'utf8')).toMatch(/^- `services\/orders\/` — <what lives here>$/m);
+    const after = mig.scanArtifacts(root);
+    expect(after.architecture.ok).toBe(false);
+    expect(after.architecture.componentDocs.every((d) => d.exists && !d.valid)).toBe(true);
+  });
+
   test('re-applying is idempotent', () => {
     mig.applyStructuralFixes(root, mig.scanArtifacts(root));
     const snapshot = ['docs/prd/sso.md', 'docs/design/sso.md'].map((f) => fs.readFileSync(path.join(root, f), 'utf8'));

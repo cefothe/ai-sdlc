@@ -317,6 +317,21 @@ describe('stack-derived DoD defaults', () => {
     }
   });
 
+  test('with an architecture overview, changes under docs/architecture/ re-run the architecture gate', () => {
+    const dir = repoWith(['go.mod']);
+    try {
+      expect(loadDodConfig(null, { root: dir }).spec.checks.architecture).toBeUndefined();
+      fs.mkdirSync(path.join(dir, 'docs', 'architecture'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'docs', 'architecture', 'overview.md'), '# x');
+      const check = loadDodConfig(null, { root: dir }).spec.checks.architecture;
+      expect(check.command).toContain('architecture-context.js" --validate');
+      expect(check.paths).toEqual(['docs/architecture/']);
+      expect(check.enforced).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('loadDodConfig with root uses the stack defaults; a config file still overrides them', () => {
     const dir = repoWith(['go.mod']);
     try {

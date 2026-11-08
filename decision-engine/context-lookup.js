@@ -4,7 +4,8 @@
 // by mcp/context-server.js):
 //
 //   architectureLookup   which component owns a path / what a component is:
-//                        responsibility, code, contracts, data, invariants
+//                        responsibility, code, contracts, data, invariants,
+//                        and the component's own doc (components/<slug>.md)
 //   architectureContracts how a component connects (its contract edges)
 //   productLookup        personas, glossary terms, capabilities, baselines,
 //                        constraints matching a query
@@ -20,6 +21,9 @@ const { join } = require('node:path');
 const { parsePrd } = require('./prd-gate');
 const { loadOverviews, ownerOf, mentions, ARCHITECTURE_PATH } = require('./architecture-context');
 const { DEFAULT_CONTEXT_PATH } = require('./product-context');
+const { componentDocBody } = require('./component-docs');
+
+const MAX_COMPONENT_DOC_CHARS = 12000;
 
 const TASK_ID_RE = /^[A-Za-z][A-Za-z0-9]*-\d+$/;
 const DEC_ID_RE = /^DEC-\d{4}$/;
@@ -33,19 +37,29 @@ function findComponent(overviews, { component, path }) {
   return path ? ownerOf(all, path) : null;
 }
 
-function describeComponent(overviews, comp) {
+function describeComponent(root, overviews, comp) {
   const overview = overviews.find((o) => o.components.includes(comp));
-  const root = overviews.find((o) => !o.project);
+  const rootOverview = overviews.find((o) => !o.project);
   const edges = overviews.flatMap((o) => o.edges).filter((e) => mentions(e.from, comp.name) || mentions(e.to, comp.name));
   const data = overviews.flatMap((o) => o.data).filter((l) => mentions(l, comp.name));
-  const invariants = [...new Set([...(overview ? overview.invariants : []), ...(root && root !== overview ? root.invariants : [])])];
+  const invariants = [...new Set([...(overview ? overview.invariants : []), ...(rootOverview && rootOverview !== overview ? rootOverview.invariants : [])])];
   return [
     `Component: ${comp.line}`,
     `Defined in: ${comp.overview}`,
     edges.length ? `Contracts:\n${edges.map((e) => `- ${e.line}`).join('\n')}` : 'Contracts: none declared — any call to or from another component needs a contract added to the overview.',
     data.length ? `Data ownership:\n${data.map((l) => `- ${l}`).join('\n')}` : null,
     invariants.length ? `Invariants that apply:\n${invariants.map((l) => `- ${l}`).join('\n')}` : null,
+    componentDoc(root, comp),
   ].filter(Boolean).join('\n\n');
+}
+
+// The component's own doc, or a note that it is missing.
+function componentDoc(root, comp) {
+  const full = join(root, comp.doc);
+  if (!existsSync(full)) return `Component doc: none at ${comp.doc} — the architecture gate requires one.`;
+  const body = componentDocBody(readFileSync(full, 'utf8'));
+  const text = body.length > MAX_COMPONENT_DOC_CHARS ? `${body.slice(0, MAX_COMPONENT_DOC_CHARS)}\n…[truncated — read ${comp.doc}]` : body;
+  return `Component doc (${comp.doc}):\n${text}`;
 }
 
 function architectureLookup(root, { component, path } = {}, { projects = [] } = {}) {
@@ -60,7 +74,7 @@ function architectureLookup(root, { component, path } = {}, { projects = [] } = 
       ? `No component owns ${path} — new code there needs a component added to the architecture overview first. Known components: ${overviews.flatMap((o) => o.components.map((c) => c.name)).join(', ')}`
       : `No component named "${component}". Known components: ${overviews.flatMap((o) => o.components.map((c) => c.name)).join(', ')}`;
   }
-  return describeComponent(overviews, comp);
+  return describeComponent(root, overviews, comp);
 }
 
 function architectureContracts(root, { component } = {}, { projects = [] } = {}) {

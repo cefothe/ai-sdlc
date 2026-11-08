@@ -260,7 +260,7 @@ function evaluateDesignFile(designPath, { root, prdPath } = {}) {
   return evaluateDesign(markdown, { path: designPath, prdAcceptanceCriteria, decisions, architecture });
 }
 
-module.exports = { evaluateDesign, evaluateDesignFile, findSection, resolveInside, REQUIRED_SECTIONS, SECTION_ALIASES, headingMatchesSection };
+module.exports = { evaluateDesign, evaluateDesignFile, findSection, resolveInside, REQUIRED_SECTIONS, SECTION_ALIASES, SUBSTANCE_RULES, headingMatchesSection };
 
 // CLI: node decision-engine/design-gate.js docs/design/<slug>.md
 if (require.main === module) {

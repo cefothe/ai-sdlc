@@ -26,6 +26,7 @@ const { evaluateProductContextRoot, DEFAULT_CONTEXT_PATH } = require('./product-
 const { evaluateArchitectureRoot, ARCHITECTURE_PATH } = require('./architecture-context');
 const { parseTask } = require('./backlog-task');
 const { addFrontmatterLine, appendToSection } = require('./doc-sections');
+const { scaffoldComponentDoc, TEMPLATE_PATH: COMPONENT_TEMPLATE } = require('./component-docs');
 
 const PLUGIN_ROOT = join(__dirname, '..');
 const TEMPLATES = {
@@ -112,7 +113,7 @@ function scanArtifacts(root) {
   const byImpact = (a, b) => b.inFlightTasks.length - a.inFlightTasks.length || a.path.localeCompare(b.path);
   const report = {
     productContext: productContext ? { path: DEFAULT_CONTEXT_PATH, exists: true, ok: productContext.valid, issues: productContext.reasons } : { path: DEFAULT_CONTEXT_PATH, exists: false, ok: false, issues: ['no product context doc'] },
-    architecture: architecture ? { path: ARCHITECTURE_PATH, exists: true, ok: architecture.valid, issues: architecture.reasons } : { path: ARCHITECTURE_PATH, exists: false, ok: false, issues: ['no architecture overview — run /ai-sdlc:architecture'] },
+    architecture: architecture ? { path: ARCHITECTURE_PATH, exists: true, ok: architecture.valid, issues: architecture.reasons, componentDocs: architecture.componentDocs || [] } : { path: ARCHITECTURE_PATH, exists: false, ok: false, issues: ['no architecture overview — run /ai-sdlc:architecture'] },
     prds: prds.sort(byImpact),
     designs: designs.sort(byImpact),
     adrs,
@@ -154,6 +155,13 @@ function applyStructuralFixes(root, report) {
     mkdirSync(dirname(archPath), { recursive: true });
     writeFileSync(archPath, readFileSync(TEMPLATES.architecture, 'utf8'));
     changes.push({ path: ARCHITECTURE_PATH, change: 'created architecture overview scaffold' });
+  }
+
+  for (const doc of (report.architecture.componentDocs || []).filter((d) => !d.exists)) {
+    const full = join(root, doc.path);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, scaffoldComponentDoc(readFileSync(COMPONENT_TEMPLATE, 'utf8'), doc));
+    changes.push({ path: doc.path, change: `created component doc scaffold for ${doc.name}` });
   }
 
   for (const prd of report.prds) {

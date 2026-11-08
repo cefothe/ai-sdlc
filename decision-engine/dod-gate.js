@@ -70,10 +70,19 @@ function stackDefaultChecks(root) {
   return {};
 }
 
+// With an architecture overview, a change touching docs/architecture/ re-runs
+// the architecture gate (overview + every component doc) — the docs are
+// validated where they change, not only at design time.
+function architectureDocsCheck(root) {
+  if (!existsSync(join(root, 'docs', 'architecture', 'overview.md'))) return {};
+  const script = join(__dirname, 'architecture-context.js');
+  return { architecture: { command: `"${process.execPath}" "${script}" --validate`, paths: ['docs/architecture/'], enforced: true } };
+}
+
 // root: when given, defaults come from the repo's stack instead of the JS defaults.
 function loadDodConfig(path, { root } = {}) {
   const base = root
-    ? { ...DEFAULT_CONFIG, spec: { ...DEFAULT_CONFIG.spec, checks: { ...stackDefaultChecks(root), markers: { enforced: true } } } }
+    ? { ...DEFAULT_CONFIG, spec: { ...DEFAULT_CONFIG.spec, checks: { ...stackDefaultChecks(root), ...architectureDocsCheck(root), markers: { enforced: true } } } }
     : DEFAULT_CONFIG;
   if (!path || !existsSync(path)) return base;
   const raw = yaml.load(readFileSync(path, 'utf8')) || {};

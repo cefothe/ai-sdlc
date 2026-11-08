@@ -4,7 +4,7 @@
 // declares a diagram type of the required kind and whose body has real edges —
 // an empty or header-only fence does not count.
 //
-//   component  flowchart | graph | C4Context | C4Container | C4Component | architecture-beta | block-beta
+//   component  flowchart | graph | classDiagram | C4Context | C4Container | C4Component | architecture-beta | block-beta
 //   sequence   sequenceDiagram
 //   er         erDiagram
 
@@ -13,14 +13,14 @@
 const FENCE_RE = /^[ \t]*```mermaid[^\n]*\n([\s\S]*?)^[ \t]*```/gm;
 
 const KINDS = {
-  component: /^(flowchart|graph|C4Context|C4Container|C4Component|architecture-beta|block-beta)\b/,
+  component: /^(flowchart|graph|classDiagram|C4Context|C4Container|C4Component|architecture-beta|block-beta)\b/,
   sequence: /^sequenceDiagram\b/,
   er: /^erDiagram\b/,
 };
 
 // What a diagram of each kind must contain to say anything.
 const EDGES = {
-  component: /-->|---|-\.->|==>|--[^-\n]+-->|Rel\(|\(\w+\)\s*--/,
+  component: /-->|---|-\.->|==>|--[^-\n]+-->|Rel\(|\(\w+\)\s*--|<\|--|\*--|o--|\.\.>/,
   sequence: /-{1,2}>>|-{1,2}x|-{1,2}\)|->/,
   // crow's foot: left end |o || }o }|, right end o| || o{ |{; -- identifying, .. not
   er: /[|}][|o](--|\.\.)[|o][|{]|\w+\s*\{[\s\S]*?\}/,

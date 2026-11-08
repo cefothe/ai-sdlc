@@ -9,20 +9,27 @@
 //     (A → B), >=1 invariant. While it exists and is invalid, no design doc
 //     passes; when valid, every design doc must reference it and name the
 //     components it touches (or declare a new one).
+//   - COMPONENT DOCS (component-docs.js): every listed component has its own
+//     detailed doc (docs/architecture/components/<slug>.md); the root gate
+//     fails while one is missing or invalid.
 //   - INJECTED: /ai-sdlc:design hands it to the architects; spec-context hands
 //     the planner, implementer and reviewers the parts their task touches —
 //     the components it reaches, their contracts and data, and every invariant —
-//     so a change lands in the owning component and connects through the
-//     declared seams instead of inventing new coupling.
+//     plus the full docs of those components — so a change lands in the owning
+//     component and connects through the declared seams instead of inventing
+//     new coupling.
 
 const { existsSync, readFileSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { parsePrd, extractListItems } = require('./prd-gate');
 const { makeMatcher, findSection: findDocSection, checkSections, markerTokens, structureReasons } = require('./doc-sections');
 const { hasDiagram, missingFromDiagram } = require('./mermaid');
+const { evaluateComponentDocs, componentDocPath, readComponentDoc, componentDocBody } = require('./component-docs');
 
 const ARCHITECTURE_PATH = join('docs', 'architecture', 'overview.md');
-const DEFAULT_MAX_CHARS = 8000;
+const DEFAULT_MAX_CHARS = 16000;
+const OVERVIEW_SHARE = 0.4; // of the budget when component docs follow the overview slice
+const MAX_COMPONENT_DOCS = 3;
 const MIN_SECTION_CHARS = 30;
 const THIN_SECTION_CHARS = 80;
 
@@ -101,7 +108,12 @@ function loadOverviews(root, projects = []) {
     out.push({
       path: c.path.split('\\').join('/'),
       project: c.project || null,
-      components: extractComponents(markdown).map((comp) => ({ ...comp, paths: comp.paths.map(withPrefix), overview: c.path.split('\\').join('/') })),
+      components: extractComponents(markdown).map((comp) => ({
+        ...comp,
+        paths: comp.paths.map(withPrefix),
+        overview: c.path.split('\\').join('/'),
+        doc: componentDocPath(c.path, comp),
+      })),
       edges: parseEdges(markdown),
       data: lines('Data ownership'),
       invariants: lines('Invariants'),
@@ -164,11 +176,24 @@ function evaluateArchitecture(markdown, { path = ARCHITECTURE_PATH } = {}) {
   return { path, valid: reasons.length === 0, scaffold, missingSections, emptySections, markers, substanceIssues, components: components.map((c) => c.name), advisory, reasons };
 }
 
-// The repo's architecture evaluation, or null when it has none.
+// The repo's architecture evaluation, or null when it has none: the overview
+// plus every listed component's doc.
 function evaluateArchitectureRoot(root, { path = ARCHITECTURE_PATH } = {}) {
   const full = resolve(root, path);
   if (!existsSync(full)) return null;
-  return evaluateArchitecture(readFileSync(full, 'utf8'), { path: path.split('\\').join('/') });
+  const markdown = readFileSync(full, 'utf8');
+  const rel = path.split('\\').join('/');
+  const res = evaluateArchitecture(markdown, { path: rel });
+  if (res.scaffold) return { ...res, componentDocs: [] };
+  const componentDocs = evaluateComponentDocs(root, rel, extractComponents(markdown));
+  const failing = componentDocs.filter((d) => !d.valid).map((d) => ({
+    code: d.exists ? 'component-doc-invalid' : 'missing-component-doc',
+    section: 'Components',
+    message: d.exists ? `${d.path}: ${d.reasons.join('; ')}` : `${d.name} has no component doc — write ${d.path} from the component template`,
+  }));
+  const substanceIssues = [...res.substanceIssues, ...failing];
+  const reasons = [...res.reasons, ...failing.map((i) => i.message)];
+  return { ...res, valid: reasons.length === 0, substanceIssues, reasons, componentDocs };
 }
 
 function escapeRe(s) {
@@ -221,7 +246,16 @@ function formatArchitectureContext(root, { texts = [], paths = [], maxChars = DE
   if (invariants.length) out.push('', 'Invariants (all apply):', ...invariants.map((l) => `- ${l}`));
   const others = components.filter((c) => !names.includes(c.name)).map((c) => c.name);
   if (names.length && others.length) out.push('', `Other components (open ${rel} if your change reaches them): ${others.join(', ')}`);
-  return clip(out.join('\n'), maxChars);
+
+  // The detailed level: the touched components' own docs, in full where the budget allows.
+  const docs = touched.slice(0, MAX_COMPONENT_DOCS)
+    .map((c) => ({ c, path: componentDocPath(rel, c), text: readComponentDoc(root, rel, c) }))
+    .filter((d) => d.text);
+  if (!docs.length) return clip(out.join('\n'), maxChars);
+  const slice = clip(out.join('\n'), Math.floor(maxChars * OVERVIEW_SHARE));
+  const perDoc = Math.floor((maxChars - slice.length) / docs.length);
+  const blocks = docs.map((d) => clip(`COMPONENT DOC — ${d.path}\n${componentDocBody(d.text)}`, perDoc));
+  return [slice, ...blocks].join('\n\n');
 }
 
 module.exports = {

@@ -13,14 +13,17 @@ updated: ''            # ISO date of the last review
 > REQUIRED and enforced by `architecture-context.js`; while this doc is
 > incomplete no design doc passes the design gate. A design that adds or changes
 > a component, contract or data owner updates this doc in the same change.
+> This is the general level; each component has its own detailed doc in
+> `components/<component>.md` (template `components/_template.md`), linked from
+> its Components entry and required by the same gate.
 
 ## System overview
 <What the system does, for whom, and its boundary: the external systems and actors it talks to.>
 
 ## Components
 <A mermaid flowchart (or C4Container) of every component and the contracts between them — required.>
-<One list item per component: bold name, the code it lives in (backticked paths), its single responsibility, and what it exposes.>
-- **<Component>** (`path/to/component/`): <responsibility>. Exposes: <API / events / CLI>.
+<One list item per component: bold name, the code it lives in (backticked paths), its single responsibility, what it exposes, and a link to its component doc.>
+- **<Component>** (`path/to/component/`): <responsibility>. Exposes: <API / events / CLI>. Details: <[components/slug.md](components/slug.md)>
 
 ## Integration contracts
 <A mermaid sequenceDiagram of at least one key interaction across components — required (one per critical flow is better).>
