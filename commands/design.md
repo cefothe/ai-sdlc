@@ -82,6 +82,14 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    gaps where an architect wrote 3 of its 10. Architecture must converge *before*
    any DEC id is assigned.
 
+1c-bis. **Size the effort to the risk — speed is a goal.** A small or low-risk feature (no
+   `scale`, `security`, `data`, `integration`, `architecture` label and no new external contract)
+   gets ONE solution architect and no debate round (skip Phase 2's debate; converge directly).
+   Only high-risk features get the full cross-model panel. Record only **load-bearing** decisions
+   as ADRs (the ones a reviewer would reject a change for violating — typically ≤ 8 per feature),
+   and record them in ONE batch script (`newDecision` + `writeDecision` in a loop), not one shell
+   call each.
+
 1d. **Validate by PoC before locking the contract (optional; integration/API features).**
    When `stages.design.capabilities.poc` is granted and the feature rests on an external
    API/protocol you don't own, you MAY de-risk it with a **small, throwaway** proof-of-concept
@@ -238,6 +246,14 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    record that ADR **and** carry a matching non-functional acceptance criterion into the
    task (step 7) so the implementer and the NFR/scale reviewer both see it.
 
+6b. **Spikes are short or they are maintain jobs.** Every PoC / spike runs here, bounded to a
+   few minutes and sample-based (e.g. read a cache `Age` header over a 10-minute sample instead
+   of polling for hours; read one historical venue-day through the API instead of waiting for a
+   live one). Anything that genuinely needs hours of live observation becomes a background
+   maintain job (`.ai-sdlc/bands.yaml` / `maintenance.yaml`) whose result later raises or changes
+   the ADR — **never** an execute task whose ACs demand long wall-clock observation (DoR gate 11
+   rejects it). If spikes must still run as a task, scaffold it with `--kind spike`.
+
 7. **Scaffold the backlog task — from the PRD *and* the design.** Now that the
    architecture exists, fold both the product contract and the technical decisions
    into one DoR-shaped task. The `--prd` flag emits the `specRef` block (gate 3 +
@@ -255,6 +271,9 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
      --metric "<success metric 1>" --metric "<success metric 2>" \
      --priority <low|medium|high> --desc "<one-paragraph problem+scope, grounded in the ADRs>"
    ```
+   **Split into PR-sized tasks with only the real dependencies.** One task per seam; add a
+   `--deps` edge only when a task truly needs another's output, so independent tasks (e.g. two
+   venue adapters sharing only a schema task) form parallel waves (`task-order.js --waves`).
    For a **data-volume / throughput** feature, include the `resource-budget` decision as a
    **non-functional acceptance criterion** and add a `scale` (or `performance`/`throughput`/
    `data`) **label** — the AC makes the constraint testable and the label routes the NFR/scale

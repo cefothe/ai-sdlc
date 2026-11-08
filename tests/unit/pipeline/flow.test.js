@@ -236,6 +236,29 @@ describe('the harness-component flow', () => {
     expect(r.steps.review.counts.minor + r.steps.review.counts.suggestion).toBe(1);
   });
 
+  test('a run past its wall-clock budget aborts at budget; stage timings are recorded', async () => {
+    s = setup();
+    const flow = { ...DEFAULTS, budget: { maxCostUsd: 0, maxCalls: 0, maxMinutes: 0.0001 } };
+    const slow = scriptedSpawn(s.dir, { plan: 'no manifest' });
+    const spawn = async (a) => { await new Promise((r) => setTimeout(r, 20)); return slow(a); };
+    const r = await executePipeline(opts(s, spawn, { flow }));
+    expect(r.abortedAt).toBe('budget');
+    expect(r.reasons[0]).toMatch(/min elapsed exceeds the cap of 0.0001 min/);
+    expect(r.steps.timings.totalSec).toBeGreaterThanOrEqual(0);
+  });
+
+  test('a spike task skips the design panel and the RED-oracle machinery', async () => {
+    s = setup();
+    s.task.frontmatter.kind = 'spike';
+    const spawn = scriptedSpawn(s.dir);
+    const r = await executePipeline(opts(s, spawn, { runner: noPushRunner }));
+    expect(r.ok).toBe(true);
+    expect(r.steps.design).toEqual({ skipped: true, reason: 'spike task: time-boxed measurement, no design panel' });
+    expect(spawn.calls.some((c) => c.type === 'test-author')).toBe(false);
+    expect(r.steps.manifest).toBeUndefined();
+    expect(Object.keys(r.steps.timings)).toEqual(expect.arrayContaining(['design', 'plan', 'implementAndReview', 'totalSec']));
+  });
+
   test('a requested but missing cordon sandbox aborts loudly', async () => {
     s = setup();
     const flow = { ...DEFAULTS, sandbox: { mode: 'cordon', cordonRun: '/missing/cordon-run.sh', image: 'x' } };

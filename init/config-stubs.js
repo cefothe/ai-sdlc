@@ -185,13 +185,13 @@ spec:
       team: true
       skill: code-review-pr
       providers:
-        - { role: code-reviewer, type: agent, name: code-reviewer, harness: codex }
+        - { role: code-reviewer, type: agent, name: code-reviewer, harness: codex, reasoningEffort: high }
         - { role: test-reviewer, type: agent, name: test-automator, harness: codex, reasoningEffort: medium }
-        - { role: security-reviewer, type: agent, name: security-auditor, harness: codex, reasoningEffort: medium }
+        - { role: security-reviewer, type: agent, name: security-auditor, harness: codex, reasoningEffort: high }
       routing:
         - when: { javaTestFiles: true }
           replaceRole: test-reviewer
-          addProvider: { role: test-reviewer, type: agent, name: qa-code-reviewer, harness: codex }
+          addProvider: { role: test-reviewer, type: agent, name: qa-code-reviewer, harness: codex, reasoningEffort: medium }
         # NFR / scale lens: data-volume / throughput tasks get a reviewer for the
         # non-functional question (peak memory at the stated N, streaming vs
         # batch-all-into-RAM, incremental/crash-durable writes, backpressure).
@@ -249,6 +249,7 @@ plan:
 budget:
   maxCostUsd: 0           # stop a run past this spend (0 = no cap)
   maxCalls: 0             # refuse agent calls past this count (0 = no cap)
+  maxMinutes: 60          # wall-clock cap per task run — long waits are a design defect (0 = no cap)
 metrics:
   owners: {}              # e.g. { agentSuccessRate: eng-lead, costPerSuccess: platform, reworkRate: qa-lead, leadTimeDays: product, changeFailureRate: sre }
 monorepo:

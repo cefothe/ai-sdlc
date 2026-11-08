@@ -18,6 +18,23 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
   implementer. If capabilities.yaml puts a reviewer on the implementer's
   harness, stop and report — do not proceed.
 
+## Speed contract (read first)
+
+A ticket should finish **as fast as possible with enough confidence** — not wait.
+- **Wall-clock budget:** finish within `.ai-sdlc/flow.yaml` → `budget.maxMinutes` (default 60).
+  If you cannot, stop and report what remains; never extend the run by sleeping.
+- **Never wait on long observation.** No polling loops, multi-hour measurements, soak runs or
+  `ScheduleWakeup` waits for live data inside execute. Anything that needs more than a few
+  minutes of wall-clock observation is a **background maintain job** (`/ai-sdlc:maintain`,
+  `.ai-sdlc/bands.yaml` / `maintenance.yaml`) whose result later updates the ADR — DoR gate 11
+  refuses tasks whose ACs demand it.
+- **Spike tasks** (`kind: spike`) are time-boxed measurement scripts: no design panel, no test
+  author, no RED-oracle nodes — write the script, run a short sampled measurement, record the
+  numbers in the design Risks / ADRs, done.
+- **Parallelize:** independent tasks run concurrently in separate worktrees
+  (`node "${CLAUDE_PLUGIN_ROOT}/decision-engine/task-order.js" --waves`); inside a task, file-disjoint
+  streams run in parallel (step 5).
+
 ## Steps
 
 1. **Admit (DoR).** Run:

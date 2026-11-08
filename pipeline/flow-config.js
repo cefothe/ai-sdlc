@@ -34,7 +34,7 @@ const DEFAULTS = {
   conformance: { enabled: true },   // architecture conformance check on the real diff → reviewers
   product: { recordShipped: true }, // add a shipped feature to the product context's Current capabilities
   plan: { commit: true },          // commit docs/plans/<task>.md and report plan drift
-  budget: { maxCostUsd: 0, maxCalls: 0 }, // per-run caps; 0 = no cap
+  budget: { maxCostUsd: 0, maxCalls: 0, maxMinutes: 60 }, // per-run caps; 0 = no cap. A ticket should finish in an hour.
   metrics: { owners: {} },         // delivery-metric → owner who acts when it goes red
   monorepo: {
     projects: [],            // [path | {name, path}] — empty = detect from workspace manifests

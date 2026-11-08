@@ -55,6 +55,7 @@ function buildTaskMarkdown({
   specSource = 'prd',
   successMetrics = [],
   dependencies = [],
+  kind = '',
 }) {
   if (!id || !ID_RE.test(id)) throw new Error('task id must match AISDLC-NNN');
   if (!title || typeof title !== 'string' || !title.trim()) throw new Error('task requires a non-empty title');
@@ -82,6 +83,7 @@ function buildTaskMarkdown({
     `priority: ${priority}`,
     ...(labels.length ? ['labels:', ...labels.map((l) => `  - ${l}`)] : ['labels: []']),
     `dispatchable: ${dispatchable}`,
+    ...(kind ? [`kind: ${kind}`] : []),
     // Explicit, machine-readable build order: task-order.js topologically sorts
     // the backlog by this field so the sequence is derived, not chosen ad-hoc.
     ...(dependencies.length ? ['dependencies:', ...dependencies.map((d) => `  - ${d}`)] : ['dependencies: []']),
@@ -199,6 +201,7 @@ if (require.main === module) {
       featureId: flags['feature-id'] || '',
       successMetrics: flags.metric,
       dependencies: split(flags.deps),
+      kind: flags.kind || '',
     });
     console.log(`Created ${res.id}: ${res.path}`);
     const refCount = split(flags.refs).length;

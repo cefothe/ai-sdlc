@@ -41,12 +41,15 @@ class BudgetExceeded extends Error {
 
 // Meter every agent dispatch: count calls and sum the cost each `claude -p`
 // reports (result._meta.costUsd). With a flow budget, a run that would exceed
-// maxCalls is refused before the call, and one that has exceeded maxCostUsd
-// stops after it — cost per successful task is a delivery metric, not a surprise.
-function meterSpawn(spawn, budget = {}) {
+// maxCalls or maxMinutes is refused before the call, and one that has exceeded
+// maxCostUsd stops after it. A ticket is meant to finish fast with enough
+// confidence — a run that waits for hours is a design defect, not diligence.
+function meterSpawn(spawn, budget = {}, { now = Date.now } = {}) {
   // `started` counts in-flight calls too, so a parallel panel cannot overshoot the cap.
-  const meter = { usd: 0, calls: 0, started: 0 };
+  const meter = { usd: 0, calls: 0, started: 0, startedAt: now() };
   const metered = async (args) => {
+    const minutes = (now() - meter.startedAt) / 60000;
+    if (budget.maxMinutes && minutes > budget.maxMinutes) throw new BudgetExceeded(`budget: ${minutes.toFixed(0)} min elapsed exceeds the cap of ${budget.maxMinutes} min`);
     if (budget.maxCalls && meter.started >= budget.maxCalls) throw new BudgetExceeded(`budget: ${meter.started} agent calls reached the cap of ${budget.maxCalls}`);
     meter.started += 1;
     const out = await spawn(args);
@@ -78,6 +81,7 @@ function buildRunRecord({ out, task, startedAt, endedAt, meter, baseSha, nodes }
     review: st.review ? { cycles: st.review.iterations, verdict: st.review.decision, findings: findings.map((f) => ({ severity: f.severity, message: f.message, file: f.file })) } : undefined,
     pace: st.pace && st.pace.post ? st.pace.post.verdict : null,
     cost: { usd: Number(meter.usd.toFixed(4)), calls: meter.calls },
+    timings: st.timings || {},
     degraded: (out.degraded || []).map((d) => d.seam),
     prUrl: st.pr ? st.pr.url : null,
     outcome: { pending: true },
@@ -96,6 +100,7 @@ async function executePipeline(opts) {
   const ctx = { meter, nodes: null };
   const out = await runPipeline({ ...opts, spawn: metered }, ctx);
   out.steps.cost = { usd: Number(meter.usd.toFixed(4)), calls: meter.calls };
+  out.steps.timings = { ...(out.steps.timings || {}), totalSec: Math.round((Date.now() - startedAt) / 1000) };
   if (typeof opts.recordRun === 'function') {
     try {
       opts.recordRun(buildRunRecord({ out, task: opts.task, startedAt, endedAt: Date.now(), meter, baseSha, nodes: ctx.nodes }));
@@ -145,6 +150,14 @@ async function runPipeline(opts, ctx) {
 
   const result = { ok: false, taskId, steps: {}, degraded: [] };
   const degrade = (seam, reason) => result.degraded.push({ seam, reason });
+  // Where the time goes: seconds spent per stage (design, plan, implement, review, …).
+  let stageStart = Date.now();
+  const mark = (stage) => {
+    const nowMs = Date.now();
+    result.steps.timings = { ...(result.steps.timings || {}), [stage]: Math.round((nowMs - stageStart) / 1000) };
+    stageStart = nowMs;
+  };
+  const isSpike = String(((task || {}).frontmatter || {}).kind || '').toLowerCase() === 'spike';
   let activeWorktree = worktreePath;
 
   // Resolve which skills/agents fulfill each stage (CapabilityMap). Falls back
@@ -248,7 +261,9 @@ async function runPipeline(opts, ctx) {
     }
 
     let designText = null;
-    if (designPanel && designPanel.providers.length && runDesign && isBugFix) {
+    if (designPanel && designPanel.providers.length && runDesign && isSpike) {
+      result.steps.design = { skipped: true, reason: 'spike task: time-boxed measurement, no design panel' };
+    } else if (designPanel && designPanel.providers.length && runDesign && isBugFix) {
       result.steps.design = { skipped: true, reason: `bug fix: the confirmed bug report ${spec.bugPath} is the input` };
     } else if (designPanel && designPanel.providers.length && runDesign && spec && spec.designApproved) {
       result.steps.design = { skipped: true, reason: `approved design doc ${spec.designPath} is the design input` };
@@ -270,6 +285,8 @@ async function runPipeline(opts, ctx) {
         result.steps.design = { providers: designPanel.providers.map((p) => p.name), error: err.message };
       }
     }
+
+    mark('design');
 
     // Pre-action context (the R8 d=1.82 lever). Interactive runs fetch this at
     // step 4c; for unattended runs we resolve it here via the injected fetchCxpak
@@ -293,13 +310,16 @@ async function runPipeline(opts, ctx) {
     }
     result.steps.decisions = { injected: !!decisionsText };
 
+    mark('context');
+
     // Optional plan stage (e.g. the /code-plan skill) — its output augments the
     // pre-action context handed to the implementer (cxpak + design notes). ADRs
     // ride their own dedicated block in the developer prompt (decisionsContext).
     const baseContext = [resolvedCxpak, designText].filter(Boolean).join('\n') || null;
     let planText = baseContext;
     let planStr = '';
-    const useManifest = !!(flow && flow.manifest && flow.manifest.enabled);
+    // Spikes are time-boxed measurement scripts: no RED-oracle node machinery.
+    const useManifest = !!(flow && flow.manifest && flow.manifest.enabled) && !isSpike;
     if (planProvider && runPlan) {
       try {
         const planGoal = isBugFix
@@ -342,6 +362,8 @@ async function runPipeline(opts, ctx) {
         result.steps.planArtifact = { path: rel };
       } catch (err) { degrade('plan-artifact', err.message); }
     }
+
+    mark('plan');
 
     // Steps 5/6 + 7/8/9 — implement, then iterate dev<->review until approved.
     let developer = null;
@@ -455,6 +477,7 @@ async function runPipeline(opts, ctx) {
       if (review.approved) break;
     }
 
+    mark('implementAndReview');
     result.steps.developer = { commitSha: developer.commitSha, filesChanged: developer.filesChanged };
     if (promiseGate) result.steps.promiseGate = promiseGate;
 
@@ -491,6 +514,8 @@ async function runPipeline(opts, ctx) {
       result.steps.hitl = { status: hitl.status, fired: hitl.fired, unacked: hitl.unacked, source: hitl.source, warnings: hitl.warnings };
       if (hitl.status === 'blocked') return abort('hitl', formatBlocked(hitl), result);
     }
+
+    mark('gates');
 
     // Step 10 — finalize.
     result.steps.finalize = steps.finalizeTask({ taskFilePath, completedDir, requireAllAcChecked, task });

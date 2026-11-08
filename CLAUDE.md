@@ -236,6 +236,16 @@ firecrawl / postgres-ro / clickhouse-ro / WebSearch). For repos that bind stages
 - **Library quality:** `scripts/lint-agents-skills.js` (errors fail CI) and the `usage-telemetry` hook
   (`promise/logs/usage.jsonl`, `measurement/usage-report.js`: top and never-used agents/skills).
 
+## Speed contract (fast with enough confidence)
+
+A ticket should finish fast, not wait. `flow.budget.maxMinutes` (default 60) is enforced by
+`meterSpawn` (abort `budget`); per-stage seconds land in `result.steps.timings`, the run record and
+the PR's Time row. DoR **gate 11** (`demandedMinutes`) rejects ACs demanding long wall-clock
+observation (→ maintain jobs). `kind: spike` tasks skip the design panel and the RED-oracle
+machinery. Design sizes its panel to risk, records only load-bearing ADRs in one batch, keeps
+spikes bounded; secondary codex reviewers run at medium effort; `task-order.js --waves` lists tasks
+that can run in parallel. Origin: the benchmark's 9 h spike ticket (pm-data-bench FINDINGS #14).
+
 ## Bug flow and migration
 
 **Bugs** enter through `/ai-sdlc:bug` (`commands/bug.md`), not new → design: a triaged

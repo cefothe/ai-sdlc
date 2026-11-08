@@ -19,6 +19,10 @@
 // And one for bug tasks (specRef.source: bug / a docs/bugs/ artifact), which
 // skip 8 and 9 — a fix needs a triaged reproduction, not a PRD + design:
 //   10 bug report confirmed (structurally valid, reproducible, status: confirmed)
+// And one for every task:
+//   11 time-boxed — no acceptance criterion demands wall-clock observation longer
+//      than the per-task budget (e.g. "poll for >= 2 h", "over 24 h", "a live
+//      venue-day"); long observation belongs in a background maintain job
 //
 // Overall verdict: 'blocked' | 'not-dispatchable' | 'needs-clarification'
 //   | 'needs-stage-b' | 'ready'. In enforce mode only 'ready' is admitted;
@@ -115,6 +119,21 @@ function defaultDesignEvaluator(designPath, projectRoot, { prdPath } = {}) {
 function defaultBugEvaluator(bugPath) {
   const { evaluateBugFile } = require('./bug-gate');
   return evaluateBugFile(bugPath);
+}
+
+// Wall-clock observation an AC demands, in minutes ("over >= 2 h", "for 30 min",
+// "24 h", "7 days", "overnight", "a live venue-day"), or 0 when it demands none.
+const DURATION_RE = /\b(?:over|for|during|across|at least|>=|≥|polled[^.]{0,40}?over)\s*(?:>=|≥)?\s*(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|h|hrs?|hours?|days?|d)\b/gi;
+const UNIT_MIN = { m: 1, h: 60, d: 1440 };
+function demandedMinutes(text) {
+  let max = 0;
+  for (const m of String(text || '').matchAll(DURATION_RE)) {
+    const unit = m[2].toLowerCase().startsWith('min') ? 'm' : m[2].toLowerCase().startsWith('d') ? 'd' : 'h';
+    max = Math.max(max, Number(m[1]) * UNIT_MIN[unit]);
+  }
+  if (/\bovernight\b/i.test(text)) max = Math.max(max, 480);
+  if (/\blive (?:venue-)?day\b|\bsteady state over 24\s*h\b/i.test(text)) max = Math.max(max, 1440);
+  return max;
 }
 
 // Default ADR-coverage seam (only consulted when coverage enforcement is on).
@@ -308,6 +327,18 @@ function evaluateDor(task, opts = {}) {
     }
   }
 
+  // Gate 11 — time-boxed (deterministic). A ticket is meant to finish fast; an AC
+  // that requires hours of live observation turns execute into waiting. Such
+  // checks run as background maintain jobs (bands / maintenance) instead.
+  const timeBox = (config.spec && config.spec.timeBox) || {};
+  const maxMinutes = opts.maxTaskMinutes !== undefined ? opts.maxTaskMinutes : (timeBox.maxMinutes !== undefined ? timeBox.maxMinutes : 60);
+  if (maxMinutes > 0 && !skip.has(11)) {
+    const offenders = (task.acceptanceCriteria || []).map((a) => ({ text: a.text, min: demandedMinutes(a.text) })).filter((a) => a.min > maxMinutes);
+    record(11, offenders.length ? 'fail' : 'pass', offenders.length
+      ? `AC(s) demand wall-clock observation beyond the ${maxMinutes}-min task budget — move them to a maintain job (bands/maintenance) and keep a short, sampled check here: ${offenders.map((o) => `"${o.text.slice(0, 80)}" (~${Math.round(o.min / 60)} h)`).join('; ')}`
+      : 'no acceptance criterion demands long wall-clock observation');
+  }
+
   // Optional Stage-B judge resolves the deferred gates.
   if (stageBJudge && stageBNeeded.length) {
     const verdicts = stageBJudge(task, stageBNeeded.slice());
@@ -338,4 +369,4 @@ function evaluateDor(task, opts = {}) {
   return { verdict, admitted, mode, gates, needsStageB: deferred.map((g) => g.gateId), reasons };
 }
 
-module.exports = { loadDorConfig, evaluateDor, referenceResolves, DEFAULT_CONFIG, MARKER_TOKEN_RE };
+module.exports = { loadDorConfig, evaluateDor, referenceResolves, demandedMinutes, DEFAULT_CONFIG, MARKER_TOKEN_RE };

@@ -190,3 +190,12 @@ describe('createTask --bug', () => {
     }
   });
 });
+
+describe('task kind', () => {
+  test('--kind spike is written to frontmatter', () => {
+    const md = nt.buildTaskMarkdown({ id: 'AISDLC-0009', title: 'spikes', createdDate: 'd', kind: 'spike' });
+    expect(parseTask(md).frontmatter.kind).toBe('spike');
+    expect(nt.buildTaskMarkdown({ id: 'AISDLC-0010', title: 't', createdDate: 'd' })).not.toMatch(/^kind:/m);
+  });
+});
+

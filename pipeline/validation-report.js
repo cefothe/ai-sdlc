@@ -43,6 +43,10 @@ function gateRows(steps) {
     rows.push(row('Pace', 'pass', `${p.verdict}${p.hitlFloor && p.hitlFloor.length ? ' (HITL floor)' : ''}${p.trustRaised ? ' (raised: low trust)' : ''}${p.conformanceRaised ? ' (raised: conformance)' : ''}`));
   }
   if (steps.cost) rows.push(row('Cost', 'pass', `$${steps.cost.usd.toFixed(2)} over ${steps.cost.calls} agent call(s)`));
+  if (steps.timings) {
+    const t = Object.entries(steps.timings).filter(([k]) => k !== 'totalSec').map(([k, v]) => `${k} ${Math.round(v / 60)}m`).join(' · ');
+    rows.push(row('Time', 'pass', `${t}${steps.timings.totalSec ? ` · total ${Math.round(steps.timings.totalSec / 60)}m` : ''}`));
+  }
   return rows;
 }
 
