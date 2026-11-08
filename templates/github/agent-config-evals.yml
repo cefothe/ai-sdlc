@@ -1,0 +1,37 @@
+# Agent-configuration evals — copy to .github/workflows/ in a repo that runs ai-sdlc.
+# A change to what steers the agents (agents/, skills/, rules/, CLAUDE.md, hooks,
+# .claude/) re-runs the eval suite and fails the PR on a pass-rate regression;
+# a nightly run catches model-side drift. Needs ANTHROPIC_API_KEY and a budget.
+# In a repo consuming the plugin (not the plugin repo itself), check the plugin out
+# (e.g. actions/checkout of cefothe/ai-sdlc into ./ai-sdlc) and run
+# node ai-sdlc/measurement/config-evals.js from the repo root instead.
+name: agent-config-evals
+on:
+  pull_request:
+    paths:
+      - 'CLAUDE.md'
+      - '.claude/**'
+      - 'agents/**'
+      - 'skills/**'
+      - 'rules/**'
+      - 'hooks/**'
+      - '.ai-sdlc/evals/**'
+  schedule:
+    - cron: '0 2 * * *'
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Run evals against the baseline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node measurement/config-evals.js run --tolerance 0.05

@@ -125,6 +125,18 @@ spec:
       capabilities:
         web: [WebSearch, WebFetch]
         skills: [deep-research]
+      routing:
+        - when: { labels: [strategic, gtm, launch, growth] }
+          addProvider: { role: cmo, type: agent, name: cmo }
+        - when: { labels: [strategic, roadmap, platform] }
+          addProvider: { role: cpo, type: agent, name: cpo }
+        # Domain advisors join the product panel for deep-rule domains: they
+        # supply the domain edge cases, risk and regulatory requirements a
+        # generic PM/PO misses (roles differ so both can join one panel).
+        - when: { labels: [trading, execution, risk] }
+          addProvider: { role: trading-advisor, type: agent, name: grizzled-trader }
+        - when: { labels: [compliance, regulatory] }
+          addProvider: { role: compliance-advisor, type: agent, name: qa-compliance-engineer }
     # Design — a cross-MODEL architect panel shapes the HOW before code. The
     # solution-architect lens runs on BOTH claude and codex; the Phase-2 chair
     # converges the two independent architectures (design is the highest-leverage
@@ -138,7 +150,7 @@ spec:
         - { role: backend-architect, type: agent, name: backend-architect, harness: claude }
         - { role: solution-architect-codex, type: agent, name: architect-review, harness: codex }
       capabilities:
-        skills: [firecrawl, deep-research]
+        skills: [firecrawl, deep-research, mermaid-diagrams]
         web: [WebSearch, WebFetch]
         # Architects may run a small throwaway PoC to CONFIRM a real endpoint/
         # schema/auth before locking the ADR (turns a spike into a decision).
@@ -173,13 +185,13 @@ spec:
       team: true
       skill: code-review-pr
       providers:
-        - { role: code-reviewer, type: agent, name: code-reviewer, harness: codex }
+        - { role: code-reviewer, type: agent, name: code-reviewer, harness: codex, reasoningEffort: high }
         - { role: test-reviewer, type: agent, name: test-automator, harness: codex, reasoningEffort: medium }
-        - { role: security-reviewer, type: agent, name: security-auditor, harness: codex, reasoningEffort: medium }
+        - { role: security-reviewer, type: agent, name: security-auditor, harness: codex, reasoningEffort: high }
       routing:
         - when: { javaTestFiles: true }
           replaceRole: test-reviewer
-          addProvider: { role: test-reviewer, type: agent, name: qa-code-reviewer, harness: codex }
+          addProvider: { role: test-reviewer, type: agent, name: qa-code-reviewer, harness: codex, reasoningEffort: medium }
         # NFR / scale lens: data-volume / throughput tasks get a reviewer for the
         # non-functional question (peak memory at the stated N, streaming vs
         # batch-all-into-RAM, incremental/crash-durable writes, backpressure).
@@ -200,7 +212,66 @@ function baseline() {
     [join(d, 'agent-role.yaml')]: agentRole(),
     [join(d, 'adapter-binding.yaml')]: adapterBinding(),
     [join(d, 'capabilities.yaml')]: capabilities(),
+    [join(d, 'flow.yaml')]: flowConfig(),
+    [join(d, 'checkpoints.yaml')]: checkpointsRepo(),
   };
+}
+
+// Harness-component flow (pipeline/flow-config.js) — plain config, no kind.
+function flowConfig() {
+  return `# Harness-component flow — what the pipeline plugs in (defaults shown).
+version: "1"
+components:
+  mode: docker            # docker: call the published images (commitward, slicr) · inprocess: never
+  images: {}              # e.g. { commitward: ghcr.io/barnett-studios/commitward:0.3.4 }
+  timeoutSec: 120
+manifest:
+  enabled: true           # plan emits an execution-manifest → RED-oracle node execution
+  nodeRetries: 2          # rolled-back retries per node before it halts to a human
+  acceptTimeoutSec: 300
+sandbox:
+  mode: host              # host | cordon (https://github.com/Barnett-Studios/cordon)
+  cordonRun: ''           # path to cordon's bin/cordon-run.sh when mode: cordon
+  image: ''               # runtime image the accept command runs in
+hitl:
+  enabled: true           # human sign-off gate before push — never auto-acknowledged
+pace:
+  enabled: true           # ceremony from blast radius + HITL floor + trust (raise-only)
+trust:
+  enabled: true
+  ledgerDir: ''           # promise ledger dir; empty = the plugin's promise/logs
+conformance:
+  enabled: true           # architecture conformance check on the real diff → reviewers
+product:
+  recordShipped: true     # record a shipped feature in docs/product/context.md Current capabilities
+plan:
+  commit: true            # commit docs/plans/<task>.md with the change; report plan drift to reviewers
+budget:
+  maxCostUsd: 0           # stop a run past this spend (0 = no cap)
+  maxCalls: 0             # refuse agent calls past this count (0 = no cap)
+  maxMinutes: 60          # wall-clock cap per task run — long waits are a design defect (0 = no cap)
+metrics:
+  owners: {}              # e.g. { agentSuccessRate: eng-lead, costPerSuccess: platform, reworkRate: qa-lead, leadTimeDays: product, changeFailureRate: sre }
+monorepo:
+  projects: []            # subproject paths; empty = detect (package.json workspaces, pnpm, go.work, Cargo, lerna)
+  autoDetect: true
+`;
+}
+
+// Repo-local HITL checkpoints, layered over the plugin default by name.
+function checkpointsRepo() {
+  return `# Repo HITL checkpoints (commitward format) — added to / overriding by name the
+# plugin default (decision-engine/checkpoints.default.yaml: agent-instruction and
+# gate edits, destructive ops, licence, CI, migrations, secrets, IaC). A change that
+# fires one stops before push until a human adds "HITL-ACK: <name> <note>" to a
+# commit on the branch. Removing a checkpoint here fires checkpoint-removed.
+version: "1"
+checkpoints: []
+#  - name: payments
+#    summary: "Changing payment or settlement code"
+#    paths:
+#      - "(^|/)payments?/"
+`;
 }
 
 function backlogConfig() {
@@ -229,4 +300,4 @@ spec:
 `;
 }
 
-module.exports = { baseline, backlogConfig, workspaceStub, capabilities, dorConfig, qualityGate, autonomyPolicy, agentRole, adapterBinding };
+module.exports = { baseline, backlogConfig, flowConfig, checkpointsRepo, workspaceStub, capabilities, dorConfig, qualityGate, autonomyPolicy, agentRole, adapterBinding };

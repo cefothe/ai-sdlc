@@ -118,7 +118,8 @@ describe('adapter drives the real pipeline end-to-end (fake exec)', () => {
         }
         return '';
       };
-      const seams = adapter.makeClaudeCodeSeams({ exec });
+      // workDir roots the seams (run records, flow config) in the temp dir, never the repo.
+      const seams = adapter.makeClaudeCodeSeams({ exec, workDir: dir });
       const r = await executePipeline({
         taskId: 'AISDLC-1', task, taskFilePath, completedDir: path.join(dir, 'backlog', 'completed'),
         worktreePath: path.join(dir, '.worktrees', 'aisdlc-1'), baseBranch: 'main', projectRoot: ROOT,
@@ -154,7 +155,8 @@ describe('adapter drives the real pipeline end-to-end (fake exec)', () => {
         }
         return '';
       };
-      const seams = adapter.makeClaudeCodeSeams({ exec });
+      // workDir roots the seams (run records, flow config) in the temp dir, never the repo.
+      const seams = adapter.makeClaudeCodeSeams({ exec, workDir: dir });
       const r = await executePipeline({
         taskId: 'AISDLC-2', task, taskFilePath, completedDir: path.join(dir, 'backlog', 'completed'),
         worktreePath: path.join(dir, '.worktrees', 'aisdlc-2'), baseBranch: 'main', projectRoot: ROOT,
@@ -199,9 +201,70 @@ describe('makeCxpakFetcher', () => {
     expect(ctx).toBeNull();
   });
 
-  test('makeClaudeCodeSeams exposes fetchCxpak', () => {
+  test('monorepo: cxpak is scoped to the touched subprojects with the budget split', async () => {
+    const calls = [];
+    const exec = (cmd, args) => { calls.push(args); return `overview of ${args[args.indexOf('--workspace') + 1]}`; };
+    const projects = [{ name: 'orders', path: 'packages/orders' }, { name: 'payments', path: 'packages/payments' }, { name: 'web', path: 'apps/web' }];
+    const ctx = await adapter.makeCxpakFetcher({ exec, projects })({ frontmatter: { title: 'refund', references: ['packages/orders/a.ts', 'packages/payments/b.ts'] } });
+    // deepest (longest) project path first — the order projectsForPaths guarantees
+    expect(calls).toEqual([
+      ['overview', '--tokens', '3000', '--workspace', 'packages/payments', '.'],
+      ['overview', '--tokens', '3000', '--workspace', 'packages/orders', '.'],
+    ]);
+    expect(ctx).toMatch(/### Subproject orders \(packages\/orders\)\n\noverview of packages\/orders/);
+    const root = await adapter.makeCxpakFetcher({ exec: (c, a) => { calls.push(a); return 'whole repo'; }, projects })({ frontmatter: { references: ['docs/x.md'] } });
+    expect(calls[calls.length - 1]).toEqual(['overview', '--tokens', '6k']);
+    expect(root).toMatch(/whole repo/);
+  });
+
+  test('loadMcpServers expands ${CLAUDE_PLUGIN_ROOT} in command and args', () => {
+    const servers = adapter.loadMcpServers([path.join(ROOT, '.mcp.json')], { pluginRoot: '/plugin' });
+    expect(servers['ai-sdlc-context']).toEqual({ type: 'stdio', command: 'node', args: ['/plugin/mcp/context-server.js', '.'] });
+    expect(adapter.ALWAYS_MCP).toEqual(['cxpak', 'ai-sdlc-context']);
+  });
+
+  test('makeClaudeCodeSeams exposes fetchCxpak, fetchSpec and the component flow', () => {
     const seams = adapter.makeClaudeCodeSeams({ exec: () => '' });
     expect(typeof seams.fetchCxpak).toBe('function');
+    expect(typeof seams.fetchSpec).toBe('function');
+    expect(typeof seams.invoke).toBe('function');
+    expect(typeof seams.fetchTrust).toBe('function');
+    expect(seams.flow.hitl.enabled).toBe(true);
+  });
+
+  test('makeTrustFetcher reads the latest ledger score as a tier; unknown agents are null', async () => {
+    const ledgerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trust-'));
+    try {
+      fs.mkdirSync(path.join(ledgerDir, 'agents'));
+      fs.writeFileSync(path.join(ledgerDir, 'agents', 'java-pro.jsonl'), [
+        JSON.stringify({ agent_id: 'java-pro', trust_after: 0.9 }),
+        JSON.stringify({ agent_id: 'java-pro', trust_after: 0.3 }),
+      ].join('\n') + '\n');
+      const fetchTrust = adapter.makeTrustFetcher({ ledgerDir });
+      expect(await fetchTrust('java-pro')).toBe('low');
+      expect(await fetchTrust('nobody')).toBeNull();
+    } finally {
+      fs.rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  test('makeSpecFetcher returns no spec text for a task without specRef', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-f-'));
+    try {
+      const spec = await adapter.makeSpecFetcher({ root })({ frontmatter: { id: 'X' } });
+      expect(spec).toEqual({ text: null, architectureInjected: false, kind: 'feature', bugPath: null, prdPath: null, designPath: null, designApproved: false });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('parseClaudeResult cost metadata', () => {
+  test('carries total_cost_usd / num_turns / duration_ms as _meta on the parsed payload', () => {
+    const out = adapter.parseClaudeResult(JSON.stringify({ result: JSON.stringify({ commitSha: 'abc', verifications: ['ok'] }), total_cost_usd: 0.37, num_turns: 4, duration_ms: 1200 }));
+    expect(out).toEqual({ commitSha: 'abc', verifications: ['ok'], _meta: { costUsd: 0.37, turns: 4, durationMs: 1200 } });
+    expect(adapter.parseClaudeResult(JSON.stringify({ result: 'plain text', total_cost_usd: 0.1 }))).toEqual({ summary: 'plain text', _meta: { costUsd: 0.1, turns: undefined, durationMs: undefined } });
+    expect(adapter.parseClaudeResult(JSON.stringify({ result: '{"a":1}' }))).toEqual({ a: 1 });
   });
 });
 
@@ -278,7 +341,7 @@ describe('makeDecisionsFetcher returns the relevance partition', () => {
   test('missing store -> empty partition, never throws', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dec-fetch-'));
     try {
-      await expect(adapter.makeDecisionsFetcher({ root: dir })({ frontmatter: {} })).resolves.toEqual({ selected: [], omitted: [] });
+      await expect(adapter.makeDecisionsFetcher({ root: dir })({ frontmatter: {} })).resolves.toEqual({ selected: [], omitted: [], primary: [] });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

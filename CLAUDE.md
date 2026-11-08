@@ -107,7 +107,176 @@ plus any the task references; `steps.formatDecisionsContext` renders them as a
 "CONSTRAINTS — honor these, cite the DEC id, stop and flag if one blocks the task"
 block. `execute.js` feeds it via the `fetchDecisions` seam (`makeDecisionsFetcher`);
 `execute.md` step 3b does the interactive equivalent. This is what makes front-loaded
-design actually reach the code instead of being re-derived.
+design actually reach the code instead of being re-derived. ADRs the task implements
+directly (task-/design-doc-referenced or own feature — `partition.primary`) are rendered
+with full context/rationale/consequences/rejected options; the rest one line each.
+
+The **spec** reaches the code the same way: `decision-engine/spec-context.js`
+(`buildSpecForTask`) renders the task's approved PRD (`specRef.artifactPath`) + design
+doc (`docs/design/<featureId>.md`) as a token-budgeted block (ACs/scope/schema/
+interfaces first). `execute.js` feeds it via the `fetchSpec` seam (`makeSpecFetcher`)
+into the plan, developer and review prompts, and **skips the ad-hoc design panel when
+an approved design doc exists**; `execute.md` step 3c is the interactive equivalent.
+
+Spec **substance** is enforced, not just structure: `prd-gate.js` (10 sections incl.
+Non-goals/User flows/Edge cases/NFRs; >=2 list-item ACs; measurable metrics; no
+unresolved open questions; min section length) and `design-gate.js` (concrete schema,
+concrete interfaces, failure paths in data flow, test strategy mapping every PRD AC as
+`ACn`, every linked ADR complete per `decisions.evaluateAdrQuality`). DoR gates 8/9 use
+both. `backlog-task-new --prd` copies the PRD's ACs into the task verbatim.
+
+**Product context for discovery.** PM/PO/CPO/CMO stay generic plugin agents; the
+product knowledge lives once per repo in `docs/product/context.md` (scaffolded by init
+from `docs/product/_template.md`: Vision, Personas, Current capabilities, Glossary,
+Metric baselines, Regulatory constraints, Non-goals). `decision-engine/product-context.js`
+gates it and renders it — plus an index of existing PRDs and the most related ones in
+full, budgeted via the shared `doc-budget.js` — for the discovery panel and clarify
+(`new.md` step 1b). When the doc exists, `prd-gate` refuses PRDs while it is invalid
+and requires Target user to name a persona and Success metrics to cite a baseline.
+Domain advisors join discovery by label (`resolveDiscoveryPanel`): `trading|execution|risk`
+→ `grizzled-trader`, `compliance|regulatory` → `qa-compliance-engineer`.
+
+## Harness-component flow (Barnett Studios components)
+
+The execute pipeline plugs in published components behind their contracts, configured
+by `.ai-sdlc/flow.yaml` (`pipeline/flow-config.js`; defaults apply without the file).
+Components run as pinned ghcr images via `adapters/component-invoker.js` (ADR-0052
+envelope: `ok` → use · `rejected` → fail · `error`/no docker → in-process fallback,
+recorded in `result.degraded`). `components.mode: inprocess` never calls docker.
+
+| Piece | Where | Behavior |
+|---|---|---|
+| Pace (conductr ADR-0061) | `decision-engine/pace.js`, `.ai-sdlc/pace.yaml` (default `pace.default.yaml`) | fast/normal/slow by path; unclassified = normal; HITL-claimed = slow; low/critical trust raises one layer, never lowers. Pre-impl (task references) gates the design panel; post-impl (real diff) caps reviewers and opens slow PRs as draft |
+| Manifest (slicr contract) | `pipeline/manifest.js` | plan emits `{"execution-manifest": [...]}`; slicr `run-json` validates (in-process fallback, same rules); `none` → single-implementer path; `refused` → abort |
+| RED-oracle executor | `pipeline/node-executor.js` | test author commits RED tests first; already-GREEN accepts flagged; per node: implementer edits only `node.files`, pipeline checks scope (no test edits, `new_deps`), runs accept, rolls back + retries, HALTs to a human |
+| Sandbox (cordon) | `sandbox.mode: cordon` + `cordonRun` + `image` | accepts run via cordon's `cordon-run.sh`; requested-but-missing fails loud |
+| HITL gate (commitward contract) | `decision-engine/hitl-gate.js`, `checkpoints.default.yaml` + `.ai-sdlc/checkpoints.yaml` | before push; fired + unacked → abort `hitl`. **Always stops for a human**: never auto-acked; an unevaluable registry blocks (stricter than commitward's fail-open) |
+| Trust | `makeTrustFetcher` (promise ledger EMA tier) | raise-only input to pace |
+
+`execute.md` steps 3d (pace), 4 (manifest), 5a (oracle nodes), 6c (HITL via
+`AskUserQuestion`, ack recorded only in the human's words) are the interactive
+equivalent. `init` scaffolds `flow.yaml`, `checkpoints.yaml`, `pace.yaml`.
+
+## Architecture overview (system map)
+
+`docs/architecture/overview.md` (template `docs/architecture/_template.md`, built from the
+code by `/ai-sdlc:architecture`) holds Components (each with its backticked code paths),
+Integration contracts (`A → B: mechanism, contract`), Data ownership, Cross-cutting
+concerns, Deployment, Invariants and Key decisions. `decision-engine/architecture-context.js`
+gates it and renders the slice a task reaches (components named in its spec or owning its
+referenced paths, their contracts/data, all invariants). `spec-context` appends that slice
+to every spec block (also for tasks without a PRD), so plan/implementer/reviewers and the
+unattended design panel get it; `/ai-sdlc:design` hands the full doc to the architects.
+When it exists, `design-gate` fails designs while it is invalid, and requires each design to
+reference it (`architecture:` frontmatter) and name its components or declare
+`New component: <name>` (added to the overview in the same change). Shared section checks
+live in `decision-engine/doc-sections.js`. **Two levels:** the overview is the general map; every listed
+component has its own detailed doc `docs/architecture/components/<slug>.md` (template
+`docs/architecture/components/_template.md`, gate `decision-engine/component-docs.js`: Responsibility, Code
+naming the overview's paths, concrete Interfaces, Dependencies, Data, Internal structure + diagram, Key flows +
+sequenceDiagram, Failure modes, Decisions, Testing). `evaluateArchitectureRoot` fails while one is missing or
+invalid; spec-context appends the touched components' docs (≤3, budgeted) to the slice; `architecture_lookup`
+returns a component's doc; a design's `New component: <name>` must be in the overview with a complete doc
+(design-gate `new-component-not-in-overview` / `new-component-doc`); `migrate --apply` scaffolds missing ones; the DoD gate re-validates whenever a change
+touches `docs/architecture/`. **Diagrams are enforced** (`decision-engine/mermaid.js`): the
+overview needs a component diagram + a sequence diagram; a design needs a component diagram
+(Architecture), a sequenceDiagram with the failure path (Data flow) and an erDiagram (Data model,
+unless stateless) — real fenced mermaid blocks with edges, and the overview's component diagram must
+show every listed component (`diagram-missing-component`). The author draws them in the same pass via
+the `mermaid-diagrams` skill (`skills/mermaid-diagrams/`, check CLI `node decision-engine/mermaid.js
+<doc> --require component,sequence,er`); `mermaid-expert` is only for large brownfield redraws.
+
+## Context on demand, conformance, monorepo
+
+- **Pull context (MCP):** `mcp/context-server.js` (dependency-free stdio MCP, registered as
+  `ai-sdlc-context` in `.mcp.json`, in `ALWAYS_MCP` for every headless stage) serves
+  `architecture_lookup` / `architecture_contracts` / `product_lookup` / `spec_lookup` /
+  `decision_lookup` from `decision-engine/context-lookup.js`. Prompts carry
+  `CONTEXT_TOOLS_GUIDANCE` (`pipeline/steps.js`). `loadMcpServers` expands `${CLAUDE_PLUGIN_ROOT}`.
+- **Conformance:** `decision-engine/architecture-conformance.js` checks the real diff against
+  the overview(s): `unowned-file`, `undeclared-coupling` (import across components without an
+  `A → B` contract), `dependency-change`. Findings go to reviewers (not the author) and raise
+  pace to slow; no overview → skipped + degraded.
+- **Product context lifecycle:** PRDs add new personas/terms/baselines to the context in the
+  same change (`new.md` 4a); a shipped feature is appended to Current capabilities in its own PR
+  (`recordShippedCapability`, `flow.product.recordShipped`).
+- **Monorepo:** `decision-engine/monorepo.js` (flow `monorepo.projects`, else workspace
+  manifests). cxpak keeps one root index and is scoped per touched subproject
+  (`--workspace <path>`, budget split, max 3); spec-context adds each touched subproject's own
+  `<project>/docs/architecture/overview.md` slice; conformance and lookups resolve ownership
+  across root + project overviews.
+
+## Agents and skills use the project context
+
+`rules/context-protocol.md` is the single source of a "Project context" block synced into every
+agent (`agents/*.md`) and every `code-*`/`qa-*`/`testing-*` skill by
+`node scripts/sync-context-protocol.js` (`--check` in CI via
+`tests/unit/scripts/context-protocol-sync.test.js`): use the spec block, else the architecture
+overview / product context / PRD-design-bug report / ADRs, use the lookup tools and cxpak, never
+guess ownership. An explicit `tools:` allowlist excludes unlisted MCP tools, so the sync also
+grants each allowlisted agent `mcp__plugin_ai-sdlc_{cxpak,ai-sdlc-context}__*` (interactive,
+plugin-bundled names) and `mcp__{cxpak,ai-sdlc-context}__*` (headless strict `--mcp-config`).
+Verified live (claude 2.1.308, stream-json init): before → 0 MCP tools for `java-pro` with cxpak
+connected; after → both servers' tools in both modes. Edit the rule file, then re-run the sync.
+The sync also grants each agent its **stage capabilities** from the plugin's capability maps
+(`.ai-sdlc/capabilities.yaml` + the init stub, base + routed providers × base + routed grants):
+MCP servers in both namings, web tools, and `Skill` for granted skills (e.g. design architects get
+firecrawl / postgres-ro / clickhouse-ro / WebSearch). For repos that bind stages to other agents,
+`capabilities.allowlistGaps` reports any grant an agent's allowlist would drop as a
+`capability-grant` entry in `result.degraded`.
+
+## Evidence, measurement and the maintain loop
+
+- **Plan artifact + validation table:** the pipeline commits `docs/plans/<task>.md` (plan + manifest,
+  `pipeline/plan-artifact.js`); `planDrift` (changed files the plan never names) goes to reviewers;
+  the PR body is `pipeline/validation-report.js` (gates, ACs + evidence, review, conformance, pace,
+  cost, degraded seams).
+- **Cost + run records:** `executePipeline` meters every dispatch (`_meta.costUsd` from `claude -p`),
+  enforces `flow.budget` (`maxCostUsd`/`maxCalls` → abort `budget`) and writes a run record
+  (`recordRun` seam → `.ai-sdlc/runs.jsonl`, schema `run-record.schema.json`).
+- **Delivery metrics** (`/ai-sdlc:metrics`, `measurement/delivery-metrics.js`): agentSuccessRate,
+  costPerSuccess, reworkRate (7d), leadTimeDays, changeFailureRate (14d) + churn, vs a recorded
+  baseline, each with an owner (`flow.metrics.owners`).
+- **Agent-config evals** (`/ai-sdlc:evals`, `measurement/config-evals.js`): harvested from runs
+  (base commit + accepts), re-run headless, gate config changes on pass rate (<20 tasks = UNDERPOWERED);
+  CI template `templates/github/agent-config-evals.yml`.
+- **Maintain loop** (`/ai-sdlc:maintain`, `pipeline/maintain.js`): `decision-engine/control-bands.js`
+  (rolling σ + Western Electric, deterministic) → level 2 read-only diagnosis into a draft bug report,
+  level 3 + pre-approved runbook; capped scheduled maintenance jobs → labelled backlog tasks; templates
+  in `templates/`.
+- **Review contract + lessons:** `REVIEW.md` (template `templates/REVIEW.md`, scaffolded by init) is
+  rendered into reviewer prompts and applied to findings (`decision-engine/review-contract.js`: skip
+  paths, nit cap); `/ai-sdlc:lessons` turns findings recurring across runs into proposed CLAUDE.md lines.
+- **Library quality:** `scripts/lint-agents-skills.js` (errors fail CI) and the `usage-telemetry` hook
+  (`promise/logs/usage.jsonl`, `measurement/usage-report.js`: top and never-used agents/skills).
+
+## Speed contract (fast with enough confidence)
+
+A ticket should finish fast, not wait. `flow.budget.maxMinutes` (default 60) is enforced by
+`meterSpawn` (abort `budget`); per-stage seconds land in `result.steps.timings`, the run record and
+the PR's Time row. DoR **gate 11** (`demandedMinutes`) rejects ACs demanding long wall-clock
+observation (→ maintain jobs). `kind: spike` tasks skip the design panel and the RED-oracle
+machinery. Design sizes its panel to risk, records only load-bearing ADRs in one batch, keeps
+spikes bounded; secondary codex reviewers run at medium effort; `task-order.js --waves` lists tasks
+that can run in parallel. Origin: the benchmark's 9 h spike ticket (pm-data-bench FINDINGS #14).
+
+## Bug flow and migration
+
+**Bugs** enter through `/ai-sdlc:bug` (`commands/bug.md`), not new → design: a triaged
+report at `docs/bugs/<bug-id>.md` (template `docs/bugs/_template.md`, gate
+`decision-engine/bug-gate.js`: numbered repro steps, severity, a Reproduction naming a
+runnable command, `status: confirmed` by a human). `backlog-task-new --bug` links it
+(`specRef.source: bug`) and seeds ACs from it; DoR **gate 10** admits it (gates 8/9 do
+not apply). At execute, spec-context renders the report (+ the regressed feature's PRD/
+design via `relatedPrd`) with bug-fix instructions, the design panel is skipped, and the
+plan's fix node accepts on the Reproduction test (RED → GREEN).
+
+**Migration** (`/ai-sdlc:migrate`, `decision-engine/migrate.js`): scan every PRD,
+design doc, ADR, the product context and open tasks against the current gates (in-flight
+first); `--apply` adds only structure (template skeletons, `relatedPrd`, per-AC
+placeholders — placeholders count as empty, so nothing passes by migration alone); agents
+then fill content from evidence; ADR reasoning is added append-only via `decisions amend`
+(gaps only, never overwrite); a human re-approves.
 
 ## Non-functional / scale (bounded working set)
 

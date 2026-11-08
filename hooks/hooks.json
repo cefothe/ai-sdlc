@@ -20,6 +20,15 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/post-edit-lint.js\""
           }
         ]
+      },
+      {
+        "matcher": "Task|Agent|Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/usage-telemetry.js\""
+          }
+        ]
       }
     ],
     "SessionStart": [

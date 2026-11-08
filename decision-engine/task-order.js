@@ -103,7 +103,25 @@ function nextTask(tasks) {
   return null;
 }
 
-module.exports = { loadBacklog, computeOrder, nextTask, TASKS_REL };
+// Waves of open tasks that can run CONCURRENTLY: wave N holds every open task
+// whose dependencies are all Done or in earlier waves. Independent tasks in one
+// wave run in parallel (separate worktrees) — a ticket queue is not a chain.
+function parallelWaves(tasks) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const settled = new Set(tasks.filter((t) => t.done).map((t) => t.id));
+  let open = tasks.filter((t) => !t.done);
+  const waves = [];
+  while (open.length) {
+    const wave = open.filter((t) => t.deps.every((d) => settled.has(d) || !byId.has(d)));
+    if (!wave.length) break; // a cycle — computeOrder reports it
+    waves.push(wave);
+    wave.forEach((t) => settled.add(t.id));
+    open = open.filter((t) => !wave.includes(t));
+  }
+  return waves;
+}
+
+module.exports = { loadBacklog, computeOrder, nextTask, parallelWaves, TASKS_REL };
 
 // CLI: node decision-engine/task-order.js [root] [--next]
 if (require.main === module) {
@@ -112,6 +130,10 @@ if (require.main === module) {
   const wantNext = args.includes('--next');
   try {
     const tasks = loadBacklog(root);
+    if (args.includes('--waves')) {
+      parallelWaves(tasks).forEach((w, i) => console.log(`wave ${i + 1} (parallel): ${w.map((t) => t.id).join(', ')}`));
+      process.exit(0);
+    }
     if (wantNext) {
       const n = nextTask(tasks);
       console.log(n ? `${n.id}  ${n.title}` : 'no actionable task (all Done or blocked)');

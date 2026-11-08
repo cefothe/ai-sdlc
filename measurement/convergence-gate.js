@@ -110,7 +110,8 @@ async function runChecks() {
   checks.push(await check('PRD gate refuses a draft/unapproved PRD (human sign-off enforced)', () => {
     const draft = ['---', 'status: draft', '---', '# PRD',
       '## Problem', 'x', '## Target user', 'x', '## Success metrics', '+5pp',
-      '## Scope', 'x', '## Acceptance criteria', '- [ ] a', '## Open questions', 'None.'].join('\n');
+      '## Scope', 'x', '## Non-goals', 'x', '## User flows', 'x', '## Acceptance criteria', '- [ ] a',
+      '## Edge cases', 'x', '## Non-functional requirements', 'x', '## Open questions', 'None.'].join('\n');
     const r = evaluatePrd(draft);
     assert(r.structureValid === true, 'fixture PRD should be structurally valid');
     assert(r.valid === false && r.approved === false, 'a draft PRD must not be valid — approval is the human gate');

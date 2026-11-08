@@ -40,6 +40,13 @@ spec:
           addProvider: { role: cmo, type: agent, name: cmo }
         - when: { labels: [strategic, roadmap, platform] }
           addProvider: { role: cpo, type: agent, name: cpo }
+        # Domain advisors join the product panel for deep-rule domains: they
+        # supply the domain edge cases, risk and regulatory requirements a
+        # generic PM/PO misses (roles differ so both can join one panel).
+        - when: { labels: [trading, execution, risk] }
+          addProvider: { role: trading-advisor, type: agent, name: grizzled-trader }
+        - when: { labels: [compliance, regulatory] }
+          addProvider: { role: compliance-advisor, type: agent, name: qa-compliance-engineer }
 
     # Clarify runs between discovery and PRD approval: it surfaces latent
     # ambiguity in the drafted PRD so a human resolves it before sign-off. The
@@ -83,7 +90,7 @@ spec:
       # task actually touches a datastore (below), so the live schema is inspected
       # rather than assumed.
       capabilities:
-        skills: [firecrawl, deep-research]
+        skills: [firecrawl, deep-research, mermaid-diagrams]
         web: [WebSearch, WebFetch]
         # Confirm the contract, don't just read it: architects may run a small
         # throwaway PoC to validate a real endpoint/schema/auth before the ADR is
@@ -145,9 +152,12 @@ spec:
       team: true
       skill: code-review-pr
       providers:
-        - { role: code-reviewer, type: agent, name: code-reviewer, harness: codex }
-        - { role: test-reviewer, type: agent, name: test-automator, harness: codex }
-        - { role: security-reviewer, type: agent, name: security-auditor, harness: codex }
+        # Reasoning effort is per reviewer: correctness and security stay at high;
+        # secondary lenses run at medium — they finish much faster and the
+        # deterministic gates (RED oracle, conformance, HITL) carry the rest.
+        - { role: code-reviewer, type: agent, name: code-reviewer, harness: codex, reasoningEffort: high }
+        - { role: test-reviewer, type: agent, name: test-automator, harness: codex, reasoningEffort: medium }
+        - { role: security-reviewer, type: agent, name: security-auditor, harness: codex, reasoningEffort: high }
       # Reviewers may research to verify a claim — a CVE for a dependency, the real
       # semantics of an external API, a security advisory — rather than guessing.
       capabilities:
@@ -156,18 +166,18 @@ spec:
       routing:
         - when: { javaTestFiles: true }
           replaceRole: test-reviewer
-          addProvider: { role: test-reviewer, type: agent, name: qa-code-reviewer, harness: codex }
+          addProvider: { role: test-reviewer, type: agent, name: qa-code-reviewer, harness: codex, reasoningEffort: medium }
         # Structural changes get an architect-review LENS in addition to the
         # code/test/security reviewers (distinct concern: design integrity).
         - when: { labels: [architecture, refactor] }
-          addProvider: { role: architect-reviewer, type: agent, name: code-review-architect, harness: codex }
+          addProvider: { role: architect-reviewer, type: agent, name: code-review-architect, harness: codex, reasoningEffort: medium }
         # Backend architecture LENS (cross-harness, codex), symmetric with the
         # design panel's backend-architect: API/service/schema/data-model changes
         # get a reviewer focused on service boundaries, API contracts, the data
         # model, and backend scalability — a concrete backend lens distinct from
         # architect-reviewer's generic structural-integrity check above.
         - when: { labels: [api, backend, microservice, service, rest, database, schema] }
-          addProvider: { role: backend-reviewer, type: agent, name: backend-architect, harness: codex }
+          addProvider: { role: backend-reviewer, type: agent, name: backend-architect, harness: codex, reasoningEffort: medium }
         # NFR / scale LENS: data-volume / throughput / performance tasks get a
         # reviewer whose job is the non-functional question the generic reviewers
         # miss — peak memory at the stated N, streaming vs batch-all-into-RAM,
@@ -175,7 +185,7 @@ spec:
         # would have caught "FetchAllMarkets holds 100k rows in memory before any
         # write". Cross-harness (codex) like the other reviewers.
         - when: { labels: [scale, performance, throughput, data, ingestion, realtime, streaming] }
-          addProvider: { role: performance-reviewer, type: agent, name: performance-engineer, harness: codex }
+          addProvider: { role: performance-reviewer, type: agent, name: performance-engineer, harness: codex, reasoningEffort: medium }
         # AI/ML verification LENS (cross-harness, codex like the other reviewers):
         # LLM/GenAI changes get an ai-engineer reviewer; classical-ML / model-
         # serving changes get an ml-engineer reviewer. The concerns the generic
@@ -184,9 +194,9 @@ spec:
         # contracts, non-determinism handling, training/serving skew, token/cost
         # blow-ups. Runs on codex so cross-harness attestation still seals the work.
         - when: { labels: [ai, llm, rag, genai, embeddings, prompt, agent] }
-          addProvider: { role: ai-reviewer, type: agent, name: ai-engineer, harness: codex }
+          addProvider: { role: ai-reviewer, type: agent, name: ai-engineer, harness: codex, reasoningEffort: medium }
         - when: { labels: [ml, model, inference, training, mlops] }
-          addProvider: { role: ml-reviewer, type: agent, name: ml-engineer, harness: codex }
+          addProvider: { role: ml-reviewer, type: agent, name: ml-engineer, harness: codex, reasoningEffort: medium }
 
     # Tests always run through the test-runner agent.
     test:

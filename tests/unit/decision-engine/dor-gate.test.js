@@ -151,3 +151,29 @@ describe('autoPassRules', () => {
     expect(r.admitted).toBe(true);
   });
 });
+
+describe('DoR gate 11 — time-boxed', () => {
+  const { demandedMinutes, DEFAULT_CONFIG } = require(path.join(ROOT, 'decision-engine', 'dor-gate.js'));
+  const base = () => ({ frontmatter: { id: 'AISDLC-9', dispatchable: true, references: ['README.md'] }, body: 'x', acceptanceCriteria: [] });
+  const g11 = (res) => res.gates.find((g) => g.gateId === 11);
+
+  test('demandedMinutes reads durations, overnight and live venue-days', () => {
+    expect(demandedMinutes('S3 polled every 5 s over >= 2 h')).toBe(120);
+    expect(demandedMinutes('run for 30 min')).toBe(30);
+    expect(demandedMinutes('soak across 7 days')).toBe(10080);
+    expect(demandedMinutes('replay overnight')).toBe(480);
+    expect(demandedMinutes('one live venue-day per venue')).toBe(1440);
+    expect(demandedMinutes('p95 lag <= 30 s')).toBe(0);
+  });
+
+  test('an AC demanding hours of observation fails; short or none passes; the budget is configurable', () => {
+    const t = base();
+    t.acceptanceCriteria = [{ text: 'S3 polled every 5 s over >= 2 h reports the head-lag distribution' }, { text: 'p95 lag <= 30 s' }];
+    const fail = evaluateDor(t, { projectRoot: ROOT, config: DEFAULT_CONFIG });
+    expect(g11(fail).verdict).toBe('fail');
+    expect(g11(fail).finding).toMatch(/move them to a maintain job/);
+    expect(g11(evaluateDor(t, { projectRoot: ROOT, config: DEFAULT_CONFIG, maxTaskMinutes: 180 })).verdict).toBe('pass');
+    t.acceptanceCriteria = [{ text: 'a 10 min sampled run measures head age' }];
+    expect(g11(evaluateDor(t, { projectRoot: ROOT, config: DEFAULT_CONFIG })).verdict).toBe('pass');
+  });
+});

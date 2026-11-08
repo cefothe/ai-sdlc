@@ -1,0 +1,21 @@
+# Scheduled maintenance jobs (pipeline/maintain.js) — copy to .ai-sdlc/maintenance.yaml.
+# Each job runs read-only on its days, proposes at most (maxOpen - open) items, and
+# creates backlog tasks labelled maintenance:<name> (dispatchable only with
+# autoDispatch: true). Tasks go through the normal execute pipeline and gates.
+# Landed vs rejected PRs are recorded as feedback for the job.
+version: "1"
+jobs:
+  - name: flag-cleanup
+    days: [sun]
+    maxOpen: 3
+    agent: code-analyzer
+    prompt: >-
+      Find feature flags that have been fully rolled out (always on/off for 30+ days)
+      and are safe to remove, with the code paths to delete.
+  - name: dependency-upgrades
+    days: [sun]
+    maxOpen: 2
+    agent: security-auditor
+    prompt: >-
+      Find dependencies with published security advisories or major versions behind,
+      one upgrade per item, naming the manifest and the tests that cover it.

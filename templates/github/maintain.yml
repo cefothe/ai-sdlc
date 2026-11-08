@@ -1,0 +1,40 @@
+# Maintain loop — copy to .github/workflows/. Runs the control bands daily and the
+# maintenance jobs on their declared days (the jobs check their own weekday). Opens
+# no PRs itself: breaches become draft bug reports, jobs become backlog tasks, both
+# committed on a branch for a human to triage.
+name: ai-sdlc-maintain
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch: {}
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Bands + jobs
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: node pipeline/maintain.js all
+      - name: Propose the findings for triage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "$(git status --porcelain docs/bugs backlog .ai-sdlc/maintain.log.jsonl)" ]; then
+            git switch -c "maintain/$(date -u +%Y%m%d)"
+            git add docs/bugs backlog .ai-sdlc/maintain.log.jsonl
+            git -c user.name=ai-sdlc-maintain -c user.email=ai-sdlc@users.noreply.github.com commit -m "maintain: findings for triage"
+            git push -u origin HEAD
+            gh pr create --draft --title "Maintain: findings for triage" --body "Control-band diagnoses and maintenance tasks — triage each (confirm, schedule or dismiss)."
+          fi

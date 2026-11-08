@@ -146,6 +146,18 @@ function normalizeReviewerVerdict(parsed, provider) {
   };
 }
 
+// What codex-dispatch prints for one turn. A reviewer's verdict always goes out
+// as the full JSON (approved + findings with file/line) — printing only its
+// summary dropped the findings the fix round needs. Other types print their
+// prose: a string, or the { summary } fallback of a non-JSON reply.
+function formatDispatchOutput(out, type) {
+  if (typeof out === 'string') return out;
+  if (type === 'reviewer') return JSON.stringify(out);
+  const keys = out && typeof out === 'object' ? Object.keys(out) : [];
+  if (keys.length === 1 && keys[0] === 'summary' && typeof out.summary === 'string') return out.summary;
+  return JSON.stringify(out);
+}
+
 function makeCodexSpawner({ exec = defaultExec, model = DEFAULT_MODEL, reasoningEffort = DEFAULT_REASONING_EFFORT, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   return async function spawn({ type, provider, prompt, sandbox, cwd }) {
     const effectiveProvider = provider || { type: 'agent', name: 'codex' };
@@ -170,6 +182,6 @@ function makeCodexSpawner({ exec = defaultExec, model = DEFAULT_MODEL, reasoning
 
 module.exports = {
   makeCodexSpawner, buildCodexArgs, parseCodexResult, tryParseJson,
-  normalizeReviewerVerdict, defaultExec, CODEX_SYSTEM_PROMPTS, REASONING_EFFORTS,
+  normalizeReviewerVerdict, formatDispatchOutput, defaultExec, CODEX_SYSTEM_PROMPTS, REASONING_EFFORTS,
   DEFAULT_CODEX_MODEL: DEFAULT_MODEL, // undefined -> codex account default
 };

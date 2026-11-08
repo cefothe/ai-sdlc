@@ -1,25 +1,53 @@
 {
   "mcpServers": {
+    "ai-sdlc-context": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/mcp/context-server.js",
+        "."
+      ]
+    },
     "cxpak": {
       "type": "stdio",
       "command": "cxpak",
-      "args": ["serve", "--mcp", "."]
+      "args": [
+        "serve",
+        "--mcp",
+        "."
+      ]
     },
     "firecrawl": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "firecrawl-mcp"],
-      "env": { "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}" }
+      "args": [
+        "-y",
+        "firecrawl-mcp"
+      ],
+      "env": {
+        "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
+      }
     },
     "postgres-ro": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL_RO}"]
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "${DATABASE_URL_RO}"
+      ]
     },
     "clickhouse-ro": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--with", "mcp-clickhouse", "--python", "3.13", "mcp-clickhouse"],
+      "args": [
+        "run",
+        "--with",
+        "mcp-clickhouse",
+        "--python",
+        "3.13",
+        "mcp-clickhouse"
+      ],
       "env": {
         "CLICKHOUSE_HOST": "${CLICKHOUSE_HOST}",
         "CLICKHOUSE_PORT": "${CLICKHOUSE_PORT}",

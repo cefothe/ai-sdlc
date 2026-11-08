@@ -77,6 +77,15 @@ function scaffold(dir, { workspace = false } = {}) {
     writeIfAbsent(rel, content);
   }
   writeIfAbsent(join('backlog', 'config.yml'), CONFIG_STUBS.backlogConfig());
+  // Product context for the discovery panel — scaffolded from the plugin's
+  // template; PRDs cannot pass prd-gate until the operator fills it in.
+  writeIfAbsent(join('docs', 'product', 'context.md'), readFileSync(join(__dirname, '..', 'docs', 'product', '_template.md'), 'utf8'));
+  // The system map design docs are written against — filled via /ai-sdlc:architecture.
+  writeIfAbsent(join('docs', 'architecture', 'overview.md'), readFileSync(join(__dirname, '..', 'docs', 'architecture', '_template.md'), 'utf8'));
+  // The review contract every reviewer follows (passes, severities, nit cap, skips).
+  writeIfAbsent('REVIEW.md', readFileSync(join(__dirname, '..', 'templates', 'REVIEW.md'), 'utf8'));
+  // Pace layers start from the plugin default; the repo tunes its own copy.
+  writeIfAbsent(join('.ai-sdlc', 'pace.yaml'), readFileSync(join(__dirname, '..', 'decision-engine', 'pace.default.yaml'), 'utf8'));
   if (workspace) writeIfAbsent(join('.ai-sdlc', 'workspace.yaml'), CONFIG_STUBS.workspaceStub());
 
   return { created, skipped };

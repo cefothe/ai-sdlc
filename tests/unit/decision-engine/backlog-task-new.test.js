@@ -136,3 +136,66 @@ describe('CLI arg safety', () => {
     expect(fs.existsSync(dir) ? fs.readdirSync(dir) : []).toHaveLength(0);
   });
 });
+
+describe('createTask — ACs seeded from the PRD', () => {
+  function withPrd() {
+    const root = tmp();
+    fs.mkdirSync(path.join(root, 'docs', 'prd'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'docs', 'prd', 'sso.md'), '## Acceptance criteria\n- [ ] User logs in via OAuth\n- [ ] Failure returns 401\n\n## Open questions\nNone.\n');
+    return root;
+  }
+
+  test('copies the PRD ACs verbatim and appends extra --ac criteria, de-duplicated', () => {
+    const root = withPrd();
+    try {
+      const res = nt.createTask(root, {
+        id: 'AISDLC-0001', title: 'SSO', createdDate: '2026-11-07 10:00', prd: 'docs/prd/sso.md',
+        acceptanceCriteria: ['Failure returns 401', 'Login p95 < 2s under 50 rps'],
+      });
+      expect(res.acceptanceCriteria).toEqual(['User logs in via OAuth', 'Failure returns 401', 'Login p95 < 2s under 50 rps']);
+      const task = parseTask(fs.readFileSync(res.path, 'utf8'));
+      expect(task.acceptanceCriteria.map((a) => a.text)).toEqual(['#1 User logs in via OAuth', '#2 Failure returns 401', '#3 Login p95 < 2s under 50 rps']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('seedAcsFromPrd:false keeps only the given criteria', () => {
+    const root = withPrd();
+    try {
+      const res = nt.createTask(root, { id: 'AISDLC-0002', title: 'SSO', createdDate: 'd', prd: 'docs/prd/sso.md', acceptanceCriteria: ['only this'], seedAcsFromPrd: false });
+      expect(res.acceptanceCriteria).toEqual(['only this']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('createTask --bug', () => {
+  const { bugReport } = require(path.join(ROOT, 'tests', 'helpers', 'bug-report.js'));
+
+  test('links the bug report (specRef source bug), labels it bug and seeds ACs from it', () => {
+    const root = tmp();
+    try {
+      fs.mkdirSync(path.join(root, 'docs', 'bugs'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'docs', 'bugs', 'order-double-cancel.md'), bugReport());
+      const res = nt.createTask(root, { id: 'AISDLC-0003', title: 'fix: double cancel', createdDate: 'd', bug: 'docs/bugs/order-double-cancel.md', labels: ['major'] });
+      const task = parseTask(fs.readFileSync(res.path, 'utf8'));
+      expect(task.frontmatter.specRef).toEqual({ source: 'bug', featureId: 'order-double-cancel', artifactPath: 'docs/bugs/order-double-cancel.md' });
+      expect(task.frontmatter.labels).toEqual(['bug', 'major']);
+      expect(res.acceptanceCriteria[0]).toMatch(/^The reproduction test passes: `npx jest/);
+      expect(res.acceptanceCriteria).toContain('No regression: the full test suite passes');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('task kind', () => {
+  test('--kind spike is written to frontmatter', () => {
+    const md = nt.buildTaskMarkdown({ id: 'AISDLC-0009', title: 'spikes', createdDate: 'd', kind: 'spike' });
+    expect(parseTask(md).frontmatter.kind).toBe('spike');
+    expect(nt.buildTaskMarkdown({ id: 'AISDLC-0010', title: 't', createdDate: 'd' })).not.toMatch(/^kind:/m);
+  });
+});
+

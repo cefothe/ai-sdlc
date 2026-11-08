@@ -16,6 +16,13 @@
 //   9 design ratified (design doc approved + valid + >=1 ADR; optional full
 //     ADR coverage) — this is what forces new -> design -> execute: no task
 //     reaches a worktree on an un-architected feature.
+// And one for bug tasks (specRef.source: bug / a docs/bugs/ artifact), which
+// skip 8 and 9 — a fix needs a triaged reproduction, not a PRD + design:
+//   10 bug report confirmed (structurally valid, reproducible, status: confirmed)
+// And one for every task:
+//   11 time-boxed — no acceptance criterion demands wall-clock observation longer
+//      than the per-task budget (e.g. "poll for >= 2 h", "over 24 h", "a live
+//      venue-day"); long observation belongs in a background maintain job
 //
 // Overall verdict: 'blocked' | 'not-dispatchable' | 'needs-clarification'
 //   | 'needs-stage-b' | 'ready'. In enforce mode only 'ready' is admitted;
@@ -95,17 +102,38 @@ function autoPassedGates(task, config) {
 // Default PRD evaluator seam. Lazily requires prd-gate so dor-gate has no hard
 // dependency on it and stays unit-testable without a filesystem: pass
 // opts.evaluatePrd to inject, or opts.prdDir/prdGate:false to control activation.
-function defaultPrdEvaluator(prdPath) {
+function defaultPrdEvaluator(prdPath, projectRoot) {
   const { evaluatePrdFile } = require('./prd-gate');
-  return evaluatePrdFile(prdPath);
+  return evaluatePrdFile(prdPath, { root: projectRoot });
 }
 
 // Default design-doc evaluator seam. Lazily requires design-gate so dor-gate has
 // no hard dependency on it and stays unit-testable without a filesystem: pass
 // opts.evaluateDesignDoc to inject, or opts.designGate:false to deactivate.
-function defaultDesignEvaluator(designPath) {
+function defaultDesignEvaluator(designPath, projectRoot, { prdPath } = {}) {
   const { evaluateDesignFile } = require('./design-gate');
-  return evaluateDesignFile(designPath);
+  return evaluateDesignFile(designPath, { root: projectRoot, prdPath });
+}
+
+// Default bug-report evaluator seam (lazy, like the PRD/design seams).
+function defaultBugEvaluator(bugPath) {
+  const { evaluateBugFile } = require('./bug-gate');
+  return evaluateBugFile(bugPath);
+}
+
+// Wall-clock observation an AC demands, in minutes ("over >= 2 h", "for 30 min",
+// "24 h", "7 days", "overnight", "a live venue-day"), or 0 when it demands none.
+const DURATION_RE = /\b(?:over|for|during|across|at least|>=|≥|polled[^.]{0,40}?over)\s*(?:>=|≥)?\s*(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|h|hrs?|hours?|days?|d)\b/gi;
+const UNIT_MIN = { m: 1, h: 60, d: 1440 };
+function demandedMinutes(text) {
+  let max = 0;
+  for (const m of String(text || '').matchAll(DURATION_RE)) {
+    const unit = m[2].toLowerCase().startsWith('min') ? 'm' : m[2].toLowerCase().startsWith('d') ? 'd' : 'h';
+    max = Math.max(max, Number(m[1]) * UNIT_MIN[unit]);
+  }
+  if (/\bovernight\b/i.test(text)) max = Math.max(max, 480);
+  if (/\blive (?:venue-)?day\b|\bsteady state over 24\s*h\b/i.test(text)) max = Math.max(max, 1440);
+  return max;
 }
 
 // Default ADR-coverage seam (only consulted when coverage enforcement is on).
@@ -126,6 +154,9 @@ function evaluateDor(task, opts = {}) {
     designDir = 'docs/design/',
     evaluateDesignDoc = defaultDesignEvaluator,
     evaluateCoverage = defaultCoverageEvaluator,
+    bugGate = true,
+    bugDir = 'docs/bugs/',
+    evaluateBugReport = defaultBugEvaluator,
   } = opts;
   const fm = task.frontmatter || {};
   const mode = config.spec.evaluationMode || 'enforce';
@@ -212,7 +243,8 @@ function evaluateDor(task, opts = {}) {
 
   // Gate 8 — PRD readiness (deterministic, human-in-the-loop). Fires only when
   // the task links a PRD under prdDir via specRef: the PRD must be structurally
-  // valid (canonical sections present, no markers) AND status: approved. This is
+  // valid (canonical sections present, no markers), substantive (>=2 ACs,
+  // measurable metrics, no open questions) AND status: approved. This is
   // the upstream sign-off — a draft or malformed PRD refuses admission, so no PR
   // is ever opened on an unvetted plan. Quality is scored separately (advisory).
   const prdPath = fm.specRef && fm.specRef.artifactPath;
@@ -226,7 +258,7 @@ function evaluateDor(task, opts = {}) {
         const full = require('node:path').isAbsolute(prdPath) ? prdPath : require('node:path').join(projectRoot, prdPath);
         const prd = evaluatePrd(full, projectRoot);
         record(8, prd.valid ? 'pass' : 'fail',
-          prd.valid ? 'PRD is structurally valid and approved' : `PRD not ready: ${prd.reasons.join('; ')}`);
+          prd.valid ? 'PRD is structurally valid, substantive and approved' : `PRD not ready: ${prd.reasons.join('; ')}`);
       } catch (err) {
         record(8, 'fail', `PRD could not be evaluated: ${err.message}`);
       }
@@ -237,7 +269,9 @@ function evaluateDor(task, opts = {}) {
   // same feature tasks as gate 8 (those linking a PRD via specRef): a feature
   // with a product contract must also have a technical one. The design doc at
   // <designDir>/<featureId>.md must exist, be structurally valid (canonical
-  // sections + >=1 linked ADR), and be status: approved. When the project sets
+  // sections + >=1 linked ADR), substantive (concrete schema/interfaces, failure
+  // paths, test strategy mapping every PRD AC, complete linked ADRs), and be
+  // status: approved. When the project sets
   // spec.designGate.requireCoverage, every foundational ADR-coverage area must
   // also be covered. This is what forces new -> design -> execute: a task cannot
   // be admitted for dispatch on an un-architected feature.
@@ -250,7 +284,7 @@ function evaluateDor(task, opts = {}) {
     } else {
       try {
         const full = isAbsolute(rel) ? rel : join(projectRoot, rel);
-        const design = evaluateDesignDoc(full, projectRoot);
+        const design = evaluateDesignDoc(full, projectRoot, { prdPath });
         const approved = (design.status || '').toString().toLowerCase() === 'approved';
         if (!design.valid || !approved) {
           const why = [...(design.reasons || [])];
@@ -263,12 +297,46 @@ function evaluateDor(task, opts = {}) {
               ? `design ratified but ADR coverage incomplete: ${cov.missing.map((m) => m.label).join('; ')} — record an ADR for each or rule it out of scope`
               : 'design ratified; ADRs linked; foundational coverage complete');
         } else {
-          record(9, 'pass', 'design is structurally valid, links ADRs, and is approved');
+          record(9, 'pass', 'design is structurally valid, substantive, links complete ADRs, and is approved');
         }
       } catch (err) {
         record(9, 'fail', `design could not be evaluated: ${err.message}`);
       }
     }
+  }
+
+  // Gate 10 — bug report confirmed (deterministic, human-in-the-loop). Fires on
+  // bug tasks: the linked report must be structurally valid, reproducible (a
+  // numbered repro, a runnable reproduction command, a severity) and
+  // status: confirmed by a human. Its Reproduction is the fix's RED oracle.
+  const isBug = !!(fm.specRef && (fm.specRef.source === 'bug'
+    || (typeof prdPath === 'string' && prdPath.replace(/^\.\//, '').startsWith(bugDir))));
+  if (bugGate && isBug && !skip.has(10)) {
+    if (!prdPath) {
+      record(10, 'fail', `bug task has no specRef.artifactPath — run /ai-sdlc:bug to write the report under ${bugDir}`);
+    } else if (!referenceResolves(prdPath, projectRoot)) {
+      record(10, 'pass', 'bug report link handled by gate 3 (file missing)');
+    } else {
+      try {
+        const bug = evaluateBugReport(isAbsolute(prdPath) ? prdPath : join(projectRoot, prdPath), projectRoot);
+        record(10, bug.valid ? 'pass' : 'fail',
+          bug.valid ? 'bug report is reproducible, triaged and confirmed' : `bug report not ready: ${bug.reasons.join('; ')}`);
+      } catch (err) {
+        record(10, 'fail', `bug report could not be evaluated: ${err.message}`);
+      }
+    }
+  }
+
+  // Gate 11 — time-boxed (deterministic). A ticket is meant to finish fast; an AC
+  // that requires hours of live observation turns execute into waiting. Such
+  // checks run as background maintain jobs (bands / maintenance) instead.
+  const timeBox = (config.spec && config.spec.timeBox) || {};
+  const maxMinutes = opts.maxTaskMinutes !== undefined ? opts.maxTaskMinutes : (timeBox.maxMinutes !== undefined ? timeBox.maxMinutes : 60);
+  if (maxMinutes > 0 && !skip.has(11)) {
+    const offenders = (task.acceptanceCriteria || []).map((a) => ({ text: a.text, min: demandedMinutes(a.text) })).filter((a) => a.min > maxMinutes);
+    record(11, offenders.length ? 'fail' : 'pass', offenders.length
+      ? `AC(s) demand wall-clock observation beyond the ${maxMinutes}-min task budget — move them to a maintain job (bands/maintenance) and keep a short, sampled check here: ${offenders.map((o) => `"${o.text.slice(0, 80)}" (~${Math.round(o.min / 60)} h)`).join('; ')}`
+      : 'no acceptance criterion demands long wall-clock observation');
   }
 
   // Optional Stage-B judge resolves the deferred gates.
@@ -301,4 +369,4 @@ function evaluateDor(task, opts = {}) {
   return { verdict, admitted, mode, gates, needsStageB: deferred.map((g) => g.gateId), reasons };
 }
 
-module.exports = { loadDorConfig, evaluateDor, referenceResolves, DEFAULT_CONFIG, MARKER_TOKEN_RE };
+module.exports = { loadDorConfig, evaluateDor, referenceResolves, demandedMinutes, DEFAULT_CONFIG, MARKER_TOKEN_RE };

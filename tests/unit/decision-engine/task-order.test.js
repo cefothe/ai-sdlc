@@ -45,3 +45,18 @@ describe('nextTask', () => {
     expect(nextTask([t('A', [], 'high', 'Done')])).toBeNull();
   });
 });
+
+describe('parallelWaves', () => {
+  const { parallelWaves } = require(path.join(ROOT, 'decision-engine', 'task-order.js'));
+  const t = (id, deps = [], done = false) => ({ id, title: id, deps, done, priority: 'medium' });
+
+  test('independent tasks share a wave; dependents wait for their wave', () => {
+    const waves = parallelWaves([t('A'), t('B', ['A']), t('K', ['B']), t('P', ['B']), t('C', ['K', 'P']), t('X', [], true)]);
+    expect(waves.map((w) => w.map((x) => x.id))).toEqual([['A'], ['B'], ['K', 'P'], ['C']]);
+  });
+
+  test('done tasks unblock immediately; a cycle stops the waves', () => {
+    expect(parallelWaves([t('A', [], true), t('B', ['A']), t('C', ['A'])]).map((w) => w.map((x) => x.id))).toEqual([['B', 'C']]);
+    expect(parallelWaves([t('A', ['B']), t('B', ['A'])])).toEqual([]);
+  });
+});

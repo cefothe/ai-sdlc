@@ -1,0 +1,28 @@
+# Control bands for the maintain loop (pipeline/maintain.js) — copy to .ai-sdlc/bands.yaml.
+# Detection is deterministic: a rolling baseline + Western Electric rules decide the
+# level; the level decides what an agent may do. Level 1 logs; level 2 an agent
+# diagnoses read-only into a DRAFT bug report (a human confirms); level 3 also runs the
+# tier's pre-approved runbook. Nothing reaches main except through PR + review + HITL.
+version: "1"
+runbooks:
+  # Only runbooks declared here can run. Keep them idempotent and rehearsed in staging.
+  rollback-deploy: "./scripts/rollback.sh --last"
+metrics:
+  - name: ci-failure-rate
+    description: Share of failed CI runs on main per day
+    # Prints a JSON array of numbers, oldest first.
+    source:
+      command: >-
+        gh run list --branch main --limit 400 --json conclusion,createdAt |
+        node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8'));const d={};for(const x of r){const k=x.createdAt.slice(0,10);d[k]=d[k]||[0,0];d[k][0]+=x.conclusion==='failure';d[k][1]++}console.log(JSON.stringify(Object.keys(d).sort().map(k=>d[k][0]/d[k][1])))"
+    baseline: { window: 30, recent: 8, direction: up, minBaseline: 10 }
+    diagnoseAgent: debugger
+    tiers:
+      "3": { propose: pull_request }
+  - name: post-deploy-5xx
+    description: 5xx rate in the hour after each deploy
+    source:
+      command: "./scripts/metrics/post-deploy-5xx.sh"
+    baseline: { window: 30, recent: 8, direction: up }
+    tiers:
+      "3": { propose: runbook:rollback-deploy }

@@ -20,13 +20,23 @@ const { existsSync, readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { makeCodexSpawner } = require('./codex-spawner');
 const { asyncExec } = require('./async-exec');
+const { makeComponentInvoker } = require('./component-invoker');
+const { loadFlowConfig } = require('../pipeline/flow-config');
+const { detectProjects, projectsForPaths } = require('../decision-engine/monorepo');
 
 // MCP servers every headless agent gets regardless of its stage grant — cxpak is
 // the mandated pre-action context source (CLAUDE.md "Context Acquisition").
-const ALWAYS_MCP = ['cxpak'];
+// Booted for every headless stage: structural code context (cxpak) and the
+// read-only ai-sdlc context lookups (architecture / product / spec / ADRs).
+const ALWAYS_MCP = ['cxpak', 'ai-sdlc-context'];
+
+// Diffs of real branches (committed fixtures, evidence) exceed Node's 1 MB
+// default stdout buffer — that surfaced as ENOBUFS and made the HITL gate fail
+// closed on a change that fired no checkpoint.
+const EXEC_MAX_BUFFER = 256 * 1024 * 1024;
 
 function defaultExec(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { encoding: 'utf8', ...opts });
+  return execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: EXEC_MAX_BUFFER, ...opts });
 }
 
 function makeGitRunner({ exec = defaultExec } = {}) {
@@ -69,13 +79,19 @@ function buildClaudeArgs(provider, prompt, { model, extraArgs = [], tools = [], 
 // Load MCP server definitions from .mcp.json files (later files win on a name
 // clash, so pass plugin-level first and project-level last). Missing or
 // unparseable files are skipped — scoping then simply has fewer servers to offer.
-function loadMcpServers(paths = []) {
+// pluginRoot resolves ${CLAUDE_PLUGIN_ROOT} in a server's command/args: the
+// headless `claude -p --mcp-config` receives a literal config, not the plugin
+// loader's expansion.
+function loadMcpServers(paths = [], { pluginRoot } = {}) {
   const servers = {};
+  const expand = (v) => (typeof v === 'string' && pluginRoot ? v.split('${CLAUDE_PLUGIN_ROOT}').join(pluginRoot) : v);
   for (const p of paths) {
     if (!p || !existsSync(p)) continue;
     try {
       const raw = JSON.parse(readFileSync(p, 'utf8'));
-      Object.assign(servers, (raw && raw.mcpServers) || {});
+      for (const [name, cfg] of Object.entries((raw && raw.mcpServers) || {})) {
+        servers[name] = { ...cfg, command: expand(cfg.command), ...(Array.isArray(cfg.args) ? { args: cfg.args.map(expand) } : {}) };
+      }
     } catch {
       /* malformed .mcp.json — skip it */
     }
@@ -101,6 +117,14 @@ function scopeMcpConfig(servers, tools = [], always = ALWAYS_MCP) {
 // Parse claude -p --output-format json. The outer envelope carries a `result`
 // string; the agent's structured payload is JSON inside it. Falls back
 // gracefully so a non-JSON agent reply still surfaces as { summary }.
+// The run's own accounting from the `claude -p --output-format json` envelope
+// (total_cost_usd, num_turns, duration_ms) rides along as `_meta` so the
+// pipeline can meter cost per task.
+function claudeMeta(outer) {
+  if (!outer || typeof outer !== 'object' || outer.total_cost_usd === undefined) return undefined;
+  return { costUsd: Number(outer.total_cost_usd) || 0, turns: outer.num_turns, durationMs: outer.duration_ms };
+}
+
 function parseClaudeResult(stdout) {
   let outer;
   try {
@@ -110,12 +134,15 @@ function parseClaudeResult(stdout) {
   }
   // Already the structured payload?
   if (outer && (outer.commitSha || outer.approved !== undefined || outer.plan)) return outer;
+  const meta = claudeMeta(outer);
+  const withMeta = (payload) => (meta ? { ...payload, _meta: meta } : payload);
   const inner = outer && typeof outer.result === 'string' ? outer.result : null;
   if (inner === null) return outer;
   try {
-    return JSON.parse(inner);
+    const parsed = JSON.parse(inner);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? withMeta(parsed) : withMeta({ summary: inner.trim() });
   } catch {
-    return { summary: inner.trim() };
+    return withMeta({ summary: inner.trim() });
   }
 }
 
@@ -164,22 +191,49 @@ function makeHarnessSpawner({ spawners, fallbackHarness = 'claude' } = {}) {
 // (architecture, module map, conventions) — the R8 d=1.82 lever. Requires `cxpak`
 // on PATH and a built `.cxpak/` index (init / SessionStart warm it). Any failure,
 // or a cold "indexing" index, degrades to null — advisory, never blocks the run.
-function makeCxpakFetcher({ exec = defaultExec, workDir = process.cwd(), tokens = '6k' } = {}) {
-  return async function fetchCxpak(task) {
+// Monorepo: one cxpak index at the repo root, scoped per task. When the task's
+// referenced paths fall in known subprojects, each touched subproject (max 3)
+// gets `--workspace <path>` with the token budget split between them; otherwise
+// the whole-repo overview. Cross-project wiring comes from the root
+// architecture overview, not from a wider index.
+const MAX_SCOPED_PROJECTS = 3;
+
+function splitTokens(tokens, n) {
+  const m = String(tokens).match(/^(\d+(?:\.\d+)?)(k?)$/i);
+  if (!m || n <= 1) return String(tokens);
+  const total = Number(m[1]) * (m[2] ? 1000 : 1);
+  return String(Math.max(1500, Math.floor(total / n)));
+}
+
+function makeCxpakFetcher({ exec = defaultExec, workDir = process.cwd(), tokens = '6k', projects = [] } = {}) {
+  const run = (args) => {
     let text = '';
     try {
-      text = String(exec('cxpak', ['overview', '--tokens', tokens], { cwd: workDir, timeout: 60000 }) || '');
+      text = String(exec('cxpak', args, { cwd: workDir, timeout: 60000 }) || '');
     } catch (err) {
       // execFileSync throws on a non-zero exit but still exposes captured stdout.
       text = String((err && err.stdout) || '');
     }
     text = text.trim();
-    if (!text || /indexing in progress/i.test(text)) return null;
-    const title = task && task.frontmatter && task.frontmatter.title;
+    return !text || /indexing in progress/i.test(text) ? null : text;
+  };
+  return async function fetchCxpak(task) {
+    const fm = (task && task.frontmatter) || {};
+    const touched = projectsForPaths(projects, [...(fm.references || []), ...(fm.refs || [])]).slice(0, MAX_SCOPED_PROJECTS);
+    const title = fm.title;
     const header = title
       ? `Structured context (cxpak overview) — read before implementing "${title}":`
       : 'Structured context (cxpak overview):';
-    return `${header}\n\n${text}`;
+    if (!touched.length) {
+      const text = run(['overview', '--tokens', tokens]);
+      return text ? `${header}\n\n${text}` : null;
+    }
+    const budget = splitTokens(tokens, touched.length);
+    const parts = touched.map((p) => {
+      const text = run(['overview', '--tokens', budget, '--workspace', p.path, '.']);
+      return text ? `### Subproject ${p.name} (${p.path})\n\n${text}` : null;
+    }).filter(Boolean);
+    return parts.length ? `${header}\n\n${parts.join('\n\n')}` : null;
   };
 }
 
@@ -200,6 +254,33 @@ function makeDecisionsFetcher({ root = process.cwd() } = {}) {
   };
 }
 
+// Spec seam: the task's approved PRD + design doc rendered as a budgeted prompt
+// block (decision-engine/spec-context). Never throws — a read error yields no
+// spec, which the pipeline treats as "no spec block".
+function makeSpecFetcher({ root = process.cwd(), maxChars, projects = [] } = {}) {
+  const { buildSpecForTask } = require('../decision-engine/spec-context');
+  return async function fetchSpec(task) {
+    try {
+      return buildSpecForTask(root, task, { projects, ...(maxChars ? { maxChars } : {}) });
+    } catch {
+      return null;
+    }
+  };
+}
+
+// Trust seam: the implementer's current trust tier from the promise ledger
+// (EMA of verified promise outcomes), or null when it has no history. Used
+// raise-only by pace: a low/critical tier adds ceremony, high never removes it.
+function makeTrustFetcher({ ledgerDir = join(__dirname, '..', 'promise', 'logs') } = {}) {
+  const { LedgerWriter } = require('../promise/ledger-writer');
+  const { TrustManager } = require('../promise/trust-manager');
+  const tm = new TrustManager({ decayFactor: 0.85 });
+  return async function fetchTrust(agentName) {
+    const scores = await new LedgerWriter(ledgerDir).readTrustScores();
+    return typeof scores[agentName] === 'number' ? tm.getTrustTier(scores[agentName]) : null;
+  };
+}
+
 // Convenience: build the full seam bundle for executePipeline(). The `spawn`
 // seam is harness-aware: claude-harness providers (implementer + advisory
 // stages) run on `claude -p`; codex-harness providers (the cross-harness review
@@ -212,7 +293,9 @@ function makeClaudeCodeSeams({ exec, model, codexModel, codexReasoningEffort = '
   const syncExec = exec || defaultExec;
   const agentExec = exec || asyncExec;
   const root = workDir || process.cwd();
-  const mcpServers = scopeMcp ? loadMcpServers([join(pluginRoot, '.mcp.json'), join(root, '.mcp.json')]) : null;
+  const flow = loadFlowConfig(root);
+  const projects = detectProjects(root, { declared: flow.monorepo.projects, autoDetect: flow.monorepo.autoDetect });
+  const mcpServers = scopeMcp ? loadMcpServers([join(pluginRoot, '.mcp.json'), join(root, '.mcp.json')], { pluginRoot }) : null;
   const claudeSpawn = makeClaudeSpawner({ exec: agentExec, model, mcpServers });
   // codexModel stays unset by default — a ChatGPT-login account rejects explicit
   // models (HTTP 400). codexReasoningEffort defaults to 'high': reviewers are the
@@ -223,9 +306,17 @@ function makeClaudeCodeSeams({ exec, model, codexModel, codexReasoningEffort = '
     runner: makeGitRunner({ exec: syncExec }),
     gh: makeGhRunner({ exec: syncExec }),
     spawn: makeHarnessSpawner({ spawners: { claude: claudeSpawn, codex: codexSpawn } }),
-    fetchCxpak: makeCxpakFetcher({ exec: syncExec, workDir }),
+    fetchCxpak: makeCxpakFetcher({ exec: syncExec, workDir, projects }),
     fetchDecisions: makeDecisionsFetcher({ root }),
+    fetchSpec: makeSpecFetcher({ root, projects }),
+    projects,
+    // The harness-component flow (.ai-sdlc/flow.yaml): pace, manifest + RED
+    // oracle, HITL gate. invoke calls the published component images.
+    flow,
+    invoke: makeComponentInvoker({ mode: flow.components.mode, images: flow.components.images, timeoutMs: flow.components.timeoutSec * 1000 }),
+    recordRun: (rec) => require('../measurement/outcome-metrics').recordRun(join(root, '.ai-sdlc', 'runs.jsonl'), rec),
+    fetchTrust: makeTrustFetcher(flow.trust.ledgerDir ? { ledgerDir: join(root, flow.trust.ledgerDir) } : {}),
   };
 }
 
-module.exports = { makeGitRunner, makeGhRunner, makeClaudeSpawner, makeHarnessSpawner, makeCxpakFetcher, makeDecisionsFetcher, makeClaudeCodeSeams, buildClaudeArgs, parseClaudeResult, loadMcpServers, scopeMcpConfig, defaultExec, ALWAYS_MCP };
+module.exports = { makeGitRunner, makeGhRunner, makeClaudeSpawner, makeHarnessSpawner, makeCxpakFetcher, makeDecisionsFetcher, makeSpecFetcher, makeTrustFetcher, makeClaudeCodeSeams, buildClaudeArgs, parseClaudeResult, loadMcpServers, scopeMcpConfig, defaultExec, ALWAYS_MCP };

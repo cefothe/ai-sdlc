@@ -36,24 +36,64 @@ admitted for dispatch until its design doc is approved.
    `AskUserQuestion` — but only **product** questions (who/why/what-success-looks-like),
    never technical ones.
 
-2. **Resolve the discovery panel.** Read `.ai-sdlc/capabilities.yaml` →
-   `stages.discovery`. The core panel is `product-manager` + `product-owner`;
-   `routing` adds `cmo` for `strategic|gtm|launch|growth` and `cpo` for
-   `strategic|roadmap|platform`. Compose the provider set from the inferred labels.
+1b. **Load the product context.** The panel agents are generic; the product
+   knowledge lives in `docs/product/context.md` (vision, personas, current
+   capabilities, glossary, metric baselines, regulatory constraints, standing
+   non-goals). Render it with an index of existing PRDs and the most related ones in
+   full, and check it is valid:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/product-context.js" "$ARGUMENTS"
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/product-context.js" --validate || true
+   ```
+   - **No context doc** → tell the operator PRDs cannot be tied to the product
+     without one; offer to draft `docs/product/context.md` from
+     `docs/product/_template.md` by asking them **product** questions (personas,
+     baselines with sources, constraints). Proceed only on their say-so.
+   - **Invalid** → `prd-gate` will refuse every PRD until it is fixed; surface the
+     `reasons` and get them resolved first.
+   - If the related PRDs show this feature already exists or is planned, say so and
+     ask whether to extend that PRD instead of writing a new one.
+
+2. **Resolve the discovery panel.**
+   ```bash
+   node -e "const c=require(process.env.CLAUDE_PLUGIN_ROOT+'/pipeline/capabilities');const m=c.loadCapabilityMap('.ai-sdlc/capabilities.yaml');console.log(JSON.stringify(c.resolveDiscoveryPanel(m,{labels:process.argv[1].split(',')}),null,2))" "<labels>"
+   ```
+   The core panel is `product-manager` + `product-owner`; `routing` adds `cmo` for
+   `strategic|gtm|launch|growth`, `cpo` for `strategic|roadmap|platform`, and domain
+   advisors for deep-rule domains — `grizzled-trader` (trading-advisor) for
+   `trading|execution|risk`, `qa-compliance-engineer` (compliance-advisor) for
+   `compliance|regulatory`.
 
 3. **Run the panel.** Dispatch each panelist via the **Task tool** (parallel; use
-   Native Teams if 3+ per the dispatch rules), each with the feature idea and its
-   own lens from its agent definition:
-   - **product-manager** → problem, target user, why-now, success metrics, non-goals
-   - **product-owner** → scope, acceptance criteria, references, priority, open questions
+   Native Teams if 3+ per the dispatch rules), each with the feature idea, the
+   **product context block from step 1b, verbatim**, and its own lens from its agent
+   definition:
+   - **product-manager** → problem (with evidence), target user, why-now, measurable success metrics, non-goals
+   - **product-owner** → scope, user flows (trigger → steps → outcome per actor), binary acceptance
+     criteria (happy path + error/edge paths), edge cases with expected behaviour, product-level
+     non-functional requirements (latency, volume, privacy, accessibility) with targets, open questions
    - **cmo** (if routed) → positioning, segment, messaging, launch implications
    - **cpo** (if routed) → strategic fit, build/defer/drop, leverage, sequencing
+   - **trading-advisor** (if routed) → domain edge cases (market hours, partial fills,
+     halts, stale prices, position/risk limits), execution realism, the risks a
+     generic PO misses — folded into Edge cases / Non-functional requirements
+   - **compliance-advisor** (if routed) → the regulatory requirements this feature
+     triggers (from the context's Regulatory constraints + the regulation itself),
+     written as binary acceptance criteria and NFRs, each citing its rule
    The panel is collaborative/advisory — no cross-harness constraint.
 
 4. **Synthesize the PRD.** Write the PRD from the panel output into the
    framework's PRD location, following `docs/prd/_template.md` **exactly** — keep
    every canonical `##` heading (Problem, Target user, Success metrics, Scope,
-   Acceptance criteria, Open questions); `prd-gate.js` enforces that structure.
+   Non-goals, User flows, Acceptance criteria, Edge cases, Non-functional
+   requirements, Open questions); `prd-gate.js` enforces that structure **and its
+   substance**: every section concrete (>= 30 chars, Open questions excepted),
+   >= 2 acceptance criteria as list items, success metrics with a number/threshold,
+   and no unresolved open questions at approval. When the product context doc exists,
+   the gate also requires the **Target user to name one of its personas** and the
+   **Success metrics to cite a baseline** (`baseline 12% → target 17%`). The PRD is handed verbatim to the
+   planner, implementer and reviewers at `/ai-sdlc:execute` — write it so an
+   engineer who never saw the panel could build and verify the feature from it.
    Set frontmatter `status: draft` and `featureId: <feature-slug>`.
    Write `docs/prd/<feature-slug>.md` (slug from the title). If the CPO recommends
    **defer/drop**, surface that to the operator and stop unless they choose to proceed.
@@ -62,7 +102,19 @@ admitted for dispatch until its design doc is approved.
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/prd-gate.js" "docs/prd/<feature-slug>.md" || true
    ```
-   Fix any missing/empty sections.
+   Fix every `reasons` entry other than the `status` one (missing/empty/thin
+   sections, too few ACs, unmeasurable metrics) before handing to the operator.
+
+4a. **Grow the product context with the PRD (same change, same approval).** If the
+   PRD needs something the product context does not have yet — a **new persona**, a
+   **new glossary term**, or a **metric with no baseline** — add it to
+   `docs/product/context.md` now (persona: bold name + role + job + pain; baseline:
+   current value + date + source), so the PRD gate's persona/baseline checks pass for
+   the right reason instead of the PRD bending to fit. Show the operator the context
+   diff together with the PRD; both are approved together. Never edit **Current
+   capabilities** here — a feature joins it when it ships (the execute pipeline
+   records it in the feature's own PR). Never touch `docs/architecture/overview.md`
+   from a PRD — architecture changes belong to `/ai-sdlc:design`.
 
 4b. **Clarify (before approval).** Surface ambiguity so the human approves a
    *resolved* PRD, not a vague one. Run the deterministic clarify gate:
@@ -70,8 +122,8 @@ admitted for dispatch until its design doc is approved.
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/clarify-gate.js" "docs/prd/<feature-slug>.md" || true
    ```
    Then do the advisory pass: dispatch the `clarify` provider from
-   `.ai-sdlc/capabilities.yaml` (`product-owner`) via the **Task tool** to read the
-   PRD and list *unwritten* ambiguities as concrete questions (edge cases, undefined
+   `.ai-sdlc/capabilities.yaml` (`product-owner`) via the **Task tool**, with the
+   product context block, to read the PRD and list *unwritten* ambiguities as concrete questions (edge cases, undefined
    states, unnamed segments). Present unresolved open questions + the agent's
    questions to the operator to answer, and fold the answers back into the PRD.
    The PRD stays `status: draft` — a **human must review it and set

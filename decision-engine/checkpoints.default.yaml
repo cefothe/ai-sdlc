@@ -1,0 +1,94 @@
+# HITL checkpoint registry — the plugin's default (commitward format). A change
+# that fires any checkpoint STOPS the pipeline before push until a human signs
+# off with a `HITL-ACK: <checkpoint> <note>` trailer on a commit in the branch.
+# The pipeline never writes that trailer itself.
+#
+# A repo adds or overrides checkpoints by name in .ai-sdlc/checkpoints.yaml.
+# Regex dialect: patterns are matched case-insensitively against repo-relative
+# paths (paths) or added lines (content). `(?-i:X)` marks a case-sensitive token.
+version: "1"
+checkpoints:
+  - name: agent-instructions-self-mod
+    summary: "Editing agent-governing instructions (CLAUDE.md / AGENTS.md / rules / agent + skill definitions)"
+    paths:
+      - "(^|/)CLAUDE\\.md$"
+      - "(^|/)AGENTS\\.md$"
+      - "(^|/)rules/.*\\.md$"
+      - "(^|/)\\.claude/(agents|skills|commands)/"
+
+  - name: gate-self-mod
+    summary: "Modifying the framework's own gates and policy (checkpoints, pace, DoR/DoD, quality gate, hooks)"
+    paths:
+      - "(^|/)checkpoints(\\.default)?\\.yaml$"
+      - "(^|/)\\.ai-sdlc/(pace|flow|dor-config|dod-config|quality-gate|autonomy-policy)\\.yaml$"
+      - "(^|/)\\.commitward/"
+      - "(^|/)commit-msg$"
+      - "(^|/)hooks/hooks\\.json$"
+
+  - name: checkpoint-removed
+    summary: "A checkpoint was removed from the registry (the gate was weakened)"
+    semantic: checkpoint_removed
+
+  - name: destructive-ops
+    summary: "Destructive git/filesystem command entering a committed file"
+    content:
+      - "git +push +[^\\n]*--force($|[^-])"
+      - "git +push +([^\\n]* )?-[a-zA-Z]*f($|[^a-zA-Z])"
+      - "git[ -]filter-branch"
+      - "git[ -]filter-repo"
+      - "git +reset +--hard"
+      - "checkout +--orphan"
+      - "git +branch +(?-i:-D)"
+      - "update-ref +-d"
+      - "reflog +expire"
+      - "rm +-[a-zA-Z]*r[a-zA-Z]*f[^\\n]*[ \\t]+[\"]?(/([ \\t*]|$)|~([ \\t/]|$)|[$`]|/(etc|usr|var|bin|sbin|lib|lib64|boot|sys|proc|dev|root|opt|home|users|library|system)([ \\t/]|$))"
+      - "rm +-[a-zA-Z]*f[a-zA-Z]*r[^\\n]*[ \\t]+[\"]?(/([ \\t*]|$)|~([ \\t/]|$)|[$`]|/(etc|usr|var|bin|sbin|lib|lib64|boot|sys|proc|dev|root|opt|home|users|library|system)([ \\t/]|$))"
+      - "git +clean +-[a-zA-Z]*f"
+    content_exempt_paths:
+      - "(^|/)docs/"
+      - "(^|/)tests?/"
+      - "(^|/)__tests__/"
+      - "(^|/)checkpoints(\\.default)?\\.yaml$"
+
+  - name: license-or-ip-grant
+    summary: "Changing the licence or third-party attribution"
+    paths:
+      - "(^|/)LICENSE([-.].*)?$"
+      - "(^|/)COPYING([-.].*)?$"
+      - "(^|/)NOTICE$"
+
+  - name: ci-pipeline-change
+    summary: "Changing CI/CD pipeline definitions"
+    paths:
+      - "(^|/)\\.github/workflows/"
+      - "(^|/)\\.gitlab-ci\\.yml$"
+      - "(^|/)Jenkinsfile$"
+      - "(^|/)azure-pipelines\\.yml$"
+
+  - name: db-migration
+    summary: "Adding or changing a database migration"
+    paths:
+      - "(^|/)(db/)?migrations?/"
+      - "(^|/)db/changelog/"
+      - "(^|/)V\\d+(_\\d+)*__[^/]*\\.sql$"
+
+  # commitward allows exactly one matcher (paths | content | semantic) per
+  # checkpoint, so file names and file contents are two checkpoints.
+  - name: secrets-or-credentials
+    summary: "Committing an env file or key file"
+    paths:
+      - "(^|/)\\.env(\\.(local|production|prod|staging|development|dev|test))?$"
+      - "\\.(pem|key|p12|pfx|jks)$"
+
+  - name: credential-material
+    summary: "Adding a private key or cloud access key to any file"
+    content:
+      - "-----BEGIN [A-Z ]*PRIVATE KEY-----"
+      - "(?-i:AKIA)[0-9A-Z]{16}"
+
+  - name: infrastructure-as-code
+    summary: "Changing infrastructure definitions"
+    paths:
+      - "\\.tf$"
+      - "(^|/)terraform/"
+      - "(^|/)helm/"

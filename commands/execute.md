@@ -18,6 +18,23 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
   implementer. If capabilities.yaml puts a reviewer on the implementer's
   harness, stop and report — do not proceed.
 
+## Speed contract (read first)
+
+A ticket should finish **as fast as possible with enough confidence** — not wait.
+- **Wall-clock budget:** finish within `.ai-sdlc/flow.yaml` → `budget.maxMinutes` (default 60).
+  If you cannot, stop and report what remains; never extend the run by sleeping.
+- **Never wait on long observation.** No polling loops, multi-hour measurements, soak runs or
+  `ScheduleWakeup` waits for live data inside execute. Anything that needs more than a few
+  minutes of wall-clock observation is a **background maintain job** (`/ai-sdlc:maintain`,
+  `.ai-sdlc/bands.yaml` / `maintenance.yaml`) whose result later updates the ADR — DoR gate 11
+  refuses tasks whose ACs demand it.
+- **Spike tasks** (`kind: spike`) are time-boxed measurement scripts: no design panel, no test
+  author, no RED-oracle nodes — write the script, run a short sampled measurement, record the
+  numbers in the design Risks / ADRs, done.
+- **Parallelize:** independent tasks run concurrently in separate worktrees
+  (`node "${CLAUDE_PLUGIN_ROOT}/decision-engine/task-order.js" --waves`); inside a task, file-disjoint
+  streams run in parallel (step 5).
+
 ## Steps
 
 1. **Admit (DoR).** Run:
@@ -53,15 +70,71 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    one blocks the task, STOP and flag it rather than silently diverging." Advisory
    input (the d=1.82 pre-action lever), never a gate.
 
+3c. **Load the specification (PRD + design doc).** The approved PRD (what/why) and
+   design doc (how) are the contract this task builds against — DoR gates 8/9 proved
+   they exist and are ratified; now their **content** must reach the planner, the
+   implementer and the reviewers. Render them as a token-budgeted block (priority:
+   ACs, scope, non-goals, flows, edge cases → data model, interfaces, data flow, test
+   strategy; anything over budget is listed by name to open):
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/spec-context.js" "$(ls backlog/tasks/$1*.md | head -1)"
+   ```
+   The block also carries the **system architecture slice** (from
+   `docs/architecture/overview.md`): the components this task reaches, their contracts
+   and data ownership, and every invariant — the implementer changes code in the owning
+   component and connects through the declared contracts; reviewers flag any new
+   cross-component coupling or invariant breach as **major**.
+   Every agent also has the **ai-sdlc-context MCP tools** for what the slice did not
+   predict: `architecture_lookup` (who owns a path, a component's contracts and
+   invariants), `architecture_contracts`, `product_lookup`, `spec_lookup`,
+   `decision_lookup`. Tell implementers and reviewers to use them before touching
+   code outside their slice or calling another component — never guess ownership.
+   Pass this block **verbatim** into the plan (step 4), every implementer / parallel
+   worker (step 5) and every reviewer (step 6). If the feature has an **approved
+   design doc, it is the design** — do not run a design panel to re-derive it; the
+   plan implements it. If the block says no design doc exists, implement from the PRD
+   + ADRs and say so in the report.
+
+3d. **Pace — how much ceremony this change earns.** Ceremony follows blast radius,
+   not habit (`.ai-sdlc/pace.yaml`, else the plugin default): paths classify fast /
+   normal / slow, anything unclassified stays normal, anything a HITL checkpoint claims
+   is **slow**, and a low/critical implementer trust tier raises the verdict one layer
+   (trust never lowers it). Before code exists, evaluate the task's referenced paths:
+   ```bash
+   node -e "const R=process.env.CLAUDE_PLUGIN_ROOT;const{loadTaskFile}=require(R+'/decision-engine/backlog-task');const{evaluatePaceForRoot}=require(R+'/decision-engine/pace');const t=loadTaskFile(process.argv[1]);const f=[...(t.frontmatter.references||[])].filter(r=>typeof r==='string'&&!/^https?:/.test(r));console.log(JSON.stringify(evaluatePaceForRoot(process.cwd(),{files:f}),null,2))" "$(ls backlog/tasks/$1*.md | head -1)"
+   ```
+   `ceremony.designPanel: false` (fast) → no design panel. Re-run on the real diff after
+   implementation (`node "${CLAUDE_PLUGIN_ROOT}/decision-engine/pace.js" --base main`):
+   `ceremony.maxReviewers` caps the review team (0 = full team) and `draftPr: true`
+   (slow) opens the PR as a draft.
+
 4. **Plan (MANDATORY when a `plan` provider is set).** Read
    `.ai-sdlc/capabilities.yaml`. If `spec.stages.plan.provider` is present, you
    **must** invoke that provider now — e.g. run the `/code-plan` skill — and carry
    its freshly produced artifact into the implementer's context in step 5.
-   - A pre-existing design/plan doc in the repo is **not** a substitute — you must
-     run the configured `plan` provider for *this* task, not reuse an old artifact.
+   - A pre-existing *plan* doc in the repo is **not** a substitute — you must run the
+     configured `plan` provider for *this* task, not reuse an old artifact. The
+     approved **design doc** is different: it is the plan provider's *input*. Give the
+     provider the spec block (3c) and the ADRs (3b) and require that every PRD
+     acceptance criterion maps to plan steps and the design's data model /
+     interfaces / data flow are implemented as written.
    - Do **not** fold planning into an inline "equivalent." If the provider cannot
      be invoked, **stop** and report why rather than proceeding to implement.
    - Only when `spec.stages.plan.provider` is absent/null may you skip this step.
+   - **Execution manifest (when `.ai-sdlc/flow.yaml` → `manifest.enabled`, the default).**
+     Require the plan to embed one fenced ```json block `{"execution-manifest": [...]}`
+     (slicr contract): each `local: true` entry is ONE region (one function body /
+     contiguous edit, or one new file with `kind: "create"`) with an `accept` shell
+     command that exits 0 only when that node is correctly done — a targeted test whose
+     assertions come from the PRD acceptance criteria. Validate it:
+     ```bash
+     node "${CLAUDE_PLUGIN_ROOT}/pipeline/manifest.js" <plan-file>
+     ```
+     `refused` (exit 1) → fix the plan; never fall back past a refusal. `none` → the
+     single/parallel implementer path below.
+   - **Commit the plan** as `docs/plans/$1.md` (plan text + manifest table) on the branch
+     before implementing. When implementation departs from it, update the plan in the
+     same commit — reviewers get "plan drift" (changed files the plan never names).
    - **The plan must also emit a file-disjoint work breakdown** — the streams step 5
      parallelizes over: each stream owns a set of files/modules and names the
      integration seams it leaves for others. Streams must **not** share files (that's
@@ -91,6 +164,14 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    ```bash
    cxpak overview --tokens 6k
    ```
+   **Monorepo:** cxpak keeps ONE index at the repo root; scope it to the subproject(s)
+   the task touches instead of indexing per subproject —
+   `cxpak overview --tokens 3k --workspace <subproject-path> .` for each touched
+   subproject (split the budget, max 3). Cross-subproject wiring comes from the root
+   `docs/architecture/overview.md`; each subproject may have its own
+   `<subproject>/docs/architecture/overview.md` (both are in the spec block).
+   Subprojects come from `.ai-sdlc/flow.yaml` `monorepo.projects`, else the workspace
+   manifests (package.json workspaces, pnpm-workspace.yaml, go.work, Cargo, lerna).
    It returns a few-KB summary (architecture, module map, conventions). Carry that
    output into the implementer's prompt in step 5 as its **structured context**.
    - **Do NOT use the `cxpak_context` MCP tool (op `context`/`briefing`) for this
@@ -102,10 +183,27 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    - If `cxpak` isn't on PATH, **say so explicitly** and proceed with the task +
      plan only — degraded, not blocked.
 
-5. **Implement — parallel when the plan decomposes.** If the plan (step 4) yields
+5a. **Manifest path — RED oracle first (when step 4 produced manifest nodes).**
+   1. **Test author.** Dispatch one agent to write the tests (and compiling stubs) that
+      make every node's `accept` RED, derived from the PRD acceptance criteria, and
+      commit them as the setup commit. It implements nothing. Record its `testFiles`.
+   2. **RED check.** Run every node's `accept` (via cordon when `sandbox.mode: cordon`).
+      One already GREEN cannot discriminate — mark it `already_satisfied` and report it.
+   3. **Nodes, in order.** For each node, dispatch the implementer with ONLY that node's
+      `change`, `files` and `accept` (+ the spec block, ADRs, test files). After it
+      commits, YOU verify: the diff touches only `node.files`, never the test files, no
+      dependency manifests under `forbid: new_deps` — then run the `accept`. GREEN →
+      next node. Otherwise roll back to the node's start commit and retry with the exact
+      failure (`nodeRetries`, default 2). A node that never goes GREEN **halts**: report
+      it and take it over yourself, then continue.
+   4. Implement the manifest's `local: false` entries with the normal implementer.
+   The unattended pipeline does exactly this (`pipeline/node-executor.js`).
+
+5. **Implement — parallel when the plan decomposes.** If there is no manifest and the plan (step 4) yields
    **≥2 file-disjoint work streams**, implement them **in parallel via Native Teams**;
    otherwise dispatch a single implementer. Every implementer — parallel or single —
-   gets the **ADR constraints** (step 3b), the plan, and **structured context** (4c).
+   gets the **spec block** (step 3c), the **ADR constraints** (step 3b), the plan, and
+   **structured context** (4c).
 
    **Parallel path (preferred for a decomposable task):**
    - `TeamCreate { name: ai-sdlc-implement-$1 }`; `parallel-worker` owns the isolation
@@ -116,7 +214,8 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
      never overlapping files.
    - Give each worker a **targeted** context slice, not just the global overview:
      `cxpak_graph` op `blast_radius`/`trace` on its owned files (degrade to the step-4c
-     overview if cxpak is absent), plus its stream's plan section and the ADR constraints.
+     overview if cxpak is absent), plus its stream's plan section, the spec block (3c)
+     and the ADR constraints.
    - Collect each stream's `{ filesChanged, verifications, summary }` from its JSONL
      inbox; `TeamDelete`. A stream that touched a file it did not own is a conflict —
      **stop and reconcile**, don't merge over it.
@@ -125,10 +224,20 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
      worker does not prove the whole compiles or that the seams line up.
 
    **Single path:** dispatch one `implement` agent with the same inputs (task contract +
-   plan + ADRs + cxpak context).
+   spec block + plan + ADRs + cxpak context).
 
    Each implementer commits its work and returns `{ commitSha, filesChanged,
    verifications, summary }`.
+
+5b. **Architecture conformance (deterministic, on the real diff).**
+   ```bash
+   (cd .worktrees/$1 && node "${CLAUDE_PLUGIN_ROOT}/decision-engine/architecture-conformance.js" --base main)
+   ```
+   Findings — files no component owns, imports that cross components without a declared
+   contract, dependency-manifest changes — go to the **reviewers** (not back to the
+   implementer) as major findings, and any major finding makes the change `slow` (draft
+   PR, full team). The fix is either to move the code / go through an existing contract,
+   or to update `docs/architecture/overview.md` in the same change.
 
 6. **Review (Native Teams).** Read the team plan in
    `steps.capabilities.review.teamPlan`. When `useTeam` is true (3+ reviewers):
@@ -136,6 +245,10 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    - `Task` each teammate into the team — one per `teammates[]` entry, using its
      `agentType` (e.g. `code-reviewer`, `qa-code-reviewer`, `code-review-architect`)
      and running on a **different harness than the implementer**.
+   - Each reviewer gets the real diff **and the spec block (3c)**, and reviews the diff
+     against it: any PRD acceptance criterion not implemented, any divergence from the
+     design's data model / interfaces / data flow, or scope creep into Non-goals is a
+     **major** finding.
    - Each reviewer writes its verdict to its JSONL inbox; collect all of them.
    - Aggregate: APPROVED only if all approve and there are no critical/major
      findings.
@@ -161,6 +274,11 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    The **design panel** (step 4) dispatches the same way — its own team plan is
    in `steps.capabilities.design.teamPlan`.
 
+   **Fixes are re-reviewed.** When reviewers request changes and you fix them, re-dispatch
+   the reviewers that requested changes on the NEW diff before moving on — an unreviewed fix
+   is not reviewed code. A reviewer that returns no structured verdict counts as **changes
+   requested**: re-dispatch it once; if it still returns none, report it.
+
 6b. **Validate (Definition-of-Done gate — HARD ENFORCED).** Before finalizing, run
    the DoD gate from the worktree against the base branch:
    ```bash
@@ -180,11 +298,33 @@ Task tool, using the providers declared in `.ai-sdlc/capabilities.yaml`.
    the pipeline, not the author; consistent with R5, which only bars feeding *subjective*
    assessment to the author.)
 
+6c. **HITL sign-off gate — ALWAYS stops for a human.** Before finalizing or pushing:
+   ```bash
+   (cd .worktrees/$1 && node "${CLAUDE_PLUGIN_ROOT}/decision-engine/hitl-gate.js" --base main)
+   ```
+   Exit 0 → nothing high-stakes fired. Exit 1 → fired checkpoints are already signed
+   off. **Exit 2 → stop.** Show the human, with `AskUserQuestion`, each fired checkpoint
+   (name, summary, why it fired) and the relevant diff. Only on their explicit approval,
+   record it in their words:
+   `git commit --allow-empty -m "HITL sign-off" -m "HITL-ACK: <checkpoint> <who + what they checked>"`
+   and re-run the gate. Never infer approval, never write `HITL-ACK` without that
+   answer, and never weaken `.ai-sdlc/checkpoints.yaml` to get past it (removing a
+   checkpoint itself fires `checkpoint-removed`). If the human declines, stop.
+
+6d. **Record the shipped capability.** For a feature task, append it to
+   `docs/product/context.md` → Current capabilities (`- <title> — docs/prd/<slug>.md
+   (shipped in <task>)`) and commit it on the branch so it rides this PR. The unattended
+   pipeline does this automatically (`recordShippedCapability`).
+
 7. **Finalize.** Verify the acceptance criteria, flip status → `Done`, move the
    task file to `backlog/completed/`, sign the attestation, and remove the
    sentinel.
 
-8. **PR (human in the loop).** Push the branch and open the PR (`gh pr create`). If
+8. **PR (human in the loop).** Push the branch and open the PR (`gh pr create`, with
+   `--draft` when the post-implementation pace is slow). The PR body is the
+   **validation table** (`pipeline/validation-report.js`): every gate passed or skipped,
+   each acceptance criterion with its evidence, review counts, conformance, pace, cost and
+   degraded seams — so the human reviewer reads evidence, not a one-liner. If
    the DoD `github-checks` gate already opened a **draft** PR for this branch, don't
    create a second one — `gh pr ready` it and add the reviewer (`gh pr edit --add-reviewer`).
    You never merge. Always put a human on the PR:
