@@ -113,8 +113,18 @@ function findSection(sections, name) {
 //     exist and pass evaluateAdrQuality.
 //   architecture — the repo's architecture-overview evaluation; when present it
 //     must be valid, the design must reference it, and the design must name the
-//     components it touches (or declare a new component).
+//     components it touches (or declare a new component). Every declared
+//     `New component: <name>` must be listed in the overview and have its own
+//     component doc (docs/architecture/components/<slug>.md) — the design
+//     creates the feature's architecture doc, not only a line in the overview.
 // Omitted inputs skip their check (the pure gate stays usable on a lone doc).
+// The names declared with `New component: <name>` (bold/backticks stripped).
+function declaredNewComponents(markdown) {
+  return [...new Set([...String(markdown).matchAll(/\bnew component:\s*([^\n.,;()]+)/gi)]
+    .map((m) => m[1].replace(/[*`_]/g, '').trim())
+    .filter((n) => n && !n.startsWith('<')))];
+}
+
 function evaluateDesign(markdown, { path = '<design>', prdAcceptanceCriteria, decisions, architecture } = {}) {
   const { frontmatter, sections } = parsePrd(markdown);
   const status = (frontmatter.status || '').toString().toLowerCase();
@@ -186,6 +196,18 @@ function evaluateDesign(markdown, { path = '<design>', prdAcceptanceCriteria, de
     const named = (architecture.components || []).filter((c) => new RegExp(`(^|[^A-Za-z0-9])${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9]|$)`, 'i').test(markdown));
     if (architecture.components && architecture.components.length && !named.length && !/\bnew component\b/i.test(markdown)) {
       substanceIssues.push({ code: 'no-component-named', section: 'Architecture', message: `design names none of the architecture's components (${architecture.components.join(', ')}) — say which it changes and how they connect, or declare "New component: <name>" and add it to ${architecture.path}` });
+    }
+    const listed = new Map((architecture.components || []).map((c) => [c.toLowerCase(), c]));
+    const docs = new Map((architecture.componentDocs || []).map((d) => [d.name.toLowerCase(), d]));
+    for (const name of declaredNewComponents(markdown)) {
+      if (!listed.has(name.toLowerCase())) {
+        substanceIssues.push({ code: 'new-component-not-in-overview', section: 'Architecture', message: `New component "${name}" is not listed in ${architecture.path} — add it (code paths, responsibility, contracts) in the same change` });
+        continue;
+      }
+      const doc = docs.get(name.toLowerCase());
+      if (doc && !doc.valid) {
+        substanceIssues.push({ code: 'new-component-doc', section: 'Architecture', message: doc.exists ? `New component "${name}": its doc ${doc.path} is incomplete (${doc.reasons.join('; ')})` : `New component "${name}" has no component doc — write ${doc.path} from docs/architecture/components/_template.md in the same change` });
+      }
     }
   }
 
@@ -260,7 +282,7 @@ function evaluateDesignFile(designPath, { root, prdPath } = {}) {
   return evaluateDesign(markdown, { path: designPath, prdAcceptanceCriteria, decisions, architecture });
 }
 
-module.exports = { evaluateDesign, evaluateDesignFile, findSection, resolveInside, REQUIRED_SECTIONS, SECTION_ALIASES, SUBSTANCE_RULES, headingMatchesSection };
+module.exports = { evaluateDesign, evaluateDesignFile, declaredNewComponents, findSection, resolveInside, REQUIRED_SECTIONS, SECTION_ALIASES, SUBSTANCE_RULES, headingMatchesSection };
 
 // CLI: node decision-engine/design-gate.js docs/design/<slug>.md
 if (require.main === module) {

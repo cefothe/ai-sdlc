@@ -3,7 +3,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
-const { evaluateDesign, evaluateDesignFile, REQUIRED_SECTIONS, headingMatchesSection } = require(path.join(ROOT, 'decision-engine', 'design-gate.js'));
+const { evaluateDesign, evaluateDesignFile, declaredNewComponents, REQUIRED_SECTIONS, headingMatchesSection } = require(path.join(ROOT, 'decision-engine', 'design-gate.js'));
 const dec = require(path.join(ROOT, 'decision-engine', 'decisions.js'));
 
 function design({ omit = [], empty = [], adrs = 'DEC-0001', status = 'approved', extra = '' } = {}) {
@@ -249,6 +249,23 @@ describe('evaluateDesign — architecture overview', () => {
   test('declaring a new component satisfies the naming rule', () => {
     const md = withArch(design()).replace('discovery → fetch', 'New component: Ingestor. discovery → fetch');
     expect(codes(evaluateDesign(md, { architecture: arch }))).not.toContain('no-component-named');
+  });
+
+  test('a declared new component must be in the overview and have a valid component doc', () => {
+    const md = withArch(design()).replace('discovery → fetch', 'New component: **Ingestor**. Orders: discovery → fetch');
+    expect(codes(evaluateDesign(md, { architecture: arch }))).toContain('new-component-not-in-overview');
+
+    const listed = { ...arch, components: [...arch.components, 'Ingestor'] };
+    const missingDoc = { ...listed, componentDocs: [{ name: 'Ingestor', path: 'docs/architecture/components/ingestor.md', exists: false, valid: false, reasons: [] }] };
+    const r = evaluateDesign(md, { architecture: missingDoc });
+    expect(r.reasons.join(' ')).toContain('write docs/architecture/components/ingestor.md');
+
+    const withDoc = { ...listed, componentDocs: [{ name: 'Ingestor', path: 'docs/architecture/components/ingestor.md', exists: true, valid: true, reasons: [] }] };
+    expect(evaluateDesign(md, { architecture: withDoc }).valid).toBe(true);
+  });
+
+  test('declaredNewComponents reads each declaration and ignores the template placeholder', () => {
+    expect(declaredNewComponents('New component: `Ingestor` (Go). Also new component: Ledger, and New component: <name>')).toEqual(['Ingestor', 'Ledger']);
   });
 
   test('an incomplete overview blocks every design', () => {

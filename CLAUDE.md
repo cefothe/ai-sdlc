@@ -176,7 +176,8 @@ component has its own detailed doc `docs/architecture/components/<slug>.md` (tem
 naming the overview's paths, concrete Interfaces, Dependencies, Data, Internal structure + diagram, Key flows +
 sequenceDiagram, Failure modes, Decisions, Testing). `evaluateArchitectureRoot` fails while one is missing or
 invalid; spec-context appends the touched components' docs (≤3, budgeted) to the slice; `architecture_lookup`
-returns a component's doc; `migrate --apply` scaffolds missing ones; the DoD gate re-validates whenever a change
+returns a component's doc; a design's `New component: <name>` must be in the overview with a complete doc
+(design-gate `new-component-not-in-overview` / `new-component-doc`); `migrate --apply` scaffolds missing ones; the DoD gate re-validates whenever a change
 touches `docs/architecture/`. **Diagrams are enforced** (`decision-engine/mermaid.js`): the
 overview needs a component diagram + a sequence diagram; a design needs a component diagram
 (Architecture), a sequenceDiagram with the failure path (Data flow) and an erDiagram (Data model,

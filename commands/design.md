@@ -225,7 +225,11 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    a new component gets `docs/architecture/components/<slug>.md` from
    `${CLAUDE_PLUGIN_ROOT}/docs/architecture/components/_template.md` (linked from its
    Components entry), and every component whose interfaces, dependencies, data or internal
-   structure the design changes has its doc updated — diagrams included.
+   structure the design changes has its doc updated — diagrams included. The gate enforces the
+   first part: each `New component: <name>` must be listed in the overview and have a complete
+   component doc (`new-component-not-in-overview`, `new-component-doc`). A feature that *is* a
+   new component therefore ships its own architecture document; a feature spread across existing
+   components is described by the design doc plus updates to those components' docs.
    The doc is handed **verbatim** to the planner, implementer and reviewers, and an
    approved design doc *replaces* the executor's ad-hoc design panel — so it must be
    buildable as written. The gate enforces: Data model has real DDL / a schema code
