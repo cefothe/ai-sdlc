@@ -32,6 +32,20 @@ describe('evaluateInProcess (default registry)', () => {
     expect(r.exit_class).toBe(2);
   });
 
+  test('every default checkpoint declares exactly one matcher (commitward contract)', () => {
+    const yaml = require('js-yaml');
+    const bad = (yaml.load(DEFAULT_YAML).checkpoints || [])
+      .filter((c) => ['paths', 'content', 'semantic'].filter((k) => c[k] !== undefined).length !== 1)
+      .map((c) => c.name);
+    expect(bad).toEqual([]);
+  });
+
+  test('key material in added lines fires credential-material', () => {
+    const r = ev({ name_status: 'M\tsrc/config.js', diff: '+++ b/src/config.js\n+const k = "AKIAABCDEFGHIJKLMNOP";\n' });
+    expect(names(r)).toContain('credential-material');
+    expect(names(r)).not.toContain('secrets-or-credentials');
+  });
+
   test('.env.example does not fire the secrets checkpoint', () => {
     expect(names(ev({ name_status: 'A\t.env.example' }))).not.toContain('secrets-or-credentials');
   });

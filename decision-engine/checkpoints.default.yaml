@@ -72,11 +72,16 @@ checkpoints:
       - "(^|/)db/changelog/"
       - "(^|/)V\\d+(_\\d+)*__[^/]*\\.sql$"
 
+  # commitward allows exactly one matcher (paths | content | semantic) per
+  # checkpoint, so file names and file contents are two checkpoints.
   - name: secrets-or-credentials
-    summary: "Committing an env file, key or credential material"
+    summary: "Committing an env file or key file"
     paths:
       - "(^|/)\\.env(\\.(local|production|prod|staging|development|dev|test))?$"
       - "\\.(pem|key|p12|pfx|jks)$"
+
+  - name: credential-material
+    summary: "Adding a private key or cloud access key to any file"
     content:
       - "-----BEGIN [A-Z ]*PRIVATE KEY-----"
       - "(?-i:AKIA)[0-9A-Z]{16}"
