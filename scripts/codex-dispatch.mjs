@@ -15,15 +15,15 @@
 // --cwd roots Codex in the task worktree so a reviewer can read every file in
 // the change. Several invocations can run concurrently (one per reviewer).
 //
-// Prints the agent's proposal text to stdout (prose for design/plan; JSON for a
-// reviewer). Exit 1 on dispatch failure, 2 on empty prompt. Requires codex
+// Prints the agent's proposal text to stdout (prose for design/plan; the full
+// verdict JSON — approved + findings — for a reviewer). Exit 1 on dispatch failure, 2 on empty prompt. Requires codex
 // installed + logged in (`codex login status`).
 
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { makeCodexSpawner } = require('../adapters/codex-spawner.js');
+const { makeCodexSpawner, formatDispatchOutput } = require('../adapters/codex-spawner.js');
 
 function arg(flag, fallback) {
   const i = process.argv.indexOf(flag);
@@ -50,13 +50,7 @@ if (!prompt.trim()) {
 
 makeCodexSpawner({ reasoningEffort })({ type, provider: { role, name, harness: 'codex' }, prompt, cwd })
   .then((out) => {
-    const text =
-      typeof out === 'string'
-        ? out
-        : out && typeof out.summary === 'string'
-          ? out.summary
-          : JSON.stringify(out);
-    process.stdout.write(text);
+    process.stdout.write(formatDispatchOutput(out, type));
   })
   .catch((err) => {
     console.error(`codex-dispatch failed: ${err.message}`);

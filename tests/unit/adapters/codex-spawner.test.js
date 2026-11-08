@@ -192,3 +192,16 @@ describe('per-provider reasoning effort + non-blocking dispatch', () => {
     expect(verdicts.every((v) => v.approved)).toBe(true);
   });
 });
+
+describe('formatDispatchOutput (codex-dispatch stdout)', () => {
+  test('a reviewer verdict is printed whole — approved and findings survive', () => {
+    const verdict = { reviewer: 'code-reviewer', approved: false, findings: [{ severity: 'major', file: 'ingest/sink/sink.go', line: 42, message: 'unbounded buffer' }], summary: 'one issue', harness: 'codex' };
+    expect(JSON.parse(codex.formatDispatchOutput(verdict, 'reviewer'))).toEqual(verdict);
+  });
+
+  test('design/plan prose prints as text; other objects as JSON', () => {
+    expect(codex.formatDispatchOutput('## Proposal', 'design')).toBe('## Proposal');
+    expect(codex.formatDispatchOutput({ summary: 'prose reply' }, 'design')).toBe('prose reply');
+    expect(JSON.parse(codex.formatDispatchOutput({ summary: 's', commitSha: 'abc' }, 'developer'))).toEqual({ summary: 's', commitSha: 'abc' });
+  });
+});
