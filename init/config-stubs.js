@@ -150,7 +150,7 @@ spec:
         - { role: backend-architect, type: agent, name: backend-architect, harness: claude }
         - { role: solution-architect-codex, type: agent, name: architect-review, harness: codex }
       capabilities:
-        skills: [firecrawl, deep-research]
+        skills: [firecrawl, deep-research, mermaid-diagrams]
         web: [WebSearch, WebFetch]
         # Architects may run a small throwaway PoC to CONFIRM a real endpoint/
         # schema/auth before locking the ADR (turns a spike into a decision).

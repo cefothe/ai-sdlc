@@ -19,6 +19,7 @@ const { existsSync, readFileSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { parsePrd, extractListItems } = require('./prd-gate');
 const { makeMatcher, findSection: findDocSection, checkSections, markerTokens, structureReasons } = require('./doc-sections');
+const { hasDiagram, missingFromDiagram } = require('./mermaid');
 
 const ARCHITECTURE_PATH = join('docs', 'architecture', 'overview.md');
 const DEFAULT_MAX_CHARS = 8000;
@@ -141,6 +142,18 @@ function evaluateArchitecture(markdown, { path = ARCHITECTURE_PATH } = {}) {
   const invariants = findSection(sections, 'Invariants');
   if (invariants && invariants.hasContent && !extractListItems(invariants.content).length) {
     substanceIssues.push({ code: 'no-invariants', section: 'Invariants', message: 'Invariants lists no rule — one list item per invariant' });
+  }
+  // Diagrams everyone can read: the component map and at least one key interaction.
+  if (!hasDiagram(markdown, 'component')) {
+    substanceIssues.push({ code: 'no-component-diagram', section: 'Components', message: 'no component diagram — add a ```mermaid flowchart (or C4Container) of the components and the contracts between them' });
+  } else {
+    const undrawn = missingFromDiagram(markdown, 'component', components.map((c) => c.name));
+    if (undrawn.length) {
+      substanceIssues.push({ code: 'diagram-missing-component', section: 'Components', message: `component diagram does not show ${undrawn.join(', ')} — every listed component appears in the diagram` });
+    }
+  }
+  if (!hasDiagram(markdown, 'sequence')) {
+    substanceIssues.push({ code: 'no-sequence-diagram', section: 'Integration contracts', message: 'no sequence diagram — add a ```mermaid sequenceDiagram of at least one key interaction across components' });
   }
 
   const reasons = [...structureReasons({ missingSections, emptySections, markers }), ...substanceIssues.map((i) => i.message)];

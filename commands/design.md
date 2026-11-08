@@ -1,7 +1,7 @@
 ---
 description: Turn an approved PRD into the technical how — architects propose high-level designs, a chair converges them into one architecture, then record ADRs + a design doc and scaffold the DoR-ready backlog task from them
 argument-hint: <feature-slug>   (matches docs/prd/<slug>.md)
-allowed-tools: Bash, Read, Write, Task, AskUserQuestion
+allowed-tools: Bash, Read, Write, Task, Skill, AskUserQuestion
 ---
 
 # /ai-sdlc:design — architecture design stage
@@ -226,7 +226,13 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    block / a field table; Interfaces gives concrete signatures, endpoints, flags or
    env vars; Data flow states failure/retry behaviour; Test strategy maps **every PRD
    acceptance criterion by number** (`AC1 — integration: …`); every linked ADR is
-   complete. Validate:
+   complete. **Diagrams are required** — the chair writing the doc loads the `mermaid-diagrams`
+   skill (Skill tool) and draws them in the same pass as the text, as fenced mermaid blocks:
+   a component diagram (flowchart) in **Architecture**, a `sequenceDiagram` of the main flow
+   **including its failure/retry path** in **Data flow**, and an `erDiagram` in **Data model**
+   (unless no persisted state). Add or update the matching component diagram and key sequence
+   diagrams in `docs/architecture/overview.md`. The gate checks each is a real diagram of the
+   right type with edges. Validate:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/design-gate.js" "docs/design/$1.md" || true
    ```

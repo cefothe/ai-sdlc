@@ -9,10 +9,10 @@ const dec = require(path.join(ROOT, 'decision-engine', 'decisions.js'));
 function design({ omit = [], empty = [], adrs = 'DEC-0001', status = 'approved', extra = '' } = {}) {
   const bodies = {
     Context: 'Ingest imot.bg listings; see docs/prd/property-ingestion-imot.md.',
-    Architecture: 'discovery → fetch → normalize → validate → upsert → report.',
-    'Data model': 'CREATE TABLE properties (id BIGSERIAL PRIMARY KEY, source TEXT, source_listing_id TEXT, UNIQUE(source, source_listing_id));',
+    Architecture: 'discovery → fetch → normalize → validate → upsert → report.\n```mermaid\nflowchart LR\n  Fetch --> Normalize --> Upsert\n```',
+    'Data model': 'CREATE TABLE properties (id BIGSERIAL PRIMARY KEY, source TEXT, source_listing_id TEXT, UNIQUE(source, source_listing_id));\n```mermaid\nerDiagram\n  SOURCE ||--o{ PROPERTY : lists\n```',
     Interfaces: 'FIRECRAWL_API_URL, DATABASE_URL; CLI: npm run ingest.',
-    'Data flow': 'Paginate search, scrape each listing, normalize, upsert, write run report. A failed fetch retries 3x with backoff, then is logged and skipped.',
+    'Data flow': 'Paginate search, scrape each listing, normalize, upsert, write run report. A failed fetch retries 3x with backoff, then is logged and skipped.\n```mermaid\nsequenceDiagram\n  Ingester->>Venue: GET page\n  Venue-->>Ingester: 503\n  Ingester->>Venue: retry with backoff\n```',
     Decisions: `Listing identity ${adrs}.`,
     Risks: 'imot.bg may render client-side; spike before compose.',
     'Test strategy': 'Unit: normalize/identity. Integration: upsert vs Postgres. Smoke: coverage.\n- AC1 — integration: upsert is idempotent\n- AC2 — unit: invalid listing rejected',
@@ -69,10 +69,10 @@ describe('evaluateDesign — section synonyms (no cosmetic rename-to-pass)', () 
     return [
       '---', 'status: approved', 'feature: pmdm', '---', '', '# Design: Data Mirror', '',
       '## Overview', 'A Go service mirrors venue markets into Postgres. See the PRD.', '',
-      '## Architecture', 'Poller + read API; anti-corruption adapters per venue.', '',
-      '## Datastore & physical schema', 'PostgreSQL 16, schema pmdm.', '```sql', 'CREATE TABLE pmdm.market (id TEXT PRIMARY KEY, price NUMERIC);', '```', '',
+      '## Architecture', 'Poller + read API; anti-corruption adapters per venue.', '```mermaid', 'flowchart LR', '  Poller --> DB', '```', '',
+      '## Datastore & physical schema', 'PostgreSQL 16, schema pmdm.', '```sql', 'CREATE TABLE pmdm.market (id TEXT PRIMARY KEY, price NUMERIC);', '```', '```mermaid', 'erDiagram', '  VENUE ||--o{ MARKET : lists', '```', '',
       '## API surface', 'REST read API: GET /markets/{id}; env DATABASE_URL_RO.', '',
-      '## Ingestion & data flow', 'fetch → normalize → validate → upsert → report; a venue error aborts that venue only.', '',
+      '## Ingestion & data flow', 'fetch → normalize → validate → upsert → report; a venue error aborts that venue only.', '```mermaid', 'sequenceDiagram', '  Poller->>Venue: fetch', '  Venue-->>Poller: error', '```', '',
       '## Key decisions', 'Datastore is Postgres (DEC-0003); price unit probability (DEC-0005).', '',
       '## Risks & spikes', 'Kalshi liquidity field removed — spike before build.', '',
       '## Testing strategy', 'Unit normalize; integration upsert vs Postgres; smoke.', '',
@@ -121,6 +121,14 @@ describe('evaluateDesign — enforced substance', () => {
   test('a data flow with no failure path is invalid', () => {
     const md = design().replace(' A failed fetch retries 3x with backoff, then is logged and skipped.', '');
     expect(codes(evaluateDesign(md))).toContain('section-not-concrete:Data flow');
+  });
+
+  test('a diagram does not stand in for the schema or the failure-path prose', () => {
+    const md = design()
+      .replace(/CREATE TABLE properties[^\n]*/, 'A properties table.')
+      .replace(' A failed fetch retries 3x with backoff, then is logged and skipped.', '');
+    expect(codes(evaluateDesign(md))).toEqual(expect.arrayContaining(['section-not-concrete:Data model', 'section-not-concrete:Data flow']));
+    expect(codes(evaluateDesign(md))).not.toContain('missing-diagram:Data model');
   });
 
   test('a too-short section is invalid; Decisions is exempt', () => {
@@ -266,5 +274,20 @@ describe('evaluateDesign — greenfield architecture', () => {
     const partial = evaluateArchitecture('## System overview\nAn order-book data warehouse for prediction markets.\n');
     expect(partial.scaffold).toBe(false);
     expect(evaluateDesign(design(), { architecture: partial }).valid).toBe(false);
+  });
+});
+
+describe('evaluateDesign — diagrams', () => {
+  const codes = (r) => r.substanceIssues.filter((i) => i.code === 'missing-diagram').map((i) => i.section);
+
+  test('missing component, sequence and ER diagrams are each reported', () => {
+    const md = design().replace(/```mermaid[\s\S]*?```/g, '');
+    expect(codes(evaluateDesign(md)).sort()).toEqual(['Architecture', 'Data flow', 'Data model']);
+    expect(evaluateDesign(md).valid).toBe(false);
+  });
+
+  test('a stateless design needs no ER diagram', () => {
+    const md = design().replace(/CREATE TABLE properties[^\n]*\n```mermaid\nerDiagram[\s\S]*?```/, 'N/A — no persisted state; the CLI is stateless and writes stdout only.');
+    expect(codes(evaluateDesign(md))).not.toContain('Data model');
   });
 });

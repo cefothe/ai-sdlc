@@ -1,7 +1,7 @@
 ---
 description: Create or refresh the high-level architecture overview (docs/architecture/overview.md) from the real codebase — the system map every design doc references and every agent is given
 argument-hint: [refresh]   (default: create when missing, otherwise refresh against the code)
-allowed-tools: Bash, Read, Write, Edit, Task, AskUserQuestion
+allowed-tools: Bash, Read, Write, Edit, Task, Skill, AskUserQuestion
 ---
 
 # /ai-sdlc:architecture — the system map
@@ -45,6 +45,15 @@ design docs.
    `${CLAUDE_PLUGIN_ROOT}/docs/architecture/_template.md`, keeping every `##` section.
    On a refresh, edit in place: add new components/contracts, remove ones the code no
    longer has, and keep the doc's own history in git.
+
+3b. **Diagrams (required).** Whoever writes the doc draws its diagrams in the same pass —
+   load the `mermaid-diagrams` skill (Skill tool) and add fenced mermaid blocks: a component
+   diagram (flowchart or C4Container) in **Components** showing every component and the
+   contracts between them, and at least one `sequenceDiagram` per critical cross-component
+   flow in **Integration contracts**. Diagrams match the text — the gate fails a component
+   diagram that leaves out a listed component (`diagram-missing-component`). Only a large
+   brownfield refresh (many components drawn from the code) is delegated, to the
+   `mermaid-expert` agent following the same skill.
 
 4. **Validate** until clean:
    ```bash

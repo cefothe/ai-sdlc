@@ -90,7 +90,7 @@ spec:
       # task actually touches a datastore (below), so the live schema is inspected
       # rather than assumed.
       capabilities:
-        skills: [firecrawl, deep-research]
+        skills: [firecrawl, deep-research, mermaid-diagrams]
         web: [WebSearch, WebFetch]
         # Confirm the contract, don't just read it: architects may run a small
         # throwaway PoC to validate a real endpoint/schema/auth before the ADR is

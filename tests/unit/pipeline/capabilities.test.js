@@ -207,7 +207,7 @@ describe('architect-review lens on the review team', () => {
 describe('resolveStageCapabilities (per-stage MCP / web / skill grants)', () => {
   test('design grants firecrawl + deep-research skills and web tools by default', () => {
     const g = cap.resolveStageCapabilities(MAP, 'design', {});
-    expect(g.skills).toEqual(expect.arrayContaining(['firecrawl', 'deep-research']));
+    expect(g.skills).toEqual(expect.arrayContaining(['firecrawl', 'deep-research', 'mermaid-diagrams']));
     expect(g.web).toEqual(expect.arrayContaining(['WebSearch', 'WebFetch']));
     expect(g.mcp).toEqual([]); // no DB grant without a db label
   });

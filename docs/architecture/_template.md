@@ -18,10 +18,12 @@ updated: ''            # ISO date of the last review
 <What the system does, for whom, and its boundary: the external systems and actors it talks to.>
 
 ## Components
+<A mermaid flowchart (or C4Container) of every component and the contracts between them — required.>
 <One list item per component: bold name, the code it lives in (backticked paths), its single responsibility, and what it exposes.>
 - **<Component>** (`path/to/component/`): <responsibility>. Exposes: <API / events / CLI>.
 
 ## Integration contracts
+<A mermaid sequenceDiagram of at least one key interaction across components — required (one per critical flow is better).>
 <How components connect — one list item per edge: caller → callee, the mechanism (HTTP, gRPC, queue/topic, DB view, library call), and where the contract lives (OpenAPI file, schema, interface).>
 - <Caller> → <Callee>: <mechanism>, contract `<path or name>`
 

@@ -19,6 +19,7 @@ const { readFileSync, existsSync } = require('node:fs');
 const { join, isAbsolute, dirname, resolve, sep } = require('node:path');
 const { parsePrd, extractPrdAcceptanceCriteria, isPlaceholderLine } = require('./prd-gate'); // generic frontmatter + section parser
 const { MARKER_TOKEN_RE } = require('./dor-gate');
+const { hasDiagram, stripMermaid } = require('./mermaid');
 
 // Canonical design-doc structure — single source of truth, shared with the
 // template (docs/design/_template.md).
@@ -77,6 +78,17 @@ const SUBSTANCE_RULES = {
   },
 };
 
+// Diagrams the design must carry, per section (rendered by GitHub from ```mermaid).
+const DIAGRAM_RULES = {
+  Architecture: { kind: 'component', message: 'Architecture has no component diagram — add a ```mermaid flowchart of the components this design changes and how they connect' },
+  'Data flow': { kind: 'sequence', message: 'Data flow has no sequence diagram — add a ```mermaid sequenceDiagram of the main flow, including its failure/retry path' },
+  'Data model': {
+    kind: 'er',
+    exempt: (c) => /\b(n\/a|not applicable|no persist\w*|stateless)\b/i.test(c),
+    message: 'Data model has no ER diagram — add a ```mermaid erDiagram of the entities and their relationships',
+  },
+};
+
 // Accepts "AC1", "AC-1", "AC #1", "AC 1".
 function referencesAc(content, n) {
   return new RegExp(`\\bAC[\\s#-]*${n}\\b`, 'i').test(content);
@@ -130,7 +142,11 @@ function evaluateDesign(markdown, { path = '<design>', prdAcceptanceCriteria, de
       substanceIssues.push({ code: 'section-too-short', section: name, message: `"${sec.heading}" has ${sec.content.length} chars (< ${MIN_SECTION_CHARS})` });
     }
     const rule = SUBSTANCE_RULES[name];
-    if (rule && !rule.test(sec.content)) substanceIssues.push({ code: 'section-not-concrete', section: name, message: rule.message });
+    if (rule && !rule.test(stripMermaid(sec.content))) substanceIssues.push({ code: 'section-not-concrete', section: name, message: rule.message });
+    const diagram = DIAGRAM_RULES[name];
+    if (diagram && !(diagram.exempt && diagram.exempt(sec.content)) && !hasDiagram(sec.content, diagram.kind)) {
+      substanceIssues.push({ code: 'missing-diagram', section: name, message: diagram.message });
+    }
   }
 
   const testSec = findSection(sections, 'Test strategy');

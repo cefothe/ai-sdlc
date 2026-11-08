@@ -75,3 +75,25 @@ describe('formatArchitectureContext', () => {
     withArch(null, (root) => expect(ac.formatArchitectureContext(root, {})).toBeNull());
   });
 });
+
+describe('evaluateArchitecture — diagrams', () => {
+  test('an overview without a component diagram or a sequence diagram is invalid', () => {
+    const md = architectureDoc().replace(/```mermaid[\s\S]*?```/g, '');
+    const r = ac.evaluateArchitecture(md);
+    expect(r.substanceIssues.map((i) => i.code)).toEqual(expect.arrayContaining(['no-component-diagram', 'no-sequence-diagram']));
+    expect(r.valid).toBe(false);
+  });
+
+  test('a component diagram that leaves out a listed component is invalid', () => {
+    const md = architectureDoc().replace('  Orders -->|PaymentsClient| Payments\n', '');
+    const r = ac.evaluateArchitecture(md);
+    const issue = r.substanceIssues.find((i) => i.code === 'diagram-missing-component');
+    expect(issue.message).toContain('Payments');
+    expect(issue.message).not.toContain('Storefront');
+    expect(r.valid).toBe(false);
+  });
+
+  test('the complete overview draws every component', () => {
+    expect(ac.evaluateArchitecture(architectureDoc()).substanceIssues.map((i) => i.code)).not.toContain('diagram-missing-component');
+  });
+});

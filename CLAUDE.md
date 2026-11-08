@@ -170,7 +170,13 @@ unattended design panel get it; `/ai-sdlc:design` hands the full doc to the arch
 When it exists, `design-gate` fails designs while it is invalid, and requires each design to
 reference it (`architecture:` frontmatter) and name its components or declare
 `New component: <name>` (added to the overview in the same change). Shared section checks
-live in `decision-engine/doc-sections.js`.
+live in `decision-engine/doc-sections.js`. **Diagrams are enforced** (`decision-engine/mermaid.js`): the
+overview needs a component diagram + a sequence diagram; a design needs a component diagram
+(Architecture), a sequenceDiagram with the failure path (Data flow) and an erDiagram (Data model,
+unless stateless) — real fenced mermaid blocks with edges, and the overview's component diagram must
+show every listed component (`diagram-missing-component`). The author draws them in the same pass via
+the `mermaid-diagrams` skill (`skills/mermaid-diagrams/`, check CLI `node decision-engine/mermaid.js
+<doc> --require component,sequence,er`); `mermaid-expert` is only for large brownfield redraws.
 
 ## Context on demand, conformance, monorepo
 
