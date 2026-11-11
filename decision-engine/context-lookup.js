@@ -5,7 +5,9 @@
 //
 //   architectureLookup   which component owns a path / what a component is:
 //                        responsibility, code, contracts, data, invariants,
-//                        and the component's own doc (components/<slug>.md)
+//                        the component's own doc (components/<slug>.md) and
+//                        the features whose journey runs through it; or one
+//                        feature's architecture (features/<feature>.md)
 //   architectureContracts how a component connects (its contract edges)
 //   productLookup        personas, glossary terms, capabilities, baselines,
 //                        constraints matching a query
@@ -22,6 +24,7 @@ const { parsePrd } = require('./prd-gate');
 const { loadOverviews, ownerOf, mentions, ARCHITECTURE_PATH } = require('./architecture-context');
 const { DEFAULT_CONTEXT_PATH } = require('./product-context');
 const { componentDocBody } = require('./component-docs');
+const { evaluateFeatureArchitectures, featuresByComponent, readFeatureArchitecture, featureArchitectureBody, featureArchitecturePath, isSafeFeature } = require('./feature-architecture');
 
 const MAX_COMPONENT_DOC_CHARS = 12000;
 
@@ -49,8 +52,25 @@ function describeComponent(root, overviews, comp) {
     edges.length ? `Contracts:\n${edges.map((e) => `- ${e.line}`).join('\n')}` : 'Contracts: none declared — any call to or from another component needs a contract added to the overview.',
     data.length ? `Data ownership:\n${data.map((l) => `- ${l}`).join('\n')}` : null,
     invariants.length ? `Invariants that apply:\n${invariants.map((l) => `- ${l}`).join('\n')}` : null,
+    featuresThrough(root, comp),
     componentDoc(root, comp),
   ].filter(Boolean).join('\n\n');
+}
+
+// The features whose journey runs through the component (their feature architectures).
+function featuresThrough(root, comp) {
+  const features = featuresByComponent(evaluateFeatureArchitectures(root, ARCHITECTURE_PATH)).get(comp.name.toLowerCase()) || [];
+  return features.length ? `Features through this component:\n${features.map((f) => `- ${f.feature} [${f.status || 'draft'}] — ${f.path}`).join('\n')}` : null;
+}
+
+// One feature's cross-service architecture, or a note that it is missing.
+function featureLookup(root, feature) {
+  if (!isSafeFeature(String(feature))) return 'Give a feature slug, e.g. checkout (as in docs/prd/<feature>.md).';
+  const text = readFeatureArchitecture(root, ARCHITECTURE_PATH, feature);
+  const path = featureArchitecturePath(ARCHITECTURE_PATH, feature);
+  if (!text) return `No feature architecture at ${path} — the design stage writes it from docs/architecture/features/_template.md.`;
+  const body = featureArchitectureBody(text);
+  return `Feature architecture (${path}):\n${body.length > MAX_COMPONENT_DOC_CHARS ? `${body.slice(0, MAX_COMPONENT_DOC_CHARS)}\n…[truncated — read ${path}]` : body}`;
 }
 
 // The component's own doc, or a note that it is missing.
@@ -62,11 +82,16 @@ function componentDoc(root, comp) {
   return `Component doc (${comp.doc}):\n${text}`;
 }
 
-function architectureLookup(root, { component, path } = {}, { projects = [] } = {}) {
+function architectureLookup(root, { component, path, feature } = {}, { projects = [] } = {}) {
   const overviews = loadOverviews(root, projects);
   if (!overviews.length) return `No architecture overview at ${ARCHITECTURE_PATH} — run /ai-sdlc:architecture.`;
+  if (feature) return featureLookup(root, feature);
   if (!component && !path) {
-    return ['Components:', ...overviews.flatMap((o) => o.components.map((c) => `- ${c.line}  [${c.overview}]`))].join('\n');
+    const features = evaluateFeatureArchitectures(root, ARCHITECTURE_PATH);
+    return [
+      'Components:', ...overviews.flatMap((o) => o.components.map((c) => `- ${c.line}  [${c.overview}]`)),
+      ...(features.length ? ['', 'Feature architectures:', ...features.map((f) => `- ${f.feature}: ${f.components.join(', ')}  [${f.path}]`)] : []),
+    ].join('\n');
   }
   const comp = findComponent(overviews, { component, path });
   if (!comp) {

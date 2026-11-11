@@ -8,6 +8,10 @@
 //                        component B with no declared A → B contract
 //   dependency-change    a dependency manifest changed (advisory: is the new
 //                        external dependency reflected in the architecture?)
+//   outside-feature-architecture
+//                        the change touches a component the task's feature
+//                        architecture (docs/architecture/features/<feature>.md)
+//                        does not list — the journey grew without its architecture
 //
 // Findings are reviewer input (major/minor), never fed to the author mid-turn;
 // they also raise the pace to slow. No overview → skipped (fail-open, reported).
@@ -39,8 +43,9 @@ function hasEdge(edges, from, to) {
   return edges.some((e) => mentions(e.from, from.name) && mentions(e.to, to.name));
 }
 
-// Pure. files: changed paths; addedLines: Map(path → lines); overviews from loadOverviews.
-function checkConformance({ files = [], addedLines = new Map(), overviews = [] }) {
+// Pure. files: changed paths; addedLines: Map(path → lines); overviews from loadOverviews;
+// expectedComponents: the task's feature-architecture components (empty → not checked).
+function checkConformance({ files = [], addedLines = new Map(), overviews = [], expectedComponents = [] }) {
   if (!overviews.length) return { status: 'skipped', reason: 'no architecture overview', findings: [], touched: [] };
   const components = overviews.flatMap((o) => o.components);
   const edges = overviews.flatMap((o) => o.edges);
@@ -71,17 +76,24 @@ function checkConformance({ files = [], addedLines = new Map(), overviews = [] }
       }
     }
   }
+  if (expectedComponents.length) {
+    const expected = new Set(expectedComponents.map((c) => c.toLowerCase()));
+    for (const name of [...touched].filter((c) => !expected.has(c.toLowerCase()))) {
+      findings.push({ code: 'outside-feature-architecture', severity: 'major', file: null, message: `the change touches ${name}, which the feature architecture does not list (${expectedComponents.join(', ')}) — add it there (components, interactions, contracts), or keep the change inside the feature's components` });
+    }
+  }
   const unique = [...new Map(findings.map((f) => [`${f.code}|${f.file}|${f.message}`, f])).values()];
   return { status: unique.length ? 'findings' : 'clean', findings: unique, touched: [...touched] };
 }
 
 // Evaluate the branch at `cwd` against `base` with the overviews in that tree.
-function evaluateConformance({ cwd, base = 'main', runner, projects = [] }) {
+function evaluateConformance({ cwd, base = 'main', runner, projects = [], expectedComponents = [] }) {
   const inputs = collectGitInputs({ runner, cwd, base });
   return checkConformance({
     files: parseNameStatus(inputs.name_status),
     addedLines: addedLinesByFile(inputs.diff),
     overviews: loadOverviews(cwd, projects),
+    expectedComponents,
   });
 }
 

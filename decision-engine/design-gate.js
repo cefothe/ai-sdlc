@@ -117,6 +117,11 @@ function findSection(sections, name) {
 //     `New component: <name>` must be listed in the overview and have its own
 //     component doc (docs/architecture/components/<slug>.md) — the design
 //     creates the feature's architecture doc, not only a line in the overview.
+//   featureArchitecture — this feature's cross-service architecture
+//     (docs/architecture/features/<feature>.md) as evaluated by the architecture
+//     root: { path, exists, valid, reasons, components }. It must exist and be
+//     valid, and the design's Architecture may change only the components it
+//     lists — the feature doc is the high-level contract, the design the detail.
 // Omitted inputs skip their check (the pure gate stays usable on a lone doc).
 // The names declared with `New component: <name>` (bold/backticks stripped).
 function declaredNewComponents(markdown) {
@@ -125,7 +130,31 @@ function declaredNewComponents(markdown) {
     .filter((n) => n && !n.startsWith('<')))];
 }
 
-function evaluateDesign(markdown, { path = '<design>', prdAcceptanceCriteria, decisions, architecture } = {}) {
+// True when the text names the component as a whole word.
+function namesComponent(text, name) {
+  return new RegExp(`(^|[^A-Za-z0-9])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9]|$)`, 'i').test(text);
+}
+
+// The design against its feature architecture: the doc exists and is valid, and
+// every overview component the Architecture section names is one the feature lists.
+function featureArchitectureIssues(sections, architecture, feature) {
+  if (!feature.exists) {
+    return [{ code: 'no-feature-architecture', section: 'Architecture', path: feature.path, message: `no feature architecture — write ${feature.path} from docs/architecture/features/_template.md (every component the feature touches, the end-to-end interactions, contracts, data ownership) before the detailed design` }];
+  }
+  if (!feature.valid) {
+    return [{ code: 'feature-architecture-invalid', section: 'Architecture', message: `feature architecture ${feature.path} is incomplete (${feature.reasons.join('; ')})` }];
+  }
+  const arch = findSection(sections, 'Architecture');
+  const text = arch ? arch.content : '';
+  const listed = new Set((feature.components || []).map((c) => c.toLowerCase()));
+  const outside = (architecture.components || [])
+    .filter((c) => !listed.has(c.toLowerCase()) && namesComponent(text, c));
+  return outside.length
+    ? [{ code: 'component-not-in-feature-architecture', section: 'Architecture', message: `the design changes ${outside.join(', ')}, which ${feature.path} does not list — add it to the feature architecture (components, interactions, contracts) or keep the design inside the feature's components` }]
+    : [];
+}
+
+function evaluateDesign(markdown, { path = '<design>', prdAcceptanceCriteria, decisions, architecture, featureArchitecture } = {}) {
   const { frontmatter, sections } = parsePrd(markdown);
   const status = (frontmatter.status || '').toString().toLowerCase();
 
@@ -186,14 +215,17 @@ function evaluateDesign(markdown, { path = '<design>', prdAcceptanceCriteria, de
     // Greenfield: no architecture exists yet — this design establishes it.
     greenfield = { code: 'architecture-greenfield', message: `${architecture.path} is still the empty scaffold — write it from this design (components, contracts, data ownership, invariants) in the same change` };
   } else if (architecture) {
-    if (!architecture.valid) {
-      substanceIssues.push({ code: 'architecture-invalid', section: null, message: `architecture overview ${architecture.path} is incomplete (${architecture.reasons.join('; ')}) — fix it before designs can pass` });
+    // This feature's own doc is reported once, below — not again as an overview failure.
+    const ownDoc = featureArchitecture && featureArchitecture.path ? `${featureArchitecture.path}:` : null;
+    const otherReasons = (architecture.reasons || []).filter((r) => !(ownDoc && r.startsWith(ownDoc)));
+    if (!architecture.valid && otherReasons.length) {
+      substanceIssues.push({ code: 'architecture-invalid', section: null, message: `architecture overview ${architecture.path} is incomplete (${otherReasons.join('; ')}) — fix it before designs can pass` });
     }
     const referenced = frontmatter.architecture || markdown.includes(architecture.path);
     if (!referenced) {
       substanceIssues.push({ code: 'architecture-not-referenced', section: null, message: `design does not reference the architecture overview — set frontmatter architecture: ${architecture.path}` });
     }
-    const named = (architecture.components || []).filter((c) => new RegExp(`(^|[^A-Za-z0-9])${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9]|$)`, 'i').test(markdown));
+    const named = (architecture.components || []).filter((c) => namesComponent(markdown, c));
     if (architecture.components && architecture.components.length && !named.length && !/\bnew component\b/i.test(markdown)) {
       substanceIssues.push({ code: 'no-component-named', section: 'Architecture', message: `design names none of the architecture's components (${architecture.components.join(', ')}) — say which it changes and how they connect, or declare "New component: <name>" and add it to ${architecture.path}` });
     }
@@ -209,6 +241,7 @@ function evaluateDesign(markdown, { path = '<design>', prdAcceptanceCriteria, de
         substanceIssues.push({ code: 'new-component-doc', section: 'Architecture', message: doc.exists ? `New component "${name}": its doc ${doc.path} is incomplete (${doc.reasons.join('; ')})` : `New component "${name}" has no component doc — write ${doc.path} from docs/architecture/components/_template.md in the same change` });
       }
     }
+    if (featureArchitecture) substanceIssues.push(...featureArchitectureIssues(sections, architecture, featureArchitecture));
   }
 
   const structureValid = missingSections.length === 0 && emptySections.length === 0 && markers.length === 0;
@@ -257,6 +290,15 @@ function resolvePrdPath(root, frontmatter, prdPath) {
   return null;
 }
 
+// The feature's doc as the architecture root evaluated it, or a not-found entry.
+function featureArchitectureFor(architecture, frontmatter, designPath, overviewPath) {
+  const { featureArchitecturePath, isSafeFeature } = require('./feature-architecture');
+  const feature = String(frontmatter.feature || frontmatter.featureId || designPath.replace(/^.*[\\/]/, '').replace(/\.md$/, ''));
+  if (!isSafeFeature(feature)) return undefined;
+  const found = (architecture.featureDocs || []).find((d) => d.feature === feature);
+  return found || { feature, path: featureArchitecturePath(overviewPath, feature), exists: false, valid: false, reasons: [], components: [] };
+}
+
 // Evaluate a design doc with its cross-artifact checks: the PRD's ACs (mapped
 // by the test strategy) and the linked ADRs from <root>/.ai-sdlc/_decisions.
 // root defaults to the repo containing docs/design/ (two levels up).
@@ -277,9 +319,10 @@ function evaluateDesignFile(designPath, { root, prdPath } = {}) {
       decisions[id] = null;
     }
   }
-  const { evaluateArchitectureRoot } = require('./architecture-context');
+  const { evaluateArchitectureRoot, ARCHITECTURE_PATH } = require('./architecture-context');
   const architecture = evaluateArchitectureRoot(projectRoot) || undefined;
-  return evaluateDesign(markdown, { path: designPath, prdAcceptanceCriteria, decisions, architecture });
+  const featureArchitecture = architecture && !architecture.scaffold ? featureArchitectureFor(architecture, frontmatter, designPath, ARCHITECTURE_PATH) : undefined;
+  return evaluateDesign(markdown, { path: designPath, prdAcceptanceCriteria, decisions, architecture, featureArchitecture });
 }
 
 module.exports = { evaluateDesign, evaluateDesignFile, declaredNewComponents, findSection, resolveInside, REQUIRED_SECTIONS, SECTION_ALIASES, SUBSTANCE_RULES, headingMatchesSection };

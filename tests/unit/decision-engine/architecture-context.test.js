@@ -64,6 +64,23 @@ describe('evaluateArchitecture', () => {
     });
   });
 
+  test('evaluateArchitectureRoot validates every feature architecture against the overview', () => {
+    const { writeFeatureDoc } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
+    withArch(architectureDoc(), (root) => {
+      writeComponentDocs(root);
+      writeFeatureDoc(root);
+      const ok = ac.evaluateArchitectureRoot(root);
+      expect(ok.reasons).toEqual([]);
+      expect(ok.featureDocs.map((d) => [d.feature, d.valid])).toEqual([['checkout', true]]);
+
+      writeFeatureDoc(root, { feature: 'ledger', components: ['Orders', 'Ledger'] });
+      const bad = ac.evaluateArchitectureRoot(root);
+      expect(bad.valid).toBe(false);
+      expect(codes(bad)).toContain('feature-architecture-invalid');
+      expect(bad.reasons.join('\n')).toMatch(/^docs\/architecture\/features\/ledger\.md: .*Ledger/m);
+    });
+  });
+
   test('the untouched scaffold asks for no component docs', () => {
     withArch(fs.readFileSync(path.join(ROOT, 'docs', 'architecture', '_template.md'), 'utf8'), (root) => {
       const r = ac.evaluateArchitectureRoot(root);

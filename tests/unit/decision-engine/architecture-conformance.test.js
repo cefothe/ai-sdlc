@@ -26,6 +26,16 @@ describe('checkConformance', () => {
     expect(r).toMatchObject({ status: 'clean', touched: ['Orders'] });
   });
 
+  test('touching a component the feature architecture does not list is a major finding', () => {
+    const input = { files: ['services/orders/cancel.ts', 'web/cart.tsx'], overviews: overviewsOf(dir) };
+    const r = conf.checkConformance({ ...input, expectedComponents: ['Orders', 'Payments'] });
+    expect(r.findings.map((f) => f.code)).toEqual(['outside-feature-architecture']);
+    expect(r.findings[0]).toMatchObject({ severity: 'major' });
+    expect(r.findings[0].message).toMatch(/touches Storefront/);
+    expect(conf.checkConformance({ ...input, expectedComponents: ['orders', 'storefront'] }).status).toBe('clean');
+    expect(conf.checkConformance(input).status).toBe('clean');
+  });
+
   test('a file no component owns is a major unowned-file finding; docs/tests are exempt', () => {
     const r = conf.checkConformance({ files: ['scripts/hack.js', 'docs/x.md', 'tests/a.test.js', 'spikes/s1.mjs', 'testdata/k.json', 'fixtures/p.json'], overviews: overviewsOf(dir) });
     expect(codes(r)).toEqual(['unowned-file:scripts/hack.js']);

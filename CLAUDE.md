@@ -186,6 +186,22 @@ show every listed component (`diagram-missing-component`). The author draws them
 the `mermaid-diagrams` skill (`skills/mermaid-diagrams/`, check CLI `node decision-engine/mermaid.js
 <doc> --require component,sequence,er`); `mermaid-expert` is only for large brownfield redraws.
 
+**Three levels + the design.** Per PRD, a high-level **feature architecture**
+`docs/architecture/features/<feature>.md` (template `docs/architecture/features/_template.md`, gate
+`decision-engine/feature-architecture.js`) shows the feature / user journey across every component it
+touches: frontmatter `components:` (overview names), Journey, Components (flowchart showing every listed
+component), Interactions (sequenceDiagram, each a participant, with a failure path), Contracts (each an
+overview contract; an edge reaching an unlisted component fails), Data ownership, Quality attributes,
+Decisions. `evaluateArchitectureRoot` validates every feature doc present (`featureDocs`); the design gate
+requires the design's own (`no-feature-architecture` / `feature-architecture-invalid`) and rejects a design
+whose Architecture changes an unlisted component (`component-not-in-feature-architecture`) — the design doc
+is the detail under it. spec-context renders it between PRD and design and uses its components to pick the
+component docs; conformance gets them as `expectedComponents` (`outside-feature-architecture`);
+`architecture_lookup` takes `feature` and lists the features through a component. Existing projects:
+`migrate` scans every feature (approved PRD or design) with evidence of its components (named by design/PRD,
+owners of its open + completed tasks' reference paths) and candidate overview contracts; `--apply` scaffolds
+`components:` from it and `/ai-sdlc:migrate` step 4 has architects write the rest from the code; `feature-architecture.js --matrix` prints feature × component.
+
 ## Context on demand, conformance, monorepo
 
 - **Pull context (MCP):** `mcp/context-server.js` (dependency-free stdio MCP, registered as

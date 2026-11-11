@@ -1,6 +1,6 @@
 // Migration — bring artifacts written under the old rules up to the current
 // gates: PRDs (10 sections + substance + product grounding), design docs
-// (substance, AC mapping, complete ADRs), ADRs (context / rationale /
+// (substance, AC mapping, complete ADRs, a feature architecture), ADRs (context / rationale /
 // consequences / described alternatives), the product context, and open tasks
 // (ACs seeded from their spec; bug tasks linked to a bug report).
 //
@@ -10,7 +10,16 @@
 //     come first).
 //   - apply (--apply, structural only): add the missing section skeletons from
 //     the templates, the design's relatedPrd link, per-AC test-strategy
-//     placeholders, and the product context scaffold. Skeleton bodies are
+//     placeholders, the product context scaffold, and a feature architecture
+//     scaffold for every feature that has none.
+//
+// Feature architectures (docs/architecture/features/<feature>.md) for an
+// existing project: every feature with an approved PRD or a design doc gets one.
+// The scan gathers the EVIDENCE of which components the feature touches —
+// components its design or PRD names, and the owners of the code paths its
+// backlog tasks (open and completed) reference — plus the overview contracts
+// between them; the scaffold's `components:` is that evidence, and the
+// /ai-sdlc:migrate command has an architect write the rest from the code. Skeleton bodies are
 //     template placeholders, which every gate treats as EMPTY — so a migrated
 //     artifact keeps failing until real content is written. Nothing is invented,
 //     no status is changed, and ADR reasoning is never generated here (the
@@ -23,10 +32,11 @@ const { parsePrd, evaluatePrd, extractPrdAcceptanceCriteria } = require('./prd-g
 const { evaluateDesignFile, findSection: findDesignSection } = require('./design-gate');
 const { listDecisions, evaluateAdrQuality } = require('./decisions');
 const { evaluateProductContextRoot, DEFAULT_CONTEXT_PATH } = require('./product-context');
-const { evaluateArchitectureRoot, ARCHITECTURE_PATH } = require('./architecture-context');
+const { evaluateArchitectureRoot, loadOverviews, ownerOf, mentions, ARCHITECTURE_PATH } = require('./architecture-context');
 const { parseTask } = require('./backlog-task');
 const { addFrontmatterLine, appendToSection } = require('./doc-sections');
 const { scaffoldComponentDoc, TEMPLATE_PATH: COMPONENT_TEMPLATE } = require('./component-docs');
+const { scaffoldFeatureArchitecture, featureArchitecturePath, isSafeFeature, TEMPLATE_PATH: FEATURE_TEMPLATE } = require('./feature-architecture');
 
 const PLUGIN_ROOT = join(__dirname, '..');
 const TEMPLATES = {
@@ -47,16 +57,84 @@ function templateSections(templatePath) {
   return new Map(sections.map((s) => [s.heading, s.content]));
 }
 
-function openTasks(root) {
-  const dir = join(root, 'backlog', 'tasks');
-  return listMarkdown(dir).map((f) => {
-    const path = join('backlog', 'tasks', f);
+// Every parseable task in backlog/<dir> (tasks/, completed/).
+function readTasks(root, dir) {
+  return listMarkdown(join(root, 'backlog', dir)).map((f) => {
+    const path = join('backlog', dir, f);
     try {
       return { path, task: parseTask(readFileSync(join(root, path), 'utf8')) };
     } catch {
       return null;
     }
-  }).filter((t) => t && String(t.task.frontmatter.status || '').toLowerCase() !== 'done');
+  }).filter(Boolean);
+}
+
+function openTasks(root) {
+  return readTasks(root, 'tasks').filter((t) => String(t.task.frontmatter.status || '').toLowerCase() !== 'done');
+}
+
+const slugOf = (p) => String(p).replace(/^.*[\\/]/, '').replace(/\.md$/, '');
+
+// Which overview components a feature touches, and why: named by its design or
+// PRD, or owning a path its tasks (open or completed) reference. Plus the
+// overview contracts between those components — candidates, not conclusions.
+function featureEvidence({ feature, prdPath, prdText = '', designText = '', tasks, components, edges }) {
+  const sources = new Map();
+  const add = (name, why) => { if (!sources.has(name)) sources.set(name, []); if (!sources.get(name).includes(why)) sources.get(name).push(why); };
+  for (const c of components) {
+    if (designText && mentions(designText, c.name)) add(c.name, 'design');
+    if (prdText && mentions(prdText, c.name)) add(c.name, 'prd');
+  }
+  for (const { task } of tasks) {
+    const fm = task.frontmatter;
+    const ref = fm.specRef || {};
+    if (ref.featureId !== feature && fm.feature !== feature && !(prdPath && ref.artifactPath === prdPath)) continue;
+    for (const p of [...(fm.references || []), ...(fm.refs || [])]) {
+      const owner = ownerOf(components, String(p));
+      if (owner) add(owner.name, `task ${fm.id}: ${p}`);
+    }
+  }
+  const touched = components.map((c) => c.name).filter((n) => sources.has(n));
+  return {
+    components: touched.map((name) => ({ name, sources: sources.get(name) })),
+    contracts: edges.filter((e) => touched.some((n) => mentions(e.from, n)) && touched.some((n) => mentions(e.to, n))).map((e) => e.line),
+  };
+}
+
+// Every feature an existing project has shipped or is building — an approved PRD
+// or a design doc — with its feature architecture's state and the evidence.
+function scanFeatures(root, architecture, tasks) {
+  if (!architecture || architecture.scaffold) return [];
+  const overview = loadOverviews(root).find((o) => !o.project) || { components: [], edges: [] };
+  const docs = new Map((architecture.featureDocs || []).map((d) => [d.feature, d]));
+  const features = new Map();
+  for (const f of listMarkdown(join(root, 'docs', 'prd'))) {
+    const prdPath = join('docs', 'prd', f).split('\\').join('/');
+    const prdText = readFileSync(join(root, prdPath), 'utf8');
+    const { frontmatter } = parsePrd(prdText);
+    const feature = String(frontmatter.featureId || frontmatter.feature || slugOf(f));
+    const hasDesign = existsSync(join(root, 'docs', 'design', `${feature}.md`));
+    if (String(frontmatter.status || '').toLowerCase() === 'approved' || hasDesign) features.set(feature, { feature, prdPath, prdText });
+  }
+  for (const f of listMarkdown(join(root, 'docs', 'design'))) {
+    const designText = readFileSync(join(root, 'docs', 'design', f), 'utf8');
+    const { frontmatter } = parsePrd(designText);
+    const feature = String(frontmatter.feature || frontmatter.featureId || slugOf(f));
+    features.set(feature, { feature, prdPath: null, prdText: '', ...features.get(feature), designPath: join('docs', 'design', f).split('\\').join('/'), designText });
+  }
+  return [...features.values()].filter((f) => isSafeFeature(f.feature)).sort((a, b) => a.feature.localeCompare(b.feature)).map((f) => {
+    const path = featureArchitecturePath(ARCHITECTURE_PATH, f.feature);
+    const doc = docs.get(f.feature);
+    const evidence = featureEvidence({ ...f, tasks, components: overview.components, edges: overview.edges });
+    return {
+      feature: f.feature, path, prdPath: f.prdPath, designPath: f.designPath || null,
+      exists: !!doc, ok: !!doc && doc.valid,
+      issues: doc ? doc.reasons : [`no feature architecture — write ${path}`],
+      evidence,
+      inFlightTasks: tasks.filter(({ task }) => String(task.frontmatter.status || '').toLowerCase() !== 'done'
+        && ((task.frontmatter.specRef || {}).featureId === f.feature || (f.prdPath && (task.frontmatter.specRef || {}).artifactPath === f.prdPath))).map(({ task }) => task.frontmatter.id),
+    };
+  });
 }
 
 function tasksReferencing(tasks, relPath) {
@@ -109,20 +187,23 @@ function scanArtifacts(root) {
   }
 
   const architecture = evaluateArchitectureRoot(root);
+  const features = scanFeatures(root, architecture, [...readTasks(root, 'tasks'), ...readTasks(root, 'completed')]);
 
   const byImpact = (a, b) => b.inFlightTasks.length - a.inFlightTasks.length || a.path.localeCompare(b.path);
   const report = {
     productContext: productContext ? { path: DEFAULT_CONTEXT_PATH, exists: true, ok: productContext.valid, issues: productContext.reasons } : { path: DEFAULT_CONTEXT_PATH, exists: false, ok: false, issues: ['no product context doc'] },
-    architecture: architecture ? { path: ARCHITECTURE_PATH, exists: true, ok: architecture.valid, issues: architecture.reasons, componentDocs: architecture.componentDocs || [] } : { path: ARCHITECTURE_PATH, exists: false, ok: false, issues: ['no architecture overview — run /ai-sdlc:architecture'] },
+    architecture: architecture ? { path: ARCHITECTURE_PATH, exists: true, ok: architecture.valid, issues: architecture.reasons, components: architecture.components || [], componentDocs: architecture.componentDocs || [], featureDocs: architecture.featureDocs || [] } : { path: ARCHITECTURE_PATH, exists: false, ok: false, issues: ['no architecture overview — run /ai-sdlc:architecture'] },
     prds: prds.sort(byImpact),
     designs: designs.sort(byImpact),
+    features: features.sort(byImpact),
     adrs,
     tasks: taskIssues,
   };
-  const failing = [report.productContext, report.architecture, ...prds, ...designs, ...adrs].filter((x) => !x.ok).length + taskIssues.length;
+  const failing = [report.productContext, report.architecture, ...prds, ...designs, ...features, ...adrs].filter((x) => !x.ok).length + taskIssues.length;
   report.summary = {
     prds: `${prds.filter((p) => p.ok).length}/${prds.length} ok`,
     designs: `${designs.filter((d) => d.ok).length}/${designs.length} ok`,
+    features: `${features.filter((f) => f.ok).length}/${features.length} ok`,
     adrs: `${adrs.filter((a) => a.ok).length}/${adrs.length} ok`,
     tasks: `${taskIssues.length} need attention`,
     productContext: report.productContext.ok ? 'ok' : report.productContext.exists ? 'incomplete' : 'missing',
@@ -201,11 +282,21 @@ function applyStructuralFixes(root, report) {
       changes.push({ path: design.path, change: notes.join('; ') });
     }
   }
+
+  // One feature architecture per feature, its components: from the evidence.
+  for (const f of report.features || []) {
+    const target = join(root, f.path);
+    if (f.exists || existsSync(target)) continue;
+    const components = f.evidence.components.map((c) => c.name);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, scaffoldFeatureArchitecture(readFileSync(FEATURE_TEMPLATE, 'utf8'), { feature: f.feature, relatedPrd: f.prdPath || '', components }));
+    changes.push({ path: f.path, change: `created feature architecture scaffold (components: ${components.join(', ') || 'none found — derive them from the code'})` });
+  }
   return changes;
 }
 
 function formatReport(report) {
-  const lines = ['Migration report', '', `Summary: product context ${report.summary.productContext} · architecture ${report.summary.architecture} · PRDs ${report.summary.prds} · designs ${report.summary.designs} · ADRs ${report.summary.adrs} · tasks ${report.summary.tasks}`];
+  const lines = ['Migration report', '', `Summary: product context ${report.summary.productContext} · architecture ${report.summary.architecture} · PRDs ${report.summary.prds} · designs ${report.summary.designs} · feature architectures ${report.summary.features} · ADRs ${report.summary.adrs} · tasks ${report.summary.tasks}`];
   const section = (title, items, label) => {
     const bad = items.filter((i) => !i.ok);
     if (!bad.length) return;
@@ -219,6 +310,11 @@ function formatReport(report) {
   if (!report.architecture.ok) section('Architecture overview', [report.architecture], (i) => i.path);
   section('PRDs', report.prds, (i) => `${i.path} (status: ${i.status || 'unset'})`);
   section('Design docs', report.designs, (i) => `${i.path} (status: ${i.status || 'unset'})`);
+  section('Feature architectures', report.features, (i) => {
+    const ev = i.evidence;
+    const comps = ev.components.length ? ev.components.map((c) => `${c.name} (${c.sources.join('; ')})`).join(', ') : 'none found';
+    return [`${i.path}${i.exists ? '' : ' (missing)'}`, `    evidence — components: ${comps}`, ...(ev.contracts.length ? [`    evidence — contracts: ${ev.contracts.join(' | ')}`] : [])].join('\n');
+  });
   section('ADRs', report.adrs, (i) => `${i.id} [${i.lifecycle}]`);
   if (report.tasks.length) {
     lines.push('', 'Open tasks:');
@@ -228,7 +324,7 @@ function formatReport(report) {
   return lines.join('\n');
 }
 
-module.exports = { scanArtifacts, applyStructuralFixes, formatReport, appendSections, addFrontmatterLine, appendToSection };
+module.exports = { scanArtifacts, scanFeatures, featureEvidence, applyStructuralFixes, formatReport, appendSections, addFrontmatterLine, appendToSection };
 
 // CLI: node decision-engine/migrate.js [--apply] [--json]
 // exit 0 clean · 2 artifacts still fail the current gates

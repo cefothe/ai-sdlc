@@ -52,4 +52,37 @@ function writeComponentDocs(root, base = 'docs/architecture') {
   for (const [name, c] of Object.entries(COMPONENTS)) fs.writeFileSync(path.join(dir, `${c.slug}.md`), componentDoc(name));
 }
 
-module.exports = { architectureDoc, componentDoc, writeComponentDocs };
+// A complete feature architecture (the feature-architecture gate's happy path):
+// the checkout journey across every component of architectureDoc().
+function featureDoc({ feature = 'checkout', components = ['Storefront', 'Orders', 'Payments'], status = 'approved' } = {}) {
+  return [
+    '---', `status: ${status}`, `feature: ${feature}`, `relatedPrd: docs/prd/${feature}.md`, 'architecture: docs/architecture/overview.md',
+    `components: [${components.join(', ')}]`, '---', '', `# Feature architecture: ${feature}`, '',
+    '## Journey', `A shopper checks out a cart and gets a confirmed, paid order (docs/prd/${feature}.md).`, '',
+    '## Components',
+    '```mermaid', 'flowchart LR', '  Storefront -->|POST /orders| Orders', '  Orders -->|charge| Payments', '```',
+    '- **Storefront** — collects the cart and shows the confirmation.',
+    '- **Orders** — creates the order and drives the payment.',
+    '- **Payments** — charges the card through Stripe.', '',
+    '## Interactions',
+    '```mermaid', 'sequenceDiagram', '  Storefront->>Orders: POST /orders', '  Orders->>Payments: charge()', '  alt timeout', '    Payments-->>Orders: error', '    Orders-->>Storefront: 503, retry later', '  end', '```',
+    'The order is created before the charge; a charge timeout leaves it pending and the retry is idempotent on the order id.', '',
+    '## Contracts',
+    '- Storefront → Orders: REST over HTTPS, `api/orders.openapi.yaml`',
+    '- Orders → Payments: library call, `services/payments/client.ts`', '',
+    '## Data ownership', '- Orders owns the order and its status; Payments owns the payment record; Storefront owns nothing durable.', '',
+    '## Quality attributes', 'Checkout p95 under 800 ms end to end (Orders 200 ms, Payments 500 ms); Payments down → orders stay pending, never lost.', '',
+    '## Decisions', '- DEC-0001 — Postgres is the single datastore.', '',
+  ].join('\n');
+}
+
+// Writes featureDoc() under <root>/<base>/features/<feature>.md.
+function writeFeatureDoc(root, opts = {}, base = 'docs/architecture') {
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(root, base, 'features');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${opts.feature || 'checkout'}.md`), featureDoc(opts));
+}
+
+module.exports = { architectureDoc, componentDoc, writeComponentDocs, featureDoc, writeFeatureDoc };

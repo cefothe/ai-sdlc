@@ -39,6 +39,18 @@ describe('context lookups', () => {
     expect(lk.architectureLookup(dir, {})).toMatch(/^Components:\n- \*\*Storefront\*\*/);
   });
 
+  test('feature architectures: one by slug, listed with the components, indexed per component', () => {
+    const { writeFeatureDoc } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
+    writeFeatureDoc(dir);
+    writeFeatureDoc(dir, { feature: 'refunds', components: ['Orders', 'Payments'], status: 'draft' });
+    expect(lk.architectureLookup(dir, { feature: 'checkout' })).toMatch(/^Feature architecture \(docs\/architecture\/features\/checkout\.md\):\n# Feature architecture: checkout/);
+    expect(lk.architectureLookup(dir, { feature: 'billing' })).toMatch(/No feature architecture at docs\/architecture\/features\/billing\.md/);
+    expect(lk.architectureLookup(dir, { feature: '../x' })).toMatch(/Give a feature slug/);
+    expect(lk.architectureLookup(dir, {})).toMatch(/Feature architectures:\n- checkout: Storefront, Orders, Payments  \[docs\/architecture\/features\/checkout\.md\]\n- refunds: Orders, Payments/);
+    expect(lk.architectureLookup(dir, { component: 'Orders' })).toMatch(/Features through this component:\n- checkout \[approved\] — docs\/architecture\/features\/checkout\.md\n- refunds \[draft\]/);
+    expect(lk.architectureLookup(dir, { component: 'Storefront' })).not.toMatch(/refunds/);
+  });
+
   test('architectureContracts filters by component', () => {
     expect(lk.architectureContracts(dir, { component: 'Payments' })).toBe('- Orders → Payments: library call, contract `services/payments/client.ts`');
   });

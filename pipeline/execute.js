@@ -431,7 +431,7 @@ async function runPipeline(opts, ctx) {
       let conformanceText = null;
       if (flow && flow.conformance && flow.conformance.enabled && runner) {
         try {
-          const conf = checkArchitecture({ cwd: gitCwd, base: baseBranch, runner, projects });
+          const conf = checkArchitecture({ cwd: gitCwd, base: baseBranch, runner, projects, expectedComponents: (spec && spec.featureComponents) || [] });
           result.steps.conformance = { status: conf.status, findings: conf.findings, touched: conf.touched };
           if (conf.status === 'skipped') degrade('architecture-conformance', conf.reason);
           conformanceText = formatConformanceContext(conf);

@@ -12,6 +12,10 @@
 //   - COMPONENT DOCS (component-docs.js): every listed component has its own
 //     detailed doc (docs/architecture/components/<slug>.md); the root gate
 //     fails while one is missing or invalid.
+//   - FEATURE ARCHITECTURES (feature-architecture.js): one doc per PRD
+//     (docs/architecture/features/<feature>.md) shows a feature / user journey
+//     across every component it touches; the root gate fails while one present
+//     is invalid against this overview (unknown component, undeclared contract).
 //   - INJECTED: /ai-sdlc:design hands it to the architects; spec-context hands
 //     the planner, implementer and reviewers the parts their task touches —
 //     the components it reaches, their contracts and data, and every invariant —
@@ -25,6 +29,7 @@ const { parsePrd, extractListItems } = require('./prd-gate');
 const { makeMatcher, findSection: findDocSection, checkSections, markerTokens, structureReasons } = require('./doc-sections');
 const { hasDiagram, missingFromDiagram } = require('./mermaid');
 const { evaluateComponentDocs, componentDocPath, readComponentDoc, componentDocBody } = require('./component-docs');
+const { evaluateFeatureArchitectures } = require('./feature-architecture');
 
 const ARCHITECTURE_PATH = join('docs', 'architecture', 'overview.md');
 const DEFAULT_MAX_CHARS = 16000;
@@ -177,23 +182,26 @@ function evaluateArchitecture(markdown, { path = ARCHITECTURE_PATH } = {}) {
 }
 
 // The repo's architecture evaluation, or null when it has none: the overview
-// plus every listed component's doc.
+// plus every listed component's doc and every feature architecture doc.
 function evaluateArchitectureRoot(root, { path = ARCHITECTURE_PATH } = {}) {
   const full = resolve(root, path);
   if (!existsSync(full)) return null;
   const markdown = readFileSync(full, 'utf8');
   const rel = path.split('\\').join('/');
   const res = evaluateArchitecture(markdown, { path: rel });
-  if (res.scaffold) return { ...res, componentDocs: [] };
+  if (res.scaffold) return { ...res, componentDocs: [], featureDocs: [] };
   const componentDocs = evaluateComponentDocs(root, rel, extractComponents(markdown));
+  const featureDocs = evaluateFeatureArchitectures(root, rel, { components: res.components, edges: parseEdges(markdown) });
   const failing = componentDocs.filter((d) => !d.valid).map((d) => ({
     code: d.exists ? 'component-doc-invalid' : 'missing-component-doc',
     section: 'Components',
     message: d.exists ? `${d.path}: ${d.reasons.join('; ')}` : `${d.name} has no component doc — write ${d.path} from the component template`,
-  }));
+  })).concat(featureDocs.filter((d) => !d.valid).map((d) => ({
+    code: 'feature-architecture-invalid', section: null, message: `${d.path}: ${d.reasons.join('; ')}`,
+  })));
   const substanceIssues = [...res.substanceIssues, ...failing];
   const reasons = [...res.reasons, ...failing.map((i) => i.message)];
-  return { ...res, valid: reasons.length === 0, substanceIssues, reasons, componentDocs };
+  return { ...res, valid: reasons.length === 0, substanceIssues, reasons, componentDocs, featureDocs };
 }
 
 function escapeRe(s) {

@@ -275,6 +275,77 @@ describe('evaluateDesign — architecture overview', () => {
   });
 });
 
+describe('evaluateDesign — feature architecture', () => {
+  const arch = { path: 'docs/architecture/overview.md', valid: true, reasons: [], components: ['Orders', 'Payments', 'Search'] };
+  const feature = { feature: 'sso', path: 'docs/architecture/features/sso.md', exists: true, valid: true, reasons: [], components: ['Orders', 'Payments'] };
+  const codes = (r) => r.substanceIssues.map((i) => i.code);
+  const md = design().replace('feature: sso', 'feature: sso\narchitecture: docs/architecture/overview.md').replace('discovery → fetch', 'Orders calls Payments: discovery → fetch');
+
+  test('a design inside its valid feature architecture passes', () => {
+    expect(evaluateDesign(md, { architecture: arch, featureArchitecture: feature }).valid).toBe(true);
+  });
+
+  test('a missing feature architecture blocks the design and names the file to write', () => {
+    const r = evaluateDesign(md, { architecture: arch, featureArchitecture: { ...feature, exists: false, valid: false } });
+    expect(codes(r)).toContain('no-feature-architecture');
+    expect(r.substanceIssues.find((i) => i.code === 'no-feature-architecture').path).toBe('docs/architecture/features/sso.md');
+  });
+
+  test('an invalid feature architecture is reported once, not again as an overview failure', () => {
+    const reason = 'docs/architecture/features/sso.md: missing sections: Contracts';
+    const r = evaluateDesign(md, {
+      architecture: { ...arch, valid: false, reasons: [reason] },
+      featureArchitecture: { ...feature, valid: false, reasons: ['missing sections: Contracts'] },
+    });
+    expect(codes(r)).toContain('feature-architecture-invalid');
+    expect(codes(r)).not.toContain('architecture-invalid');
+  });
+
+  test('another feature\'s invalid doc still blocks through the overview', () => {
+    const r = evaluateDesign(md, { architecture: { ...arch, valid: false, reasons: ['docs/architecture/features/billing.md: missing sections: Contracts'] }, featureArchitecture: feature });
+    expect(codes(r)).toContain('architecture-invalid');
+  });
+
+  test('a design changing a component its feature architecture does not list is rejected', () => {
+    const r = evaluateDesign(md.replace('Orders calls Payments', 'Orders calls Payments and Search'), { architecture: arch, featureArchitecture: feature });
+    expect(codes(r)).toContain('component-not-in-feature-architecture');
+    expect(r.reasons.join(' ')).toMatch(/changes Search/);
+  });
+
+  test('without the input the check is skipped', () => {
+    expect(codes(evaluateDesign(md, { architecture: arch }))).not.toContain('no-feature-architecture');
+  });
+});
+
+describe('evaluateDesignFile — feature architecture from disk', () => {
+  const { architectureDoc, writeComponentDocs, writeFeatureDoc } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
+
+  test('a design with an overview needs docs/architecture/features/<feature>.md, then passes', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-feature-'));
+    try {
+      fs.mkdirSync(path.join(root, 'docs', 'design'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'docs', 'architecture'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'docs', 'architecture', 'overview.md'), architectureDoc());
+      writeComponentDocs(root);
+      const file = path.join(root, 'docs', 'design', 'checkout.md');
+      fs.writeFileSync(file, design().replace('feature: sso', 'feature: checkout\narchitecture: docs/architecture/overview.md').replace('discovery → fetch', 'Orders charges through Payments: discovery → fetch'));
+      dec.writeDecision(root, dec.newDecision({
+        id: 'DEC-0001', summary: 'identity', created: 't', context: 'c', rationale: 'r', consequences: 'q',
+        options: [{ id: 'a', description: 'chosen because stable' }, { id: 'b', description: 'rejected: unstable' }],
+      }));
+      const before = evaluateDesignFile(file, { root });
+      expect(before.substanceIssues.map((i) => i.code)).toContain('no-feature-architecture');
+
+      writeFeatureDoc(root);
+      const after = evaluateDesignFile(file, { root });
+      expect(after.reasons).toEqual([]);
+      expect(after.valid).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('evaluateDesign — greenfield architecture', () => {
   test('an untouched architecture scaffold does not block the first design (advisory instead)', () => {
     const fs = require('fs');

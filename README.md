@@ -242,8 +242,9 @@ the stages that need it.
 | `docs/product/context.md` — vision, personas, capabilities, glossary, metric baselines, regulatory constraints | `product-context.js` | discovery panel, clarify; PRDs must name a persona and cite a baseline |
 | `docs/architecture/overview.md` — components + code paths, contracts (`A → B`), data ownership, deployment, invariants; component diagram + sequence diagrams | `architecture-context.js` | architects (in full); every task gets the slice it reaches |
 | `docs/architecture/components/<slug>.md` — one per component: responsibility, code, interfaces, dependencies, data, internal structure + diagram, key flows + sequence diagram, failure modes, decisions, testing | `component-docs.js` | the task's touched components (≤3, budgeted); `architecture_lookup` |
+| `docs/architecture/features/<feature>.md` — one per PRD, high-level: the feature / user journey across every component it touches (`components:`), component diagram + end-to-end sequence with failure path, contracts (each declared in the overview), data ownership, quality attributes | `feature-architecture.js` (architecture root + design gate) | plan, implementer, reviewers (between PRD and design); its components select the component docs; `architecture_lookup` with `feature`; conformance flags a change outside its components |
 | `docs/prd/<feature>.md` — 10 sections, measurable metrics, ACs, no open questions | `prd-gate.js` (DoR gate 8) | plan, implementer, reviewers |
-| `docs/design/<feature>.md` — component diagram, sequence with failure path, ER diagram, concrete schema + interfaces, every PRD AC mapped to a test | `design-gate.js` (DoR gate 9) | plan, implementer, reviewers; replaces the ad-hoc design panel |
+| `docs/design/<feature>.md` — the detail under the feature architecture: component diagram, sequence with failure path, ER diagram, concrete schema + interfaces, every PRD AC mapped to a test | `design-gate.js` (DoR gate 9) | plan, implementer, reviewers; replaces the ad-hoc design panel |
 | `.ai-sdlc/_decisions/DEC-*.yaml` — ADRs | `decisions.js` quality check | injected as constraints ("cite the DEC id, stop if one blocks") |
 
 - **Diagrams are enforced**, drawn by each doc's author with the `mermaid-diagrams` skill
@@ -253,7 +254,8 @@ the stages that need it.
   `decision_lookup` to every agent mid-task; cxpak gives token-budgeted code context.
 - **Kept current:** a PRD adds new personas/terms/baselines to the product context; a design
   that adds a component (`New component: <name>`) must list it in the overview with its own
-  component doc; the DoD gate re-validates `docs/architecture/` whenever a change touches it;
+  component doc; a design needs its feature architecture and may change only the components it
+  lists; the DoD gate re-validates `docs/architecture/` whenever a change touches it;
   `architecture-conformance.js` checks the real diff against the declared components and contracts.
 - **Monorepo:** each subproject may carry its own overview; cxpak and the slices are scoped
   per touched subproject.
@@ -299,7 +301,11 @@ in-process fallback recorded as degraded):
 - **Migration** (`/ai-sdlc:migrate`) scans every PRD, design doc, ADR, the context docs,
   component docs and open tasks against the current gates; `--apply` adds structure only
   (skeletons, links, placeholders that still count as empty), so nothing passes by
-  migration alone.
+  migration alone. For an existing project it also gives every feature (approved PRD or
+  design) a feature architecture: the scan lists the components each feature touches with
+  their evidence (named by its design/PRD, owners of its tasks' code paths) and the overview
+  contracts between them, `--apply` scaffolds the doc from that, and architects write the
+  journey from the code.
 
 ## Evidence, measurement and the maintain loop
 
@@ -685,15 +691,16 @@ Capture must be safe to retry; a duplicate capture returns the original result.
 | `npm run outcomes -- <runs.jsonl>` | Level-1 scorecard: completion/regression/review-loops/blast-radius |
 | `npm run decisions -- new\|list\|import\|detect\|bootstrap` | Manage ADRs (`--context/--rationale/--consequences/--confidence`) |
 | `npm run adr-coverage -- <root>` | Report foundational decision areas with no ADR (advisory) |
-| `node decision-engine/architecture-context.js --validate` | Architecture gate: overview + every component doc |
+| `node decision-engine/architecture-context.js --validate` | Architecture gate: overview + every component doc + every feature architecture |
 | `node decision-engine/component-docs.js <doc>` | Gate one component doc |
+| `node decision-engine/feature-architecture.js <doc> \| --matrix` | Gate one feature architecture / print the feature × component matrix |
 | `node decision-engine/mermaid.js <doc> --require component,sequence,er` | List a doc's diagrams; fail if a required kind is missing |
 | `node decision-engine/task-order.js --waves` | Tasks that can run in parallel |
 | `node decision-engine/migrate.js [--apply]` | Migration report / structural fixes |
 | `/ai-sdlc:init [dir] [--workspace]` | Scaffold `.ai-sdlc/` + backlog (wraps `npm run init`) |
 | `/ai-sdlc:architecture [refresh]` | Overview + component docs from the code |
 | `/ai-sdlc:new "<title>"` | Discovery panel → PRD |
-| `/ai-sdlc:design <slug>` | Design doc + ADRs + tasks |
+| `/ai-sdlc:design <slug>` | Feature architecture + design doc + ADRs + tasks |
 | `/ai-sdlc:bug "<title>"` | Bug report → fix task |
 | `/ai-sdlc:execute <task-id>` | Run a task through the full pipeline |
 | `/ai-sdlc:review [base]` | Standalone cross-harness review team |
@@ -728,7 +735,7 @@ rules/                 # context-protocol.md, synced into every agent and skill
                        #   workspace, _decisions/, attestations/
 backlog/               # tasks/ + completed/
 docs/                  # templates: prd/, design/, bugs/, product/, architecture/
-                       #   (+ components/), operations/
+                       #   (+ components/, features/), operations/
 templates/             # REVIEW.md, maintain runbooks, CI workflows
 ```
 
