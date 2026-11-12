@@ -1,14 +1,14 @@
 ---
-description: Turn an approved PRD into the technical how — architects propose high-level designs, a chair converges them into one architecture, then record ADRs + a design doc and scaffold the DoR-ready backlog task from them
+description: Turn an approved PRD into the technical how — architects propose high-level designs, a chair converges them into one architecture, then record ADRs, the feature's cross-service architecture and a detailed design doc, and scaffold the DoR-ready backlog task from them
 argument-hint: <feature-slug>   (matches docs/prd/<slug>.md)
 allowed-tools: Bash, Read, Write, Task, Skill, AskUserQuestion
 ---
 
 # /ai-sdlc:design — architecture design stage
 
-Turn an approved PRD into the technical **how**: a detailed design doc and a
-comprehensive set of atomic ADRs — then scaffold the buildable backlog task
-**from** them. This is the stage that owns task creation: a task never exists
+Turn an approved PRD into the technical **how**: the feature's high-level,
+cross-service architecture, a detailed design doc and a comprehensive set of atomic
+ADRs — then scaffold the buildable backlog task **from** them. This is the stage that owns task creation: a task never exists
 before its architecture does, and DoR gate 9 refuses to admit a feature task
 whose design doc is not approved. Produces artifacts + one task, never code.
 
@@ -213,11 +213,43 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    For many ADRs, a one-off Node script using `newDecision`+`writeDecision` in a
    loop is cleaner than N shell calls.
 
-5. **Synthesize the design doc.** Write `docs/design/$1.md` from
+5a. **Write the feature architecture — the high-level, cross-service view.** A PRD is a
+   feature or user journey that usually spans several components; before the detail, record
+   how the journey runs across them. Write `docs/architecture/features/$1.md` from
+   `${CLAUDE_PLUGIN_ROOT}/docs/architecture/features/_template.md`, from the **agreed**
+   target architecture: frontmatter `components:` lists **every** component the journey
+   touches, by its name in the overview (`feature: $1`, `relatedPrd: docs/prd/$1.md`);
+   **Journey** (who starts it, the steps, the outcome); **Components** (a flowchart of every
+   listed component and the contracts between them, plus each one's role in this journey);
+   **Interactions** (a `sequenceDiagram` with every listed component as a participant,
+   including the failure path — timeout, error, retry, compensation); **Contracts** (each
+   `Caller → Callee: mechanism, contract` edge the journey uses — every one an Integration
+   contract in the overview; a new one is added to the overview in this change); **Data
+   ownership**; **Quality attributes** (end-to-end latency split per component, degradation
+   when one is down, volume, security boundaries); **Decisions** (the shaping DEC ids). Stay
+   at the component level — DDL, signatures, module internals and per-AC tests go in the
+   design doc. Draw the diagrams with the `mermaid-diagrams` skill. Validate:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/decision-engine/feature-architecture.js" "docs/architecture/features/$1.md" || true
+   ```
+   The gate rejects a component the overview does not know (`unknown-component`), a listed
+   component missing from either diagram (`diagram-missing-component`,
+   `sequence-missing-component`), no failure path, a contract the overview does not declare
+   (`contract-not-in-overview`) and a contract reaching an unlisted component
+   (`contract-component-undeclared`). `node …/feature-architecture.js --matrix` prints the
+   feature × component matrix.
+
+5. **Synthesize the design doc — the detail under the feature architecture.** Write `docs/design/$1.md` from
    `docs/design/_template.md` — reflecting the **agreed** architecture: the detailed
    schema/DDL, module boundaries, data flow, interfaces, risks, test strategy — and
    link every recorded ADR in its Decisions section. Set `relatedPrd: docs/prd/$1.md`
-   and `architecture: docs/architecture/overview.md`. The Architecture section names
+   and `architecture: docs/architecture/overview.md`. It is written against the feature
+   architecture (step 5a) and goes one level down: inside each of its components — the
+   modules, types and signatures that change. The design gate requires
+   `docs/architecture/features/$1.md` to exist and be valid (`no-feature-architecture`,
+   `feature-architecture-invalid`) and rejects a design whose Architecture changes a component
+   the feature architecture does not list (`component-not-in-feature-architecture`) — widen
+   the feature architecture first. The Architecture section names
    the components it changes **by their names in the overview** and the contracts that
    connect them; anything new is declared `New component: <name>` — and the overview is
    **updated in the same change** (new component with its code path, new contract edge,
@@ -228,8 +260,8 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    structure the design changes has its doc updated — diagrams included. The gate enforces the
    first part: each `New component: <name>` must be listed in the overview and have a complete
    component doc (`new-component-not-in-overview`, `new-component-doc`). A feature that *is* a
-   new component therefore ships its own architecture document; a feature spread across existing
-   components is described by the design doc plus updates to those components' docs.
+   new component therefore ships its own component doc; every feature — one component or many —
+   ships its feature architecture (5a), and the components it changes get their docs updated.
    The doc is handed **verbatim** to the planner, implementer and reviewers, and an
    approved design doc *replaces* the executor's ad-hoc design panel — so it must be
    buildable as written. The gate enforces: Data model has real DDL / a schema code
@@ -282,7 +314,7 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
    ID=$(node -e "console.log(require(process.env.CLAUDE_PLUGIN_ROOT+'/decision-engine/backlog-task-new').nextTaskId(process.cwd()))")
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/backlog-task-new.js" "<title>" --id "$ID" \
      --prd "docs/prd/$1.md" --feature-id "$1" \
-     --labels <a,b> --refs "docs/design/$1.md,<surface1>,<surface2>" \
+     --labels <a,b> --refs "docs/design/$1.md,docs/architecture/features/$1.md,<surface1>,<surface2>" \
      --ac "<extra non-functional criterion, if any>" \
      --metric "<success metric 1>" --metric "<success metric 2>" \
      --priority <low|medium|high> --desc "<one-paragraph problem+scope, grounded in the ADRs>"
@@ -307,13 +339,14 @@ Feature is `$1` (its PRD is `docs/prd/$1.md`).
      auto-dispatch, and never set the design doc or PRD to `approved` yourself —
      a human ratifies.
 
-9. **Report.** List the ADRs (`npm run decisions -- list`), the design-doc validity,
+9. **Report.** List the ADRs (`npm run decisions -- list`), the feature-architecture and design-doc validity,
    any coverage gaps + the panel's biggest-risk note, and the scaffolded task id
    with its DoR verdict. ADRs are `proposed` and the design doc `draft` — a human
-   ratifies both before the gate admits the task for implementation.
+   ratifies them (and sets the feature architecture to `status: approved`) before the
+   gate admits the task for implementation.
 
 ## Notes
-- Design produces **decisions + a design doc + one backlog task, never code.**
+- Design produces **decisions + a feature architecture + a design doc + one backlog task, never code.**
   Agents return findings; the orchestrator records the ADRs and scaffolds the task.
   If an architect writes implementation files, discard them.
 - Task creation lives here, not in `/ai-sdlc:new`, on purpose: seeding the task

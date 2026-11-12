@@ -1,6 +1,6 @@
 ---
-description: Migrate existing PRDs, design docs, ADRs, the product context and open tasks to the current gates — scan, add structure, fill content from evidence, then a human re-approves
-argument-hint: [--only prd|design|adr|tasks]   (default: everything, in-flight first)
+description: Migrate existing PRDs, design docs, ADRs, the product context and open tasks to the current gates — and write a feature architecture for every existing feature — scan, add structure, fill content from evidence, then a human re-approves
+argument-hint: [--only prd|design|feature|adr|tasks]   (default: everything, in-flight first)
 allowed-tools: Bash, Read, Write, Edit, Task, AskUserQuestion
 ---
 
@@ -9,7 +9,9 @@ allowed-tools: Bash, Read, Write, Edit, Task, AskUserQuestion
 The gates got stricter: PRDs need 10 grounded sections; design docs need a concrete
 schema, interfaces, failure paths and a test strategy mapping every PRD AC; ADRs need
 context / rationale / consequences / described alternatives; PRDs tie to a product
-context; bug tasks need a bug report. Artifacts written before that fail DoR gates
+context; bug tasks need a bug report; every feature (an approved PRD or a design doc)
+needs a feature architecture `docs/architecture/features/<feature>.md` — the feature /
+user journey across every component it touches. Artifacts written before that fail DoR gates
 8/9/10 and block their tasks. This command migrates them **without inventing
 anything**: deterministic structure first, then content drawn only from evidence,
 then a human re-approves.
@@ -33,14 +35,20 @@ then a human re-approves.
 2b. **Architecture overview next.** Every design doc must reference it and name its
    components. If `docs/architecture/overview.md` is missing or incomplete, run
    `/ai-sdlc:architecture` (built from the real code via cxpak) before migrating designs.
+   Feature architectures are only asked for once the overview is written — they are
+   checked against its components and contracts.
 
 3. **Add structure (deterministic).**
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/migrate.js" --apply || true
    ```
    Adds missing section skeletons from the templates, the design's `relatedPrd`
-   link and per-AC test-strategy placeholders, and scaffolds the product context if
-   absent. Skeletons are template placeholders, which the gates treat as empty — the
+   link and per-AC test-strategy placeholders, scaffolds the product context if
+   absent, and scaffolds `docs/architecture/features/<feature>.md` for every feature that
+   has none, with `components:` set from the scan's **evidence** (components its design or
+   PRD names, plus the owners of the code paths its open and completed backlog tasks
+   reference — each listed with its source in the report, with the overview contracts
+   between them). Skeletons are template placeholders, which the gates treat as empty — the
    artifacts still fail until step 4 writes real content. No status is changed.
 
 4. **Fill content from evidence — never invent.** For each failing artifact (in-flight
@@ -57,6 +65,23 @@ then a human re-approves.
      implements them**; map each PRD AC in Test strategy (`AC1 — integration: …`) to
      the tests that exist or must be written. Where the code and the doc disagree,
      surface the conflict to the operator — do not silently pick one.
+   - **Feature architecture** → `architect-review` (+ `backend-architect` for a journey across
+     many services), one feature per dispatch, in parallel across features. Give it the
+     scaffold, the report's evidence (components with sources, candidate contracts), the PRD
+     (Journey and User flows), the design doc, the component docs of the evidence components,
+     and the code: trace the journey's entry point across components with `cxpak_graph`
+     (`trace` / `call_graph` / `blast_radius`) and `architecture_lookup`. It writes, **as the
+     code actually runs it**: the confirmed `components:` list (drop an evidence component the
+     journey does not reach; add one the trace reaches — say which and why), the Journey, a
+     component diagram and an end-to-end `sequenceDiagram` with the failure path (load the
+     `mermaid-diagrams` skill), the Contracts it really uses (each an overview contract —
+     a real call with no overview contract is a gap to fix in the overview, flagged to the
+     operator, not wired around), data ownership, quality attributes as measured or
+     specified (unknown → say so; never invent a latency figure), and the DEC ids that shape
+     it. Stay high-level — the detail stays in the design doc. Validate each:
+     `node "${CLAUDE_PLUGIN_ROOT}/decision-engine/feature-architecture.js" docs/architecture/features/<feature>.md`.
+     A shipped feature with no PRD has no feature to migrate; capture it through
+     `/ai-sdlc:new` first if it needs one.
    - **ADR** → `architect-review`: reconstruct context / rationale / consequences and
      the rejected alternatives from the design doc, commits and code. Record them
      append-only (gaps only; an ADR whose decision itself changed must be superseded
@@ -78,7 +103,8 @@ then a human re-approves.
    ```
 
 6. **Human re-approval.** A migrated PRD/design that was `approved` was approved for
-   different content. Present each one's diff to the operator with `AskUserQuestion`;
+   different content, and a feature architecture is new content: the operator reviews each
+   one (component list, diagrams, contracts) and sets `status: approved`. Present each one's diff to the operator with `AskUserQuestion`;
    they keep or set `status: approved` only after reviewing it. Never approve on their
    behalf. Then re-run the DoR check (`/ai-sdlc:design` step 8) for the in-flight tasks.
 
@@ -86,4 +112,6 @@ then a human re-approves.
 - Changes to `.ai-sdlc/_decisions/`, `docs/prd|design|product/` are `slow` pace and the
   migration PR opens as a draft; edits to gate/policy files still stop at the HITL gate.
 - Migrate on a branch and land it as one reviewed PR per artifact family (product
-  context + PRDs, then designs + ADRs) so reviewers can follow it.
+  context + PRDs, then feature architectures, then designs + ADRs) so reviewers can follow it.
+- `node "${CLAUDE_PLUGIN_ROOT}/decision-engine/feature-architecture.js" --matrix` shows the
+  resulting feature × component matrix.

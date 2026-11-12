@@ -71,7 +71,10 @@ design docs.
    brownfield refresh (many components drawn from the code) is delegated, to the
    `mermaid-expert` agent following the same skill.
 
-4. **Validate** until clean — the overview and every component doc:
+4. **Validate** until clean — the overview, every component doc and every feature
+   architecture (`docs/architecture/features/<feature>.md`, written per PRD by
+   `/ai-sdlc:design`; a refresh that renames or removes a component or contract updates
+   the feature docs that use it):
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/decision-engine/architecture-context.js" --validate
    ```
@@ -80,9 +83,18 @@ design docs.
    with `AskUserQuestion`; fold corrections in. The operator owns this document — set
    `owner` and `updated` from their answer.
 
+5b. **Existing features (brownfield).** A project that already has PRDs/designs gets a
+   feature architecture for each of them — the cross-service view of every journey. Once
+   the overview and component docs validate, run `/ai-sdlc:migrate` (its scan lists every
+   feature with the components the evidence ties it to; `--apply` scaffolds the docs and
+   step 4 has architects write them from the code). On a refresh that renames, splits or
+   removes a component or contract, the root gate fails every feature doc that still uses
+   the old one — update those in the same change.
+
 6. **Re-check the designs.** `node "${CLAUDE_PLUGIN_ROOT}/decision-engine/migrate.js"`
-   shows which existing design docs now need to reference the overview or name their
-   components.
+   shows which existing design docs now need to reference the overview, name their
+   components or get a feature architecture (`--apply` scaffolds one per design, with the
+   overview components the design names).
 
 ## Keeping it current
 - `/ai-sdlc:design`: a design that adds or changes a component, contract or data owner

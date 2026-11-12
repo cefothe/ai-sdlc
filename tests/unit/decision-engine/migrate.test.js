@@ -107,6 +107,59 @@ describe('applyStructuralFixes', () => {
     expect(after.architecture.componentDocs.every((d) => d.exists && !d.valid)).toBe(true);
   });
 
+  test('every feature gets a feature architecture scaffolded from the evidence — still not ok', () => {
+    const { architectureDoc, writeComponentDocs } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
+    fs.mkdirSync(path.join(root, 'docs', 'architecture'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'docs', 'architecture', 'overview.md'), architectureDoc());
+    writeComponentDocs(root);
+    const design = path.join(root, 'docs', 'design', 'sso.md');
+    fs.writeFileSync(design, `${fs.readFileSync(design, 'utf8')}\nOrders calls Payments for the login fee.\n`);
+    fs.mkdirSync(path.join(root, 'backlog', 'completed'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'backlog', 'completed', 'AISDLC-0003 - sso login page.md'), [
+      '---', 'id: AISDLC-0003', 'title: SSO login page', 'status: Done', 'references:', '  - web/login.tsx',
+      'specRef:', '  source: prd', '  featureId: sso', '  artifactPath: docs/prd/sso.md', '---', '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, 'docs', 'prd', 'wishlist.md'), '---\nstatus: draft\nfeatureId: wishlist\n---\n# PRD: Wishlist\n');
+
+    const scan = mig.scanArtifacts(root);
+    expect(scan.features.map((f) => f.feature)).toEqual(['sso']);
+    expect(scan.features[0]).toMatchObject({ path: 'docs/architecture/features/sso.md', exists: false, ok: false, prdPath: 'docs/prd/sso.md', designPath: 'docs/design/sso.md', inFlightTasks: ['AISDLC-0001'] });
+    expect(scan.features[0].evidence.components).toEqual([
+      { name: 'Storefront', sources: ['task AISDLC-0003: web/login.tsx'] },
+      { name: 'Orders', sources: ['design'] },
+      { name: 'Payments', sources: ['design'] },
+    ]);
+    expect(scan.features[0].evidence.contracts).toHaveLength(2);
+    expect(scan.summary.features).toBe('0/1 ok');
+    expect(mig.formatReport(scan)).toMatch(/Feature architectures:\n- docs\/architecture\/features\/sso\.md \(missing\)\n {4}evidence — components: Storefront \(task AISDLC-0003: web\/login\.tsx\), Orders \(design\), Payments \(design\)\n {4}evidence — contracts: Storefront → Orders/);
+
+    const changes = mig.applyStructuralFixes(root, scan);
+    expect(changes).toEqual(expect.arrayContaining([{ path: 'docs/architecture/features/sso.md', change: 'created feature architecture scaffold (components: Storefront, Orders, Payments)' }]));
+    const doc = fs.readFileSync(path.join(root, 'docs/architecture/features/sso.md'), 'utf8');
+    expect(doc).toMatch(/^feature: sso$/m);
+    expect(doc).toMatch(/^relatedPrd: docs\/prd\/sso\.md$/m);
+    expect(doc).toMatch(/^components: \["Storefront", "Orders", "Payments"\]$/m);
+
+    const after = mig.scanArtifacts(root);
+    expect(after.features[0]).toMatchObject({ exists: true, ok: false });
+    expect(after.architecture.featureDocs.map((d) => [d.feature, d.valid])).toEqual([['sso', false]]);
+    expect(mig.applyStructuralFixes(root, after).filter((c) => /feature architecture/.test(c.change))).toEqual([]);
+  });
+
+  test('without a written overview no feature architectures are asked for', () => {
+    expect(mig.scanArtifacts(root).features).toEqual([]);
+  });
+
+  test('featureEvidence ignores tasks of other features and paths no component owns', () => {
+    const components = [{ name: 'Orders', paths: ['services/orders/'] }, { name: 'Payments', paths: ['services/payments/'] }];
+    const tasks = [
+      { task: { frontmatter: { id: 'T-1', specRef: { featureId: 'refunds' }, references: ['services/payments/refund.ts'] } } },
+      { task: { frontmatter: { id: 'T-2', specRef: { featureId: 'sso' }, references: ['scripts/x.sh', 'services/orders/a.ts'] } } },
+    ];
+    const ev = mig.featureEvidence({ feature: 'sso', tasks, components, edges: [{ from: 'Orders', to: 'Payments', line: 'Orders → Payments: call' }] });
+    expect(ev).toEqual({ components: [{ name: 'Orders', sources: ['task T-2: services/orders/a.ts'] }], contracts: [] });
+  });
+
   test('re-applying is idempotent', () => {
     mig.applyStructuralFixes(root, mig.scanArtifacts(root));
     const snapshot = ['docs/prd/sso.md', 'docs/design/sso.md'].map((f) => fs.readFileSync(path.join(root, f), 'utf8'));

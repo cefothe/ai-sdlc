@@ -252,7 +252,7 @@ describe('makeCxpakFetcher', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-f-'));
     try {
       const spec = await adapter.makeSpecFetcher({ root })({ frontmatter: { id: 'X' } });
-      expect(spec).toEqual({ text: null, architectureInjected: false, kind: 'feature', bugPath: null, prdPath: null, designPath: null, designApproved: false });
+      expect(spec).toEqual({ text: null, architectureInjected: false, kind: 'feature', bugPath: null, prdPath: null, featureArchitecturePath: null, featureComponents: [], designPath: null, designApproved: false });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

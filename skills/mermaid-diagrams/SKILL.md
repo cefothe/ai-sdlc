@@ -1,6 +1,6 @@
 ---
 name: mermaid-diagrams
-description: Draw the Mermaid diagrams an architecture overview, component doc or design doc must carry — component map, sequence with its failure path, ER model — from the content you already hold, and check them against the gate. Use when writing or refreshing docs/architecture/overview.md, docs/architecture/components/*.md or docs/design/*.md, or when a gate reports no-component-diagram, no-sequence-diagram, missing-diagram or diagram-missing-component.
+description: Draw the Mermaid diagrams an architecture overview, component doc, feature architecture or design doc must carry — component map, sequence with its failure path, ER model — from the content you already hold, and check them against the gate. Use when writing or refreshing docs/architecture/overview.md, docs/architecture/components/*.md, docs/architecture/features/*.md or docs/design/*.md, or when a gate reports no-component-diagram, no-sequence-diagram, missing-diagram, diagram-missing-component or sequence-missing-component.
 ---
 
 # Mermaid diagrams for architecture and design docs
@@ -19,7 +19,9 @@ source everyone reads.
 | overview → **Integration contracts** | `sequenceDiagram` — at least one critical cross-component flow (one per critical flow is better) | `no-sequence-diagram` |
 | component doc → **Internal structure** | `flowchart` or `classDiagram` — the parts inside the component (types, workers, queues) and how they relate | `missing-diagram` |
 | component doc → **Key flows** | `sequenceDiagram` of the component's main flow, with its failure path | `missing-diagram` |
-| design → **Architecture** | `flowchart` — the components this design touches or adds, and their contracts | `missing-diagram` |
+| feature architecture → **Components** | `flowchart` — every component in frontmatter `components:` and the contracts between them in this journey | `no-component-diagram`, `diagram-missing-component` |
+| feature architecture → **Interactions** | `sequenceDiagram` of the journey end to end, every listed component a participant, with the failure path | `no-sequence-diagram`, `sequence-missing-component` |
+| design → **Architecture** | `flowchart` — the components this design touches or adds, one level down (the modules/types inside them that change), and their contracts | `missing-diagram` |
 | design → **Data flow** | `sequenceDiagram` of the main flow **including its failure/retry path** (`alt` / `else`) | `missing-diagram` |
 | design → **Data model** | `erDiagram` — entities, keys, cardinality (skip only when the design is stateless and says so) | `missing-diagram` |
 

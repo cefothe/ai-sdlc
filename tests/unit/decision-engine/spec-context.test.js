@@ -208,6 +208,45 @@ describe('architecture slice', () => {
   });
 });
 
+describe('feature architecture', () => {
+  const { architectureDoc, writeComponentDocs, writeFeatureDoc } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
+
+  test('sits between the PRD and the design, and its components select the architecture slice', () => {
+    const root = project({ design: DESIGN() });
+    try {
+      fs.mkdirSync(path.join(root, 'docs', 'architecture'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'docs', 'architecture', 'overview.md'), architectureDoc());
+      writeComponentDocs(root);
+      writeFeatureDoc(root, { feature: 'sso', components: ['Orders', 'Payments'] });
+      const built = sc.buildSpecForTask(root, task());
+      expect(built.featureArchitecturePath).toBe(path.join('docs', 'architecture', 'features', 'sso.md'));
+      expect(built.featureComponents).toEqual(['Orders', 'Payments']);
+      expect(built.text).toMatch(/change only its components, connect them only through its contracts/);
+      const prd = built.text.indexOf('PRD — ');
+      const feature = built.text.indexOf('Feature architecture — ');
+      const design = built.text.indexOf('Design — ');
+      expect(prd).toBeGreaterThan(-1);
+      expect(feature).toBeGreaterThan(prd);
+      expect(design).toBeGreaterThan(feature);
+      expect(built.text).toMatch(/COMPONENT DOC — docs\/architecture\/components\/orders\.md/);
+      expect(built.text).toMatch(/COMPONENT DOC — docs\/architecture\/components\/payments\.md/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a task without a feature doc has no feature components', () => {
+    const root = project({ design: DESIGN() });
+    try {
+      const built = sc.buildSpecForTask(root, task());
+      expect(built.featureArchitecturePath).toBeNull();
+      expect(built.featureComponents).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('monorepo architecture slices', () => {
   const { architectureDoc } = require(path.join(ROOT, 'tests', 'helpers', 'architecture-doc.js'));
 
