@@ -1,0 +1,36 @@
+apiVersion: ai-sdlc.io/v1alpha1
+kind: Decision
+metadata:
+  id: DEC-0548
+  source: ad-hoc
+  scope: feature:basket-templates
+  created: '2026-11-26T12:00:00Z'
+  updated: '2026-11-26T12:00:00Z'
+spec:
+  summary: Persist the exact order request before sending it to trading
+  reversible: true
+  options:
+    - id: persist-then-send
+      description: >-
+        CHOSEN. Commit an order_intent row holding the exact request body in the same transaction
+        as the holdings version, then send it; a crash at any point replays the stored request.
+    - id: call-in-transaction
+      description: >-
+        Call trading inside the basket database transaction. Rejected: the two services cannot
+        commit atomically, so a crash between the call and the commit loses or duplicates intent.
+  context: >-
+    Trading deduplicates POST /v1/orders on client_order_ref and answers 409 when the body
+    changes. The basket worker can crash between deciding to trade and hearing the answer.
+  rationale: >-
+    Writing the request down before sending makes every crash recoverable: on restart the worker
+    re-sends the stored body under the stored ref and trading either executes it once or returns
+    the order it already holds.
+  consequences: >-
+    One extra table (order_intent) and a claim query for pending rows. The stored body must follow
+    the trading order schema, so a schema change needs a migration of unsent rows.
+  confidence: high
+status:
+  lifecycle: answered
+  answeredOptionId: persist-then-send
+  answeredBy: operator
+  answeredAt: '2026-11-16T13:33:58Z'

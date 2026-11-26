@@ -13,7 +13,7 @@ function design({ omit = [], empty = [], adrs = 'DEC-0001', status = 'approved',
     'Data model': 'CREATE TABLE properties (id BIGSERIAL PRIMARY KEY, source TEXT, source_listing_id TEXT, UNIQUE(source, source_listing_id));\n```mermaid\nerDiagram\n  SOURCE ||--o{ PROPERTY : lists\n```',
     Interfaces: 'FIRECRAWL_API_URL, DATABASE_URL; CLI: npm run ingest.',
     'Data flow': 'Paginate search, scrape each listing, normalize, upsert, write run report. A failed fetch retries 3x with backoff, then is logged and skipped.\n```mermaid\nsequenceDiagram\n  Ingester->>Venue: GET page\n  Venue-->>Ingester: 503\n  Ingester->>Venue: retry with backoff\n```',
-    Decisions: `Listing identity ${adrs}.`,
+    Decisions: `- ${adrs} — listing identity is the natural key, because listings are re-fetched daily and must upsert idempotently.`,
     Risks: 'imot.bg may render client-side; spike before compose.',
     'Test strategy': 'Unit: normalize/identity. Integration: upsert vs Postgres. Smoke: coverage.\n- AC1 — integration: upsert is idempotent\n- AC2 — unit: invalid listing rejected',
   };
@@ -73,7 +73,7 @@ describe('evaluateDesign — section synonyms (no cosmetic rename-to-pass)', () 
       '## Datastore & physical schema', 'PostgreSQL 16, schema pmdm.', '```sql', 'CREATE TABLE pmdm.market (id TEXT PRIMARY KEY, price NUMERIC);', '```', '```mermaid', 'erDiagram', '  VENUE ||--o{ MARKET : lists', '```', '',
       '## API surface', 'REST read API: GET /markets/{id}; env DATABASE_URL_RO.', '',
       '## Ingestion & data flow', 'fetch → normalize → validate → upsert → report; a venue error aborts that venue only.', '```mermaid', 'sequenceDiagram', '  Poller->>Venue: fetch', '  Venue-->>Poller: error', '```', '',
-      '## Key decisions', 'Datastore is Postgres (DEC-0003); price unit probability (DEC-0005).', '',
+      '## Key decisions', '- DEC-0003 — datastore is Postgres, because the mirror needs relational joins and transactional upserts.', '- DEC-0005 — price unit is probability, so that venues quoting cents and decimals compare directly.', '',
       '## Risks & spikes', 'Kalshi liquidity field removed — spike before build.', '',
       '## Testing strategy', 'Unit normalize; integration upsert vs Postgres; smoke.', '',
     ].join('\n');
@@ -150,7 +150,7 @@ describe('evaluateDesign — enforced substance', () => {
     const complete = dec.newDecision({
       id: 'DEC-0001', summary: 'Listing identity by (source, source_listing_id)', created: 't',
       options: [{ id: 'natural', description: 'Natural key — stable across runs' }, { id: 'hash', description: 'Rejected: content hash changes on edits' }],
-      context: 'Listings are re-fetched daily', rationale: 'Natural key is stable', consequences: 'Unique index required',
+      context: 'Listings are re-fetched daily', rationale: 'A natural key is stable across daily re-fetches, so an upsert never duplicates a listing', consequences: 'Unique index required',
     });
     expect(evaluateDesign(design(), { decisions: { 'DEC-0001': complete } }).valid).toBe(true);
 
@@ -175,7 +175,7 @@ describe('evaluateDesignFile — cross-artifact checks from disk', () => {
     fs.writeFileSync(path.join(root, 'docs', 'design', 'sso.md'), design().replace('feature: sso', 'feature: sso\nrelatedPrd: docs/prd/sso.md'));
     if (withDecision) {
       dec.writeDecision(root, dec.newDecision({
-        id: 'DEC-0001', summary: 'identity', created: 't', context: 'c', rationale: 'r', consequences: 'q',
+        id: 'DEC-0001', summary: 'identity', created: 't', context: 'c', rationale: 'A natural key is stable across daily re-fetches, so an upsert never duplicates a listing', consequences: 'q',
         options: [{ id: 'a', description: 'chosen because stable' }, { id: 'b', description: 'rejected: unstable' }],
       }));
     }
@@ -330,7 +330,7 @@ describe('evaluateDesignFile — feature architecture from disk', () => {
       const file = path.join(root, 'docs', 'design', 'checkout.md');
       fs.writeFileSync(file, design().replace('feature: sso', 'feature: checkout\narchitecture: docs/architecture/overview.md').replace('discovery → fetch', 'Orders charges through Payments: discovery → fetch'));
       dec.writeDecision(root, dec.newDecision({
-        id: 'DEC-0001', summary: 'identity', created: 't', context: 'c', rationale: 'r', consequences: 'q',
+        id: 'DEC-0001', summary: 'identity', created: 't', context: 'c', rationale: 'A natural key is stable across daily re-fetches, so an upsert never duplicates a listing', consequences: 'q',
         options: [{ id: 'a', description: 'chosen because stable' }, { id: 'b', description: 'rejected: unstable' }],
       }));
       const before = evaluateDesignFile(file, { root });
@@ -377,5 +377,36 @@ describe('evaluateDesign — diagrams', () => {
   test('a stateless design needs no ER diagram', () => {
     const md = design().replace(/CREATE TABLE properties[^\n]*\n```mermaid\nerDiagram[\s\S]*?```/, 'N/A — no persisted state; the CLI is stateless and writes stdout only.');
     expect(codes(evaluateDesign(md))).not.toContain('Data model');
+  });
+});
+
+describe('evaluateDesign — identifier walkthrough and decision reasons', () => {
+  const v2 = (md) => md.replace('feature: sso', 'feature: sso\ndesignStyle: v2');
+  const adr = () => dec.newDecision({
+    id: 'DEC-0001', summary: 'identity', created: 't', context: 'c', consequences: 'q',
+    rationale: 'A natural key is stable across daily re-fetches, so an upsert never duplicates a listing',
+    options: [{ id: 'a', description: 'Chosen: natural key keeps upserts idempotent' }, { id: 'b', description: 'Rejected: surrogate ids differ per fetch and duplicate rows' }],
+  });
+
+  test('a design that generates a client ref without a walkthrough is invalid', () => {
+    const r = evaluateDesign(v2(design({ extra: '\nOrders carry a client_order_ref built by the worker.' })), { decisions: { 'DEC-0001': adr() } });
+    expect(r.valid).toBe(false);
+    expect(r.substanceIssues.map((i) => i.code)).toContain('identifier-walkthrough-missing');
+  });
+
+  test('a design without any generated identifier needs no walkthrough', () => {
+    expect(evaluateDesign(v2(design()), { decisions: { 'DEC-0001': adr() } }).substanceIssues).toEqual([]);
+  });
+
+  test('a legacy design (no designStyle) is not held to the new rules and gets an advisory', () => {
+    const legacy = design({ extra: '\nOrders carry a client_order_ref built by the worker.' }).replace(/- DEC-0001 —[^\n]*/, 'DEC-0001 listing identity.');
+    const r = evaluateDesign(legacy, { decisions: { 'DEC-0001': adr() } });
+    expect(r.substanceIssues).toEqual([]);
+    expect(r.advisory.map((a) => a.code)).toContain('design-style-legacy');
+  });
+
+  test('a Decisions line that only says what was decided is rejected', () => {
+    const r = evaluateDesign(v2(design()).replace(/- DEC-0001 —[^\n]*/, 'DEC-0001 listing identity.'), { decisions: { 'DEC-0001': adr() } });
+    expect(r.substanceIssues.map((i) => i.code)).toEqual(['decision-no-reason']);
   });
 });

@@ -10,7 +10,7 @@ function completeAdr() {
   return dec.newDecision({
     id: 'DEC-0001', summary: 'OAuth over SAML', created: 't',
     options: [{ id: 'oauth', description: 'Chosen: IdPs in scope all support it' }, { id: 'saml', description: 'Rejected: heavier, deferred' }],
-    context: 'Enterprise SSO', rationale: 'Smallest slice', consequences: 'SAML customers wait',
+    context: 'Enterprise SSO', rationale: 'The smallest slice that unblocks enterprise admins, so SAML can follow without rework', consequences: 'SAML customers wait',
   });
 }
 
@@ -39,7 +39,7 @@ function design(status, { withAdr = true } = {}) {
     '## Data model', '```sql', 'CREATE TABLE sessions (id UUID PRIMARY KEY, user_id BIGINT, expires_at TIMESTAMPTZ);', '```', '```mermaid', 'erDiagram', '  USER ||--o{ SESSION : has', '```', '',
     '## Interfaces', 'GET /auth/login, GET /auth/callback returning a session cookie.', '',
     '## Data flow', 'Browser -> broker -> IdP -> callback -> session issued; an IdP error redirects to the retry page.', '```mermaid', 'sequenceDiagram', '  Browser->>Broker: login', '  Broker->>IdP: authorize', '  IdP-->>Broker: error', '```', '',
-    '## Decisions', withAdr ? 'OAuth chosen over SAML — see DEC-0001.' : 'No decisions recorded yet.', '',
+    '## Decisions', withAdr ? '- DEC-0001 — OAuth chosen over SAML, because it is the smallest slice that unblocks enterprise admins.' : 'No decisions recorded yet.', '',
     '## Risks', 'Token leakage via referrer headers; mitigated by POST callback.', '',
     '## Test strategy', 'Unit for the broker; integration for the callback path.', '- AC1 — integration: OAuth login', '- AC2 — integration: 401 on failure', '',
   ].join('\n');

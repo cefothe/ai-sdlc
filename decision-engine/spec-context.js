@@ -39,7 +39,7 @@ const FEATURE_PRIORITY = [
   'Components', 'Contracts', 'Interactions', 'Data ownership', 'Quality attributes', 'Journey', 'Decisions',
 ];
 const DESIGN_PRIORITY = [
-  'Data model', 'Interfaces', 'Data flow', 'Architecture', 'Test strategy',
+  'Identifier walkthrough', 'Data model', 'Interfaces', 'Data flow', 'Architecture', 'Test strategy',
   'Risks', 'Decisions', 'Context',
 ];
 
@@ -97,6 +97,38 @@ function loadSpecForTask(root, task, opts = {}) {
   };
 }
 
+// The short "why and how it flows" orientation that precedes the contract: the
+// problem and outcome (PRD), the end-to-end journey across components (feature
+// architecture) and the design's own framing. Excerpts only — the full sections
+// follow in the budgeted blocks — so the implementer reads the purpose before
+// the detail and can tell what each part of the contract is for.
+const FEATURE_CONTEXT_EXCERPTS = [
+  { key: 'prd', name: 'Problem', matches: prdHeadingMatches, chars: 700, label: 'Problem being solved' },
+  { key: 'prd', name: 'Success metrics', matches: prdHeadingMatches, chars: 500, label: 'Outcome that defines success' },
+  { key: 'feature', name: 'Journey', matches: featureHeadingMatches, chars: 1400, label: 'End-to-end journey across components' },
+  { key: 'design', name: 'Context', matches: designHeadingMatches, chars: 900, label: 'Design framing and constraints' },
+];
+
+function excerpt(text, chars) {
+  const t = String(text || '').trim();
+  return t.length > chars ? `${t.slice(0, chars).trimEnd()} …` : t;
+}
+
+function formatFeatureContext(spec) {
+  if (!spec) return null;
+  const parts = [];
+  for (const e of FEATURE_CONTEXT_EXCERPTS) {
+    const doc = spec[e.key];
+    const sec = doc && doc.sections.find((x) => e.matches(x.heading, e.name));
+    if (sec) parts.push(`**${e.label}** (${doc.path} › ${sec.heading}): ${excerpt(sec.content, e.chars)}`);
+  }
+  if (!parts.length) return null;
+  return [
+    'FEATURE CONTEXT — why this task exists and how the feature flows end to end. Read this before the contract below.',
+    ...parts.map((p) => `- ${p}`),
+  ].join('\n');
+}
+
 // Render the spec as a prompt block, or null when the task links no spec.
 function formatSpecContext(spec, { maxChars = DEFAULT_MAX_CHARS } = {}) {
   if (!spec || (!spec.bug && !spec.prd && !spec.feature && !spec.design)) return null;
@@ -127,6 +159,8 @@ function formatSpecContext(spec, { maxChars = DEFAULT_MAX_CHARS } = {}) {
     '- The design doc is the HOW: use its data model, interfaces and data flow as written.',
     '- If the codebase or a constraint forces a divergence from either, STOP and flag it — do not silently redesign.',
   ];
+  const featureContext = formatFeatureContext(spec);
+  if (featureContext) out.push('', featureContext);
   if (spec.prd) out.push('', renderDoc('PRD', spec.prd, admitted.get('prd'), dropped.get('prd')));
   if (spec.feature) out.push('', renderDoc('Feature architecture', spec.feature, admitted.get('feature'), dropped.get('feature')));
   if (spec.design) out.push('', renderDoc('Design', spec.design, admitted.get('design'), dropped.get('design')));
@@ -167,7 +201,7 @@ function buildSpecForTask(root, task, opts = {}) {
   };
 }
 
-module.exports = { loadSpecForTask, formatSpecContext, buildSpecForTask, resolveSpecPaths, DEFAULT_MAX_CHARS };
+module.exports = { loadSpecForTask, formatSpecContext, formatFeatureContext, buildSpecForTask, resolveSpecPaths, DEFAULT_MAX_CHARS };
 
 // CLI: node decision-engine/spec-context.js "backlog/tasks/<ID> - <slug>.md" [--max-chars N]
 if (require.main === module) {

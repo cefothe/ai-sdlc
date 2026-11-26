@@ -1,0 +1,40 @@
+apiVersion: ai-sdlc.io/v1alpha1
+kind: Decision
+metadata:
+  id: DEC-0555
+  source: ad-hoc
+  scope: feature:basket-templates
+  created: '2026-11-26T12:00:00Z'
+  updated: '2026-11-26T12:00:00Z'
+spec:
+  summary: The attempt number advances only on a terminal rejection, never on an unknown outcome
+  reversible: true
+  options:
+    - id: advance-on-terminal-rejection
+      description: >-
+        CHOSEN. Keep the same ref and body while the outcome is unknown; start attempt n+1 only
+        after trading reports the order rejected.
+    - id: advance-on-every-retry
+      description: >-
+        Bump the attempt on every retry. Rejected: an unknown outcome retried under a new ref can
+        leave two live venue orders, one of which the worker no longer tracks.
+    - id: never-advance
+      description: >-
+        Keep one ref forever. Rejected: after a real rejection trading keeps returning the rejected
+        order for that ref, so the leg could never be placed again.
+  context: >-
+    A send can time out or lose its answer, leaving the order's existence unknown. Retrying must be
+    safe, and a genuinely rejected leg must still be re-placeable.
+  rationale: >-
+    Reusing the ref while the outcome is unknown lets trading deduplicate the retry. Moving to a new
+    attempt only after a terminal rejection is the only point at which a second order cannot coexist
+    with the first.
+  consequences: >-
+    A leg whose outcome stays unknown is blocked until it resolves from state or events, and the
+    operator-set attempt cap decides when a rejected leg becomes unplaceable.
+  confidence: high
+status:
+  lifecycle: answered
+  answeredOptionId: advance-on-terminal-rejection
+  answeredBy: operator
+  answeredAt: '2026-11-16T13:33:58Z'

@@ -1,0 +1,47 @@
+apiVersion: ai-sdlc.io/v1alpha1
+kind: Decision
+metadata:
+  id: DEC-0548
+  source: design:basket-templates
+  scope: feature:basket-templates
+  created: '2026-11-26T12:00:00Z'
+  updated: '2026-11-26T12:00:00Z'
+spec:
+  summary: >-
+    Basket orders persist the exact request before sending and use deterministic client_order_refs
+    with an attempt number that never advances on an unknown outcome
+  reversible: true
+  options:
+    - id: persist-then-send
+      description: >-
+        CHOSEN. order_intent with the exact request body committed with the holdings version; refs
+        <basket>:<market>:<attempt> (create), <basket>:t<n>:<market>:<attempt> (top-up),
+        <basket>:r<k>:<market>:<attempt> (roll), <basket>:x:<market>:<attempt> (exit); retries reuse
+        ref and body; attempt advances only on a terminal rejection; held = qty + qty_pending; sells
+        always name the basket caller position.
+    - id: call-in-transaction
+      description: >-
+        Call trading inside the basket transaction. Rejected: no cross-service atomicity; a crash
+        between commit and call loses or duplicates intent.
+    - id: new-ref-on-retry
+      description: >-
+        Generate a new ref on every retry. Rejected: an unknown outcome retried under a new identity
+        can double the venue order (AC-35).
+  context: >-
+    Trading POST /v1/orders returns the original order for a repeated client_order_ref and 409 for a
+    changed body (AC-62). Unknown order states must never be re-sent under a new identity (AC-35,
+    G10). The PRD top-up ref had no attempt number, so a rejected top-up leg could never be
+    re-placed.
+  rationale: >-
+    Persisting first makes a crash safe because trading replays the same ref; tying attempt
+    increments to terminal rejections closes the duplicate-order window during roll and top-up.
+  consequences: >-
+    Refinement of the PRD ref format (attempt suffix on every kind). Ref length stays well under 128
+    characters. The market-order body shape, client_tags format and caller rate limits come from the
+    trading slice 0d spec (AISDLC-0146).
+  confidence: medium
+status:
+  lifecycle: answered
+  answeredOptionId: persist-then-send
+  answeredBy: sangelov@tradu.com
+  answeredAt: '2026-11-16T13:33:58Z'

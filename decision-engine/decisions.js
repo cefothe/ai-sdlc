@@ -292,32 +292,107 @@ function adrSectionText(decision, key) {
   return '';
 }
 
+// "Every decision comes with a reason" is enforced structurally, not by length
+// alone: the rationale must say more than the summary, every option carries the
+// reason it won or lost, one ADR decides one thing, and an ADR that defines a
+// format/protocol explains each part of it.
+// Grandfathered: only ADRs created on/after this instant are held to the rules below,
+// so decisions recorded before them keep passing the gates they passed when written.
+const REASON_RULES_SINCE = '2026-11-26T00:00:00Z';
+const MIN_RATIONALE_CHARS = 60;
+const MIN_OPTION_REASON_CHARS = 30;
+const MAX_CLAUSES_PER_OPTION = 3;
+// Two or more <placeholders> in a row, or a word that names a format/protocol.
+const FORMAT_DECISION_RE = /<[a-z_][\w-]*>[^<\n]{0,4}<[a-z_][\w-]*>|\b(format|grammar|naming scheme|key scheme|identifier|idempotency key|wire protocol)\b/i;
+const MIN_PART_REASONS = 2;
+
+// Rows of a "Why each part" section: table body rows or list items.
+function partReasonRows(text) {
+  return String(text || '').split(/\r?\n/).filter((l) => {
+    const t = l.trim();
+    if (/^\|[\s:|-]+\|?$/.test(t)) return false; // table separator
+    if (/^\|/.test(t)) return !/^\|\s*(part|segment|element|field)\b/i.test(t);
+    return /^(?:[-*+]|\d+[.)])\s+\S/.test(t);
+  });
+}
+
+function isStrictAdr(decision) {
+  const created = Date.parse(((decision && decision.metadata) || {}).created);
+  return Number.isFinite(created) && created >= Date.parse(REASON_RULES_SINCE);
+}
+
+function chosenOption(decision) {
+  const spec = (decision && decision.spec) || {};
+  const options = Array.isArray(spec.options) ? spec.options : [];
+  const chosenId = decision && decision.status && decision.status.answeredOptionId;
+  return { options, chosen: options.find((o) => o && o.id === chosenId) || null };
+}
+
 function evaluateAdrQuality(decision) {
   const spec = (decision && decision.spec) || {};
   const id = ((decision && decision.metadata) || {}).id || '<unknown>';
   const issues = [];
+  const warnings = [];
   for (const key of Object.keys(ADR_SECTIONS)) {
     if (!adrSectionText(decision, key)) issues.push(`${id}: missing ${key}`);
   }
-  const options = Array.isArray(spec.options) ? spec.options : [];
+  const strict = isStrictAdr(decision);
+  const rationale = adrSectionText(decision, 'rationale');
+  if (strict && rationale && rationale.length < MIN_RATIONALE_CHARS) {
+    issues.push(`${id}: rationale is ${rationale.length} chars (< ${MIN_RATIONALE_CHARS}) — say why the chosen option beats the alternatives, not only what was chosen`);
+  } else if (strict && rationale && String(spec.summary || '').trim() === rationale) {
+    issues.push(`${id}: rationale repeats the summary — give the reason`);
+  }
+  const { options, chosen } = chosenOption(decision);
   if (options.length < 2) issues.push(`${id}: ${options.length} option(s) — record at least one rejected alternative`);
   for (const o of options) {
     // The CLI falls back to description = id when none is given ("a" or "a:"),
     // which records the option's name but not why it won or lost.
     if (!o || !o.description || String(o.description).trim() === String(o.id).trim()) {
       issues.push(`${id}: option "${o && o.id}" has no description of why it was chosen/rejected`);
+    } else if (strict && chosen && o !== chosen && String(o.description).trim().length < MIN_OPTION_REASON_CHARS) {
+      issues.push(`${id}: rejected option "${o.id}" gives no reason (< ${MIN_OPTION_REASON_CHARS} chars) — say what it would have cost`);
     }
   }
-  const chosen = decision && decision.status && decision.status.answeredOptionId;
-  if (chosen && !options.some((o) => o && o.id === chosen)) issues.push(`${id}: chosen option "${chosen}" is not among its options`);
-  return { id, valid: issues.length === 0, issues };
+  const chosenId = decision && decision.status && decision.status.answeredOptionId;
+  if (chosenId && !chosen) issues.push(`${id}: chosen option "${chosenId}" is not among its options`);
+
+  // One ADR, one decision: a chosen option that strings several independent
+  // choices together with ";" hides all but the first from review.
+  const decided = chosen || options[0];
+  if (strict && decided && decided.description) {
+    const clauses = String(decided.description).split(/;\s+/).filter((c) => c.trim());
+    if (clauses.length > MAX_CLAUSES_PER_OPTION) {
+      issues.push(`${id}: option "${decided.id}" bundles ${clauses.length} decisions (";"-separated) — split into one ADR per decision so each carries its own reason and rejected alternatives`);
+    }
+  }
+
+  // A format/protocol ADR explains every part of what it defines.
+  const formatText = `${spec.summary || ''} ${decided && decided.description ? decided.description : ''}`;
+  if (strict && FORMAT_DECISION_RE.test(formatText)) {
+    const parts = partReasonRows(bodySection(spec.body, 'Why each part'));
+    if (parts.length < MIN_PART_REASONS) {
+      issues.push(`${id}: defines a format/protocol but has no "## Why each part" section with a reason per part (>= ${MIN_PART_REASONS} rows)`);
+    }
+  }
+
+  // Assumptions: a decision made under uncertainty names what is unverified.
+  const confidence = spec.confidence;
+  if (strict && (confidence === 'low' || confidence === 'medium')) {
+    const assumptions = bodySection(spec.body, 'Assumptions');
+    if (!assumptions) {
+      const msg = `${id}: confidence is ${confidence} but no "## Assumptions" section names what is unverified and how it will be verified`;
+      (confidence === 'low' ? issues : warnings).push(msg);
+    }
+  }
+  return { id, valid: issues.length === 0, issues, warnings };
 }
 
 function selectDecisionsForTask(root, task = {}, opts = {}) {
   return partitionDecisionsForTask(root, task, opts).selected;
 }
 
-module.exports = { newDecision, amendDecision, answerDecision, writeDecision, loadDecision, listDecisions, selectDecisionsForTask, partitionDecisionsForTask, evaluateAdrQuality, adrSectionText, terms, nextId, storeDir, STORE_REL, LIFECYCLES, IMPLEMENTATION_LIFECYCLES };
+module.exports = { newDecision, amendDecision, answerDecision, writeDecision, loadDecision, listDecisions, selectDecisionsForTask, partitionDecisionsForTask, evaluateAdrQuality, isStrictAdr, REASON_RULES_SINCE, adrSectionText, terms, nextId, storeDir, STORE_REL, LIFECYCLES, IMPLEMENTATION_LIFECYCLES };
 
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);

@@ -86,7 +86,7 @@ function buildOraclePrompt({ task, nodes, specContext, decisionsContext }) {
   ].filter(Boolean).join('\n');
 }
 
-function buildNodePrompt({ task, node, specContext, decisionsContext, capabilityGuidance, testFiles, feedback }) {
+function buildNodePrompt({ task, node, specContext, decisionsContext, planContext, capabilityGuidance, testFiles, feedback }) {
   return [
     `You are implementing node [${node.id}] of ${header(task)}.`,
     `Change: ${node.change}`,
@@ -97,6 +97,7 @@ function buildNodePrompt({ task, node, specContext, decisionsContext, capability
     feedback ? `\nYour previous attempt was rolled back:\n${feedback}` : '',
     specContext || '',
     decisionsContext || '',
+    planContext || '',
     capabilityGuidance || '',
     CONTEXT_TOOLS_GUIDANCE,
     'Commit your change. Return JSON: { commitSha, filesChanged[], filesChangedExternal[], verifications[], summary }.',
@@ -117,7 +118,7 @@ function scopeViolations({ node, changed, testFiles }) {
   return out;
 }
 
-async function runNodes({ task, nodes, spawn, implementer, tools, cwd, runner, runAccept, specContext, decisionsContext, capabilityGuidance, retries = 2 }) {
+async function runNodes({ task, nodes, spawn, implementer, tools, cwd, runner, runAccept, specContext, decisionsContext, planContext, capabilityGuidance, retries = 2 }) {
   const report = [];
   const oracleRet = await spawn({ type: 'test-author', provider: implementer, tools, cwd, prompt: buildOraclePrompt({ task, nodes, specContext, decisionsContext }) });
   if (!oracleRet || typeof oracleRet.commitSha !== 'string' || !oracleRet.commitSha) {
@@ -139,7 +140,7 @@ async function runNodes({ task, nodes, spawn, implementer, tools, cwd, runner, r
     while (!done && attempt <= retries) {
       attempt += 1;
       const start = git(runner, ['rev-parse', 'HEAD'], cwd);
-      await spawn({ type: 'developer', provider: implementer, tools, cwd, iteration: attempt - 1, prompt: buildNodePrompt({ task, node, specContext, decisionsContext, capabilityGuidance, testFiles, feedback }) });
+      await spawn({ type: 'developer', provider: implementer, tools, cwd, iteration: attempt - 1, prompt: buildNodePrompt({ task, node, specContext, decisionsContext, planContext, capabilityGuidance, testFiles, feedback }) });
       const changed = changedFiles(runner, cwd, start);
       const violations = scopeViolations({ node, changed, testFiles });
       const accept = violations.length ? null : runAccept(node.accept, cwd);

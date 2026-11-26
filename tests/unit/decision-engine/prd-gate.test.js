@@ -209,3 +209,28 @@ describe('evaluatePrd — product context', () => {
   });
 });
 
+
+describe('acStyle v2 acceptance criteria', () => {
+  const withAcs = (acs, style = 'v2') => prd().replace('featureId: sso', `featureId: sso\nacStyle: ${style}`)
+    .replace('- [ ] User logs in via OAuth\n- [ ] Failure returns 401', acs);
+
+  test('an AC without a Why, over 300 chars, or naming 3+ code identifiers is rejected, each with its own code', () => {
+    const long = `User sees ${'a very long outcome '.repeat(20)}Why: x`;
+    const r = evaluatePrd(withAcs(`- [ ] User logs in. \n- [ ] ${long}\n- [ ] Order carries \`a\` \`b\` \`c\`. Why: traceability`));
+    const codes = r.substanceIssues.map((i) => i.code);
+    expect(codes).toEqual(['ac-no-why', 'ac-too-long', 'ac-implementation-detail']);
+    expect(r.valid).toBe(false);
+  });
+
+  test('single-outcome ACs with a Why pass', () => {
+    const r = evaluatePrd(withAcs('- [ ] User logs in via OAuth. Why: admins abandon onboarding without it.\n- [ ] A failed login returns 401. Why: clients must tell a bad token from an outage.'));
+    expect(r.substanceIssues).toEqual([]);
+    expect(r.valid).toBe(true);
+  });
+
+  test('without acStyle the ACs are not checked and an advisory says so', () => {
+    const r = evaluatePrd(prd());
+    expect(r.substanceIssues).toEqual([]);
+    expect(r.advisory.map((a) => a.code)).toContain('ac-style-legacy');
+  });
+});
