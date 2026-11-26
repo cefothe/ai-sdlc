@@ -177,7 +177,23 @@ function taskDescription(task) {
   return (next === -1 ? rest : rest.slice(0, next)).trim();
 }
 
-function buildDeveloperPrompt({ task, branch, cxpakContext, capabilityGuidance, decisionsContext, specContext }) {
+// The implementation plan as its own labeled block. It used to ride inside the
+// cxpak "structured context" blob, where it read as background; an implementer
+// must see it as the approved sequence of work this change follows.
+const PLAN_MAX_CHARS = 16000;
+function formatPlanContext(planStr, { maxChars = PLAN_MAX_CHARS } = {}) {
+  const plan = String(planStr || '').trim();
+  if (!plan) return null;
+  const body = plan.length > maxChars ? `${plan.slice(0, maxChars)}\n(plan truncated at ${maxChars} chars — open the committed plan artifact for the rest)` : plan;
+  return [
+    'IMPLEMENTATION PLAN — the approved sequence of work for this task. Follow it step by step; each step names the files it touches and what proves it done.',
+    '- If a step cannot be done as written, say so in your summary instead of silently deviating.',
+    '',
+    body,
+  ].join('\n');
+}
+
+function buildDeveloperPrompt({ task, branch, cxpakContext, capabilityGuidance, decisionsContext, specContext, planContext }) {
   const fm = task.frontmatter || {};
   const acs = (task.acceptanceCriteria || []).map((a, i) => `  ${i + 1}. ${a.text}`).join('\n');
   const description = taskDescription(task);
@@ -190,6 +206,7 @@ function buildDeveloperPrompt({ task, branch, cxpakContext, capabilityGuidance, 
   lines.push('Acceptance criteria (all must be satisfied):', acs || '  (none specified)', '');
   if (specContext) lines.push(specContext, '');
   if (decisionsContext) lines.push(decisionsContext, '');
+  if (planContext) lines.push(planContext, '');
   if (cxpakContext) {
     lines.push('Structured context (cxpak — read this before exploring):', cxpakContext, '');
   }
@@ -377,7 +394,7 @@ function cleanupTask({ worktreePath }) {
 
 module.exports = {
   slugify, sweepMergedWorktrees, validateTaskStep, computeBranchName, setupWorktree,
-  beginTask, buildDeveloperPrompt, formatDecisionsContext, taskDescription, CONTEXT_TOOLS_GUIDANCE, parseDeveloperReturn, computeReviewDiff, buildReviewPrompts,
+  beginTask, buildDeveloperPrompt, formatPlanContext, formatDecisionsContext, taskDescription, CONTEXT_TOOLS_GUIDANCE, parseDeveloperReturn, computeReviewDiff, buildReviewPrompts,
   aggregateVerdicts, finalizeTask, pushAndPr, siblingPrs, cleanupTask,
   DEFAULT_BRANCH_PATTERN, FALLBACK_SLUG, SEVERITIES, ACTIVE_TASK_SENTINEL,
 };

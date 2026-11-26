@@ -88,7 +88,9 @@ admitted for dispatch until its design doc is approved.
    Non-goals, User flows, Acceptance criteria, Edge cases, Non-functional
    requirements, Open questions); `prd-gate.js` enforces that structure **and its
    substance**: every section concrete (>= 30 chars, Open questions excepted),
-   >= 2 acceptance criteria as list items, success metrics with a number/threshold,
+   >= 2 acceptance criteria as list items (with `acStyle: v2`, the template default: each AC is
+   ONE observable outcome <= 300 chars, ends with `Why: <what breaks if unmet>`, and names at most 2
+   code identifiers — formats, field names and ref schemes belong in the design), success metrics with a number/threshold,
    and no unresolved open questions at approval. When the product context doc exists,
    the gate also requires the **Target user to name one of its personas** and the
    **Success metrics to cite a baseline** (`baseline 12% → target 17%`). The PRD is handed verbatim to the

@@ -89,7 +89,9 @@ A ticket should finish **as fast as possible with enough confidence** — not wa
    invariants), `architecture_contracts`, `product_lookup`, `spec_lookup`,
    `decision_lookup`. Tell implementers and reviewers to use them before touching
    code outside their slice or calling another component — never guess ownership.
-   Pass this block **verbatim** into the plan (step 4), every implementer / parallel
+   The block opens with **FEATURE CONTEXT** (the problem, the success outcome, the end-to-end
+   journey and the design's framing) so the implementer reads *why* before *what*; the design's
+   **Identifier walkthrough** (when present) is admitted first. Pass this block **verbatim** into the plan (step 4), every implementer / parallel
    worker (step 5) and every reviewer (step 6). If the feature has an **approved
    design doc, it is the design** — do not run a design panel to re-derive it; the
    plan implements it. If the block says no design doc exists, implement from the PRD
@@ -118,6 +120,10 @@ A ticket should finish **as fast as possible with enough confidence** — not wa
      provider the spec block (3c) and the ADRs (3b) and require that every PRD
      acceptance criterion maps to plan steps and the design's data model /
      interfaces / data flow are implemented as written.
+   - The plan reaches the implementer as its own **IMPLEMENTATION PLAN** block (headless:
+     `steps.formatPlanContext`), next to the spec — never folded into the cxpak background. If
+     the implementer would run without a feature context or without a plan, the run records a
+     `degraded` entry (`spec` / `plan`); state it in the report.
    - Do **not** fold planning into an inline "equivalent." If the provider cannot
      be invoked, **stop** and report why rather than proceeding to implement.
    - Only when `spec.stages.plan.provider` is absent/null may you skip this step.

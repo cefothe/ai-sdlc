@@ -277,16 +277,16 @@ describe('partitionDecisionsForTask — primary tier + design-doc links', () => 
 
 describe('evaluateAdrQuality', () => {
   const two = [{ id: 'pg', description: 'Chosen: relational joins needed' }, { id: 'mongo', description: 'Rejected: no joins' }];
-  const full = (over = {}) => dec.newDecision({ id: 'DEC-0010', summary: 'Postgres', created: 't', options: two, context: 'c', rationale: 'r', consequences: 'q', ...over });
+  const full = (over = {}) => dec.newDecision({ id: 'DEC-0010', summary: 'Postgres', created: 't', options: two, context: 'c', rationale: 'Relational joins and transactions are required, which a document store cannot give us', consequences: 'q', ...over });
 
   test('a decision with context/rationale/consequences and two described options is valid', () => {
-    expect(dec.evaluateAdrQuality(full())).toEqual({ id: 'DEC-0010', valid: true, issues: [] });
+    expect(dec.evaluateAdrQuality(full())).toEqual({ id: 'DEC-0010', valid: true, issues: [], warnings: [] });
   });
 
   test('sections may live in spec.body headings instead of spec fields', () => {
-    const d = dec.newDecision({ id: 'DEC-0011', summary: 's', created: 't', options: two, body: '## Context\nforces\n\n## Decision\nwhy\n\n## Consequences\ntrade-offs\n' });
+    const d = dec.newDecision({ id: 'DEC-0011', summary: 's', created: 't', options: two, body: '## Context\nforces\n\n## Decision\nRelational joins and transactions are required, which a document store cannot give us\n\n## Consequences\ntrade-offs\n' });
     expect(dec.evaluateAdrQuality(d).valid).toBe(true);
-    expect(dec.adrSectionText(d, 'rationale')).toBe('why');
+    expect(dec.adrSectionText(d, 'rationale')).toBe('Relational joins and transactions are required, which a document store cannot give us');
   });
 
   test('reports each missing section, a lone option, and an undescribed option', () => {
@@ -312,7 +312,7 @@ describe('amendDecision (append-only migration)', () => {
 
   test('fills absent sections, describes and adds options, and makes the ADR complete', () => {
     const { decision, filled } = dec.amendDecision(anemic(), {
-      rationale: 'joins + transactions', consequences: 'ops must run Postgres', confidence: 'high',
+      rationale: 'Joins and multi-row transactions are required, so relational integrity outweighs schema flexibility', consequences: 'ops must run Postgres', confidence: 'high',
       describeOptions: { pg: 'Chosen: relational integrity' }, addOptions: [{ id: 'mongo', description: 'Rejected: no multi-doc transactions' }], amendedAt: '2026-11-07T00:00:00Z',
     });
     expect(filled).toEqual(['rationale', 'consequences', 'confidence', 'option:pg', '+option:mongo']);
@@ -327,5 +327,30 @@ describe('amendDecision (append-only migration)', () => {
     expect(() => dec.amendDecision(described, { describeOptions: { a: 'other' } })).toThrow(/already has a description/);
     expect(() => dec.amendDecision(described, { addOptions: [{ id: 'b', description: 'x' }] })).toThrow(/already exists/);
     expect(() => dec.amendDecision(described, { describeOptions: { z: 'x' } })).toThrow(/no option "z"/);
+  });
+});
+
+describe('evaluateAdrQuality — reason rules apply to new ADRs only', () => {
+  const bundled = (created) => dec.newDecision({
+    id: 'DEC-0030', summary: 'Order refs', created,
+    options: [{ id: 'a', description: 'Chosen: persist first; ref grammar; attempt rule; held qty; sells name the position' }, { id: 'b', description: 'Rejected.' }],
+    context: 'c', rationale: 'short', consequences: 'q',
+  });
+
+  test('an ADR created before the cutoff keeps passing the legacy rules', () => {
+    const r = dec.evaluateAdrQuality(bundled('2026-11-16T13:33:58Z'));
+    expect(r.valid).toBe(true);
+    expect(dec.isStrictAdr(bundled('2026-11-16T13:33:58Z'))).toBe(false);
+  });
+
+  test('the same ADR created on or after the cutoff is rejected for bundling, a thin rationale and an unexplained rejection', () => {
+    const r = dec.evaluateAdrQuality(bundled(dec.REASON_RULES_SINCE));
+    expect(r.valid).toBe(false);
+    expect(r.issues.join(' ')).toMatch(/rationale is 5 chars/);
+    expect(r.issues.join(' ')).toMatch(/bundles 5 decisions/);
+  });
+
+  test('an unparseable created stamp is treated as legacy', () => {
+    expect(dec.isStrictAdr(bundled('t'))).toBe(false);
   });
 });

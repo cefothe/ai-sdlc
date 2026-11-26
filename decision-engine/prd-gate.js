@@ -141,6 +141,27 @@ function extractListItems(content) {
   return items;
 }
 
+
+// Acceptance-criteria shape, enforced for PRDs that opt in with `acStyle: v2`
+// (the template scaffolds it; legacy PRDs get an advisory). An AC states ONE
+// observable outcome and why it matters; formats, field names and mechanics
+// belong in the design, where each part is explained.
+const AC_MAX_CHARS = 300;
+const AC_MAX_CODE_SPANS = 2;
+const AC_WHY_RE = /\bwhy\s*:/i;
+function acceptanceCriterionIssues(items) {
+  const issues = [];
+  items.forEach((text, i) => {
+    const label = `AC${i + 1}`;
+    const body = text.replace(/\bwhy\s*:[\s\S]*$/i, '').trim();
+    if (!AC_WHY_RE.test(text)) issues.push({ code: 'ac-no-why', section: 'Acceptance criteria', message: `${label} has no "Why:" — say what breaks for the user or the business if it is not met` });
+    if (body.length > AC_MAX_CHARS) issues.push({ code: 'ac-too-long', section: 'Acceptance criteria', message: `${label} is ${body.length} chars (> ${AC_MAX_CHARS}) — state one observable outcome; move mechanics to the design` });
+    const spans = (body.match(/`[^`]+`/g) || []).length;
+    if (spans > AC_MAX_CODE_SPANS) issues.push({ code: 'ac-implementation-detail', section: 'Acceptance criteria', message: `${label} names ${spans} code identifiers/formats — an AC states the outcome; formats and field names belong in the design with a reason per part` });
+  });
+  return issues;
+}
+
 // The PRD's acceptance criteria as plain strings — the product contract the
 // task's ACs are seeded from and the design's test strategy maps onto.
 function extractPrdAcceptanceCriteria(markdown) {
@@ -196,6 +217,11 @@ function evaluatePrd(markdown, { path = '<prd>', productContext } = {}) {
   if (acSec && acSec.hasContent && acceptanceCriteria.length < MIN_ACCEPTANCE_CRITERIA) {
     substanceIssues.push({ code: 'too-few-acceptance-criteria', section: 'Acceptance criteria', message: `${acceptanceCriteria.length} acceptance criteria as list items (< ${MIN_ACCEPTANCE_CRITERIA}) — list the happy path and at least one error/edge outcome` });
   }
+  const advisoryExtra = [];
+  if (acSec && acSec.hasContent) {
+    if (String(frontmatter.acStyle || '').toLowerCase() === 'v2') substanceIssues.push(...acceptanceCriterionIssues(acceptanceCriteria));
+    else advisoryExtra.push({ code: 'ac-style-legacy', message: 'PRD does not set acStyle: v2 — its acceptance criteria are not checked for a Why, a single outcome and no implementation detail' });
+  }
   const metrics = findSection(sections, 'Success metrics');
   if (metrics && metrics.hasContent && !looksMeasurable(metrics.content)) {
     substanceIssues.push({ code: 'metric-not-measurable', section: 'Success metrics', message: 'Success metrics state no number, percentage, threshold or percentile — give each a measurable target' });
@@ -226,7 +252,7 @@ function evaluatePrd(markdown, { path = '<prd>', productContext } = {}) {
   const valid = structureValid && substanceValid && approved;
 
   // Advisory (non-blocking) quality signals.
-  const advisory = [];
+  const advisory = [...advisoryExtra];
   for (const name of REQUIRED_SECTIONS) {
     const sec = findSection(sections, name);
     if (!sec || !sec.hasContent || LENGTH_EXEMPT.has(name)) continue;
@@ -265,7 +291,7 @@ function evaluatePrdFile(prdPath, { root } = {}) {
 
 module.exports = {
   evaluatePrd, evaluatePrdFile, parsePrd, findSection, headingMatchesSection, extractListItems,
-  extractPrdAcceptanceCriteria, isPlaceholderLine, REQUIRED_SECTIONS, SECTION_ALIASES,
+  extractPrdAcceptanceCriteria, acceptanceCriterionIssues, isPlaceholderLine, REQUIRED_SECTIONS, SECTION_ALIASES,
 };
 
 // CLI: node decision-engine/prd-gate.js docs/prd/<slug>.md

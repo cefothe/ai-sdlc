@@ -1,0 +1,52 @@
+apiVersion: ai-sdlc.io/v1alpha1
+kind: Decision
+metadata:
+  id: DEC-0554
+  source: ad-hoc
+  scope: feature:basket-templates
+  created: '2026-11-26T12:00:00Z'
+  updated: '2026-11-26T12:00:00Z'
+spec:
+  summary: Order refs are built by the basket worker as <basket_id>:<purpose>:<market_id>:<attempt>
+  reversible: true
+  options:
+    - id: structured-ref
+      description: >-
+        CHOSEN. A deterministic ref assembled from the basket, the purpose of the order, the market
+        and the attempt, so the same leg always yields the same ref until it is rejected.
+    - id: random-uuid-per-send
+      description: >-
+        A fresh UUID on every send. Rejected: a retry after an unknown outcome becomes a new
+        identity, so trading cannot deduplicate and the venue can receive the order twice.
+    - id: hash-of-body
+      description: >-
+        A hash of the request body. Rejected: it cannot be read by an operator and a legitimate
+        change of size or price changes the hash, defeating deduplication of a resend.
+  context: >-
+    Trading deduplicates on client_order_ref only. A ref must therefore be stable across retries,
+    unique across legs and purposes, and readable when an operator traces an order.
+  rationale: >-
+    A ref built from stable business keys is reproducible after a crash without any lookup, which a
+    random or hashed ref is not, and it can be read back into the basket, leg and purpose it came from.
+  consequences: >-
+    The ref is longer than a UUID and depends on trading accepting the separator and length (S2).
+    A new order purpose needs a new purpose token.
+  confidence: medium
+  body: |
+    ## Why each part
+  
+    | Part | Why |
+    |---|---|
+    | basket_id | A UUID, so refs never collide across baskets, and it groups every order of a basket for reconciliation |
+    | purpose (none, t<n>, r<k>, x) | Separate namespaces so top-up n, roll k and exit never collide with the initial order for the same market |
+    | market_id | Identifies the leg, so one live ref exists per leg |
+    | attempt | Lets a leg be re-placed after a terminal rejection, because a repeated ref would return the rejected order forever |
+  
+    ## Assumptions
+  
+    - Trading accepts the ":" separator and refs of about 90 characters. Unverified; spike S2 settles it before the first send, and the separator is the only thing that changes if it does not.
+status:
+  lifecycle: answered
+  answeredOptionId: structured-ref
+  answeredBy: operator
+  answeredAt: '2026-11-16T13:33:58Z'

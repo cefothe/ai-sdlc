@@ -79,6 +79,22 @@ describe('spec + description in prompts', () => {
     expect(prompt).toMatch(/SPECIFICATION — PRD body here/);
   });
 
+  test('the implementation plan is its own labeled block, ahead of the cxpak background', () => {
+    const planContext = steps.formatPlanContext('1. add order_intent table (files: db/001.sql)');
+    expect(planContext).toMatch(/^IMPLEMENTATION PLAN — the approved sequence of work/);
+    const { prompt } = steps.buildDeveloperPrompt({ task, branch: 'b', planContext, cxpakContext: 'repo overview' });
+    expect(prompt.indexOf('IMPLEMENTATION PLAN')).toBeGreaterThan(-1);
+    expect(prompt.indexOf('IMPLEMENTATION PLAN')).toBeLessThan(prompt.indexOf('Structured context (cxpak'));
+    expect(prompt).toMatch(/1\. add order_intent table/);
+  });
+
+  test('formatPlanContext is null for an empty plan and truncates an oversize one with a pointer to the artifact', () => {
+    expect(steps.formatPlanContext('   ')).toBeNull();
+    expect(steps.formatPlanContext(undefined)).toBeNull();
+    const long = steps.formatPlanContext('x'.repeat(50), { maxChars: 10 });
+    expect(long).toMatch(/plan truncated at 10 chars — open the committed plan artifact/);
+  });
+
   test('every reviewer prompt carries the spec and the review-against-spec instruction', () => {
     const { prompts } = steps.buildReviewPrompts({ task, diff: 'diff', specContext: 'SPECIFICATION — X' });
     expect(prompts).toHaveLength(3);

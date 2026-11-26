@@ -316,7 +316,6 @@ async function runPipeline(opts, ctx) {
     // pre-action context handed to the implementer (cxpak + design notes). ADRs
     // ride their own dedicated block in the developer prompt (decisionsContext).
     const baseContext = [resolvedCxpak, designText].filter(Boolean).join('\n') || null;
-    let planText = baseContext;
     let planStr = '';
     // Spikes are time-boxed measurement scripts: no RED-oracle node machinery.
     const useManifest = !!(flow && flow.manifest && flow.manifest.enabled) && !isSpike;
@@ -328,7 +327,6 @@ async function runPipeline(opts, ctx) {
         const planPrompt = [planGoal, useManifest ? MANIFEST_INSTRUCTION : null, specText, decisionsText].filter(Boolean).join('\n\n');
         const plan = await spawn({ type: 'plan', provider: planProvider, prompt: planPrompt });
         planStr = typeof plan === 'string' ? plan : (plan && plan.plan) || '';
-        if (planStr) planText = [baseContext, `Implementation plan (${planProvider.name}):`, planStr].filter(Boolean).join('\n');
         result.steps.plan = { provider: planProvider, produced: !!planStr };
       } catch (err) {
         if (err.name === 'BudgetExceeded') throw err;
@@ -349,6 +347,11 @@ async function runPipeline(opts, ctx) {
         result.steps.manifest = { status: 'none' };
       }
     }
+    // The plan travels as its own labeled block, not buried in the cxpak blob.
+    const planContext = steps.formatPlanContext(planStr);
+    if (!planContext && planProvider && runPlan) degrade('plan', 'no implementation plan reached the implementer — it works from the spec and ADRs alone');
+    if (!specText) degrade('spec', 'no feature context (PRD/feature architecture/design) reached the implementer');
+    result.steps.implementationContext = { feature: !!specText, plan: !!planContext };
     const nodePlan = manifest && manifest.status === 'ok' && manifest.nodes.length ? manifest : null;
     if (nodePlan) ctx.nodes = nodePlan.nodes;
 
@@ -392,20 +395,20 @@ async function runPipeline(opts, ctx) {
         }
         const nodes = await runNodes({
           task, nodes: nodePlan.nodes, spawn, implementer, tools: implTools, cwd: gitCwd, runner, runAccept,
-          specContext: specText, decisionsContext: decisionsText, capabilityGuidance: implGuidance, retries: flow.manifest.nodeRetries,
+          specContext: specText, decisionsContext: decisionsText, planContext, capabilityGuidance: implGuidance, retries: flow.manifest.nodeRetries,
         });
         result.steps.nodes = { status: nodes.status, nodes: nodes.nodes, testFiles: nodes.testFiles };
         if (nodes.status === 'halted') return abort('implement', [nodes.halt.reason], result);
         developer = nodes.developer;
         if (nodePlan.inline.length) {
           const inlineList = nodePlan.inline.map((e) => `- [${e.id}] ${e.change} (files: ${e.files.join(', ')}; done when: ${e.accept})`).join('\n');
-          const { prompt } = steps.buildDeveloperPrompt({ task, branch, cxpakContext: planText, decisionsContext: decisionsText, specContext: specText, capabilityGuidance: implGuidance });
+          const { prompt } = steps.buildDeveloperPrompt({ task, branch, cxpakContext: baseContext, decisionsContext: decisionsText, specContext: specText, planContext, capabilityGuidance: implGuidance });
           const inlineRet = steps.parseDeveloperReturn(await spawn({ type: 'developer', provider: implementer, tools: implTools, prompt: `${prompt}\n\nThe manifest nodes are done and committed. Implement the remaining inline entries:\n${inlineList}`, iteration: iter, cwd: activeWorktree }));
           developer = { ...inlineRet, filesChanged: [...new Set([...developer.filesChanged, ...inlineRet.filesChanged])], verifications: [...developer.verifications, ...inlineRet.verifications] };
         }
       } else {
         // Step 5 — dev prompt (with cxpak/plan context +, on retries, reviewer feedback).
-        const { prompt } = steps.buildDeveloperPrompt({ task, branch, cxpakContext: planText, decisionsContext: decisionsText, specContext: specText, capabilityGuidance: implGuidance });
+        const { prompt } = steps.buildDeveloperPrompt({ task, branch, cxpakContext: baseContext, decisionsContext: decisionsText, specContext: specText, planContext, capabilityGuidance: implGuidance });
         const devPrompt = feedback ? `${prompt}\n\nPrior review requested changes (address these specifically):\n${feedback}` : prompt;
         const devReturn = await spawn({ type: 'developer', provider: implementer, tools: implTools, prompt: devPrompt, iteration: iter, cwd: activeWorktree });
 

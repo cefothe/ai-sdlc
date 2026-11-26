@@ -3,6 +3,7 @@ status: draft          # draft | approved  — a human sets `approved` (DoR gate
 owner: ''              # who owns this PRD
 featureId: ''          # kebab slug; must match the task's specRef.featureId
 relatedAdrs: []        # DEC-NNNN references, if any
+acStyle: v2            # v2 = each AC is one observable outcome + a "Why:" and names no formats/field names (enforced)
 ---
 
 # PRD: <Feature Name>
@@ -35,8 +36,9 @@ relatedAdrs: []        # DEC-NNNN references, if any
 <Step-by-step flows for each primary actor: trigger → steps → visible outcome. One numbered list per flow.>
 
 ## Acceptance criteria
-- [ ] <Observable, binary-testable outcome 1 (happy path)>
-- [ ] <Observable, binary-testable outcome 2 (primary error/edge path)>
+- [ ] <ONE observable, binary-testable outcome (happy path), <= 300 chars. Why: what breaks for the user/business if it is not met.>
+- [ ] <ONE observable outcome for the primary error/edge path. Why: ...>
+<!-- An AC states the outcome, never the mechanism: "after a crash or retry the venue holds exactly one order per leg. Why: a duplicate order is a duplicate real-money position." Formats, field names and ref schemes go in the design, where each part gets a reason. -->
 
 ## Edge cases
 <Error states, empty/limit states, concurrency, permissions, invalid input — and the expected user-visible behaviour for each.>
